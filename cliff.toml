@@ -1,5 +1,10 @@
 # git-cliff ~ configuration file
 # https://git-cliff.org/docs/configuration
+#
+# 仓库地址不再硬编码：`remote.github.owner` / `remote.github.repo` 由
+# `--github-repo owner/repo` 或环境变量 `GITHUB_REPO` 提供。
+#   - 本地：`just changelog` 会自动从 git remote 推导并注入
+#   - CI：workflow 里把 `GITHUB_REPO` 设为 ${{ github.repository }}
 
 [changelog]
 # changelog header
@@ -10,10 +15,11 @@ All notable changes to this project will be documented in this file. See [conven
 # template for the changelog body
 # https://keats.github.io/tera/docs/#introduction
 body = """
+{% set repo_url = "https://github.com/" ~ remote.github.owner ~ "/" ~ remote.github.repo %}\
 ---
 {% if version %}\
     {% if previous.version %}\
-        ## [{{ version | trim_start_matches(pat="v") }}]($REPO/compare/{{ previous.version }}..{{ version }}) - {{ timestamp | date(format="%Y-%m-%d") }}
+        ## [{{ version | trim_start_matches(pat="v") }}]({{ repo_url }}/compare/{{ previous.version }}..{{ version }}) - {{ timestamp | date(format="%Y-%m-%d") }}
     {% else %}\
         ## [{{ version | trim_start_matches(pat="v") }}] - {{ timestamp | date(format="%Y-%m-%d") }}
     {% endif %}\
@@ -26,14 +32,14 @@ body = """
     | filter(attribute="scope")
     | sort(attribute="scope") %}
         - **({{commit.scope}})**{% if commit.breaking %} [**breaking**]{% endif %} \
-            {{ commit.message|trim }} - ([{{ commit.id | truncate(length=7, end="") }}]($REPO/commit/{{ commit.id }})) - {{ commit.author.name }}
+            {{ commit.message|trim }} - ([{{ commit.id | truncate(length=7, end="") }}]({{ repo_url }}/commit/{{ commit.id }})) - {{ commit.author.name }}
     {%- endfor -%}
     {% raw %}\n{% endraw %}\
     {%- for commit in commits %}
         {%- if commit.scope -%}
         {% else -%}
             - {% if commit.breaking %} [**breaking**]{% endif %}\
-                {{ commit.message|trim }} - ([{{ commit.id | truncate(length=7, end="") }}]($REPO/commit/{{ commit.id }})) - {{ commit.author.name }}
+                {{ commit.message|trim }} - ([{{ commit.id | truncate(length=7, end="") }}]({{ repo_url }}/commit/{{ commit.id }})) - {{ commit.author.name }}
         {% endif -%}
     {% endfor -%}
 {% endfor %}\n
@@ -46,7 +52,7 @@ footer = """
 trim = true
 # postprocessors
 postprocessors = [
-  { pattern = '\$REPO', replace = "https://github.com" }, # TODO: replace repository URL
+  # { pattern = '<REPO>', replace = "https://github.com/owner/repo" },
 ]
 
 [git]
@@ -63,7 +69,6 @@ commit_preprocessors = [
 # regex for parsing and grouping commits
 commit_parsers = [
   { message = "\\[skip", skip = true },
-  { message = "\\p{Han}", skip = true },
   { message = "^feat", group = "Features" },
   { message = "^fix", group = "Bug Fixes" },
   { message = "^doc", group = "Documentation" },
@@ -73,6 +78,7 @@ commit_parsers = [
   { message = "^revert", group = "Revert" },
   { message = "^test", group = "Tests" },
   { message = "^chore\\(version\\):", skip = true },
+  { message = "^chore\\(release\\):", skip = true },
   { message = "^chore", group = "Miscellaneous Chores" },
   { message = ".*", group = "Other" },
   { body = ".*security", group = "Security" },

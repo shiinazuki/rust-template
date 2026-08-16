@@ -2,12 +2,23 @@
 name = "{{ project-name }}"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.85"                                                  # edition 2024 要求的最低版本
 license = "MIT"
+description = "{{ description }}"
+repository = "https://github.com/{{ gh-username }}/{{ project-name }}"
+authors = ["{{ authors }}"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 
+
+[profile.release]
+opt-level = 3
+lto = "thin"      # 需要更激进可改成 "fat"，体积更小但编译明显变慢
+codegen-units = 1
+strip = "symbols"
+# panic = "abort" # 二进制更小，但会禁用 unwind 并影响 #[should_panic] 测试
 
 # 统一代码规范与 Clippy 约束
 [lints.rust]

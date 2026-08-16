@@ -1,2 +1,24 @@
 [template]
-exclude = ["cliff.toml"]
+# 这些文件里的 {% %} / {{ }} 属于别的模板语言，会和 cargo-generate 的 liquid
+# 引擎冲突，必须排除在变量替换之外（文件本身照常复制到生成的项目里）：
+#   - cliff.toml：git-cliff 的 Tera 模板
+#   - .github/**：GitHub Actions 的 ${{ ... }} 表达式
+#   - justfile：just 自己的 {{ 变量 }} 插值
+#   - .pre-commit-config.yaml：钩子里用 `{{ project-name }}` 判断是不是模板仓库本身，
+#     这段字面量必须原样保留，不能被替换成真实包名
+exclude = [
+  "cliff.toml",
+  ".github/**",
+  "justfile",
+  ".pre-commit-config.yaml",
+]
+
+[placeholders.description]
+type = "string"
+prompt = "项目简介（写入 Cargo.toml 的 description）"
+default = "A Rust project"
+
+[placeholders.gh-username]
+type = "string"
+prompt = "GitHub 用户名或组织名（用于 repository 字段）"
+default = "your-github-username"

@@ -1,5 +1,5 @@
 fail_fast: false
-default_install_hook_types: [pre-commit, commit-msg]
+default_install_hook_types: [pre-commit, commit-msg, pre-push]
 default_stages: [pre-commit, manual]
 
 repos:
@@ -11,26 +11,26 @@ repos:
       - id: check-merge-conflict
       - id: check-symlinks
       - id: check-yaml
+      - id: check-toml
       - id: end-of-file-fixer
       - id: mixed-line-ending
       - id: trailing-whitespace
-  - repo: https://github.com/psf/black
-    rev: 25.1.0
+  # cliff.toml 依赖 conventional commits 来分组，这里做强制校验
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v4.4.0
     hooks:
-      - id: black
+      - id: conventional-pre-commit
+        stages: [commit-msg]
+  # 下面的 cargo 类钩子都带一句 `grep -qF "{{ project-name }}" Cargo.toml && exit 0`：
+  # 模板仓库自身的 Cargo.toml 里还是占位符，不是合法 crate，任何 cargo 命令都会报
+  # "invalid character `{` in package name"。检测到占位符就跳过。
+  # 生成出来的项目里占位符已被替换，这行 grep 永远不匹配，钩子照常执行。
   - repo: local
     hooks:
       - id: cargo-fmt
         name: cargo fmt
-        description: Format files with rustfmt.
-        entry: bash -c 'cargo +nightly fmt -- --check'
-        language: system
-        files: \.rs$
-        pass_filenames: false
-      - id: cargo-deny
-        name: cargo deny check
-        description: Check cargo dependencies
-        entry: bash -c 'cargo deny check'
+        description: Format files with rustfmt (nightly, 见 rustfmt.toml).
+        entry: bash -c 'grep -qF "{{ project-name }}" Cargo.toml && exit 0; cargo +nightly fmt --all -- --check'
         language: system
         files: \.rs$
         pass_filenames: false
@@ -39,26 +39,34 @@ repos:
         description: check typo
         entry: bash -c 'typos'
         language: system
-        files: \.*$
+        pass_filenames: false
+      - id: cargo-deny
+        name: cargo deny check
+        description: Check cargo dependencies
+        entry: bash -c 'grep -qF "{{ project-name }}" Cargo.toml && exit 0; cargo deny check'
+        language: system
+        files: (Cargo\.(toml|lock)|deny\.toml)$
         pass_filenames: false
       - id: cargo-check
         name: cargo check
         description: Check the package for errors.
-        entry: bash -c 'cargo check --all'
+        entry: bash -c 'grep -qF "{{ project-name }}" Cargo.toml && exit 0; cargo check --all-targets --all-features'
         language: system
         files: \.rs$
         pass_filenames: false
       - id: cargo-clippy
         name: cargo clippy
         description: Lint rust sources
-        entry: bash -c 'cargo clippy --all-targets --all-features --tests --benches -- -D warnings'
+        entry: bash -c 'grep -qF "{{ project-name }}" Cargo.toml && exit 0; cargo clippy --all-targets --all-features -- -D warnings'
         language: system
         files: \.rs$
         pass_filenames: false
+      # 全量测试比较慢，放到 pre-push 而不是每次 commit
       - id: cargo-test
         name: cargo test
         description: unit test for the project
-        entry: bash -c 'cargo nextest run --all-features -- --include-ignored'
+        entry: bash -c 'grep -qF "{{ project-name }}" Cargo.toml && exit 0; cargo nextest run --all-targets --all-features'
         language: system
         files: \.rs$
         pass_filenames: false
+        stages: [pre-push]

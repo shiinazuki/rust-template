@@ -3,5 +3,5 @@
 version = 4
 
 [[package]]
-name = "rust_template"
+name = "{{ project-name }}"
 version = "0.1.0"

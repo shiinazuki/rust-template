@@ -1,83 +1,84 @@
-# Geektime Rust 语言训练营
+# {{ project-name }}
 
-## 环境设置
+{{ description }}
 
-### 安装 Rust
+## 开发环境
 
-```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-```
+### Rust 工具链
 
-### 安装 VSCode 插件
+工具链版本由 [`rust-toolchain.toml`](rust-toolchain.toml) 固定（stable），首次进入目录时 rustup 会自动安装。
 
-- crates: Rust 包管理
-- Even Better TOML: TOML 文件支持
-- Better Comments: 优化注释显示
-- Error Lens: 错误提示优化
-- GitLens: Git 增强
-- Github Copilot: 代码提示
-- indent-rainbow: 缩进显示优化
-- Prettier - Code formatter: 代码格式化
-- REST client: REST API 调试
-- rust-analyzer: Rust 语言支持
-- Rust Test lens: Rust 测试支持
-- Rust Test Explorer: Rust 测试概览
-- TODO Highlight: TODO 高亮
-- vscode-icons: 图标优化
-- YAML: YAML 文件支持
-
-### 安装 cargo generate
-
-cargo generate 是一个用于生成项目模板的工具。它可以使用已有的 github repo 作为模版生成新的项目。
+格式化额外需要 nightly —— [`rustfmt.toml`](rustfmt.toml) 里用到了 `imports_granularity`、
+`group_imports`、`wrap_comments` 等 unstable 选项，stable 的 rustfmt 会静默忽略它们：
 
 ```bash
-cargo install cargo-generate
+rustup toolchain install nightly --profile minimal --component rustfmt
 ```
 
-在我们的课程中，新的项目会使用 `tyr-rust-bootcamp/template` 模版生成基本的代码：
+### 配套工具
 
 ```bash
-cargo generate tyr-rust-bootcamp/template
+cargo install just                        # 命令入口（见 justfile）
+cargo install cargo-nextest --locked      # 测试
+cargo install --locked cargo-deny         # 依赖安全与 License 检查
+cargo install typos-cli                   # 拼写检查
+cargo install cargo-llvm-cov              # 覆盖率
+cargo install git-cliff                   # 生成 CHANGELOG
+cargo install cargo-release               # 发版
+cargo install bacon                       # 后台实时监控
 ```
 
-### 安装 pre-commit
-
-pre-commit 是一个代码检查工具，可以在提交代码前进行代码检查。
+### pre-commit
 
 ```bash
 pipx install pre-commit
+pre-commit install
 ```
 
-安装成功后运行 `pre-commit install` 即可。
+`pre-commit install` 会同时装上 `pre-commit`、`commit-msg`、`pre-push` 三类钩子：
+提交前跑格式化 / clippy / 拼写检查，提交时校验 commit message 规范，推送前跑全量测试。
 
-### 安装 Cargo deny
-
-Cargo deny 是一个 Cargo 插件，可以用于检查依赖的安全性。
+## 常用命令
 
 ```bash
-cargo install --locked cargo-deny
+just              # 列出所有命令
+just check        # 快速检查编译
+just fmt          # 格式化（nightly）
+just lint         # 格式化检查 + clippy + typos
+just test         # 运行测试
+just coverage     # 生成覆盖率报告 lcov.info
+just audit        # cargo deny check
+just ci           # 本地跑一遍 CI 的全部检查
+just dev          # bacon 实时监控
+just changelog    # 刷新 CHANGELOG.md
+just release      # 打 tag、刷新 changelog、推送
 ```
 
-### 安装 typos
+## 提交规范
 
-typos 是一个拼写检查工具。
+本项目使用 [Conventional Commits](https://www.conventionalcommits.org/)，
+`CHANGELOG.md` 由 [git-cliff](https://git-cliff.org/) 依据提交信息自动生成：
 
-```bash
-cargo install typos-cli
+```
+feat(parser): 支持嵌套表达式
+fix: 修正边界条件下的 panic
+docs: 补充 README
 ```
 
-### 安装 git cliff
+commit message 由 pre-commit 的 `conventional-pre-commit` 钩子强制校验。
 
-git cliff 是一个生成 changelog 的工具。
+## VSCode 推荐插件
 
-```bash
-cargo install git-cliff
-```
+- rust-analyzer: Rust 语言支持
+- crates: Rust 包管理
+- Even Better TOML: TOML 文件支持
+- Error Lens: 错误提示优化
+- Better Comments: 优化注释显示
+- GitLens: Git 增强
+- indent-rainbow: 缩进显示优化
+- TODO Highlight: TODO 高亮
+- YAML: YAML 文件支持
 
-### 安装 cargo nextest
+## License
 
-cargo nextest 是一个 Rust 增强测试工具。
-
-```bash
-cargo install cargo-nextest --locked
-```
+MIT，详见 [LICENSE](LICENSE)。

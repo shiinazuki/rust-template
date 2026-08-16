@@ -1,0 +1,12 @@
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy", "llvm-tools-preview"]
+profile = "minimal"
+
+# 注意：rustfmt.toml 里使用了若干 unstable 选项（imports_granularity、
+# group_imports、wrap_comments 等），格式化必须走 nightly：
+#
+#   rustup toolchain install nightly --component rustfmt
+#   cargo +nightly fmt --all
+#
+# 构建、测试、clippy 全部跑在上面固定的 stable 上。
