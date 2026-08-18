@@ -1,12 +1,18 @@
+# 固定构建 / 测试 / clippy 使用的工具链版本。
+# 进入目录时 rustup 会按这里的声明自动安装并切换，团队成员之间不会再出现
+# "我这边能过 CI 你那边不过" 的版本漂移。
+#
+# 想完全锁死版本，把 channel 改成具体版本号，例如 channel = "1.85.0"。
 [toolchain]
 channel = "stable"
+# llvm-tools-preview 是 cargo-llvm-cov 生成覆盖率所必需的
 components = ["rustfmt", "clippy", "llvm-tools-preview"]
 profile = "minimal"
 
 # 注意：rustfmt.toml 里使用了若干 unstable 选项（imports_granularity、
 # group_imports、wrap_comments 等），格式化必须走 nightly：
 #
-#   rustup toolchain install nightly --component rustfmt
+#   rustup toolchain install nightly --profile minimal --component rustfmt
 #   cargo +nightly fmt --all
 #
 # 构建、测试、clippy 全部跑在上面固定的 stable 上。

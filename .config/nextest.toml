@@ -1,0 +1,32 @@
+# cargo-nextest 配置：https://nexte.st/docs/configuration/
+#   本地：just test        （default profile）
+#   CI  ：cargo nextest run --profile ci
+
+[store]
+dir = "target/nextest"
+
+[profile.default]
+# 本地跑测试不重试：失败就是失败，重试只会掩盖问题
+retries = 0
+# 一个失败就停下来，本地迭代更快
+fail-fast = true
+failure-output = "immediate"
+final-status-level = "flaky"
+# 超过 30s 的测试标记为 slow；连续 4 个周期（2 分钟）还没结束就判定卡死并杀掉
+slow-timeout = { period = "30s", terminate-after = 4 }
+
+# CI 专用 profile：`cargo nextest run --profile ci`
+[profile.ci]
+# 允许少量重试来吸收 CI 上的偶发抖动（网络、端口冲突等）；
+# 重试后通过的测试会被标记成 flaky，在汇总里单独列出，不会被悄悄放过
+retries = { backoff = "exponential", count = 2, delay = "1s", jitter = true }
+# CI 上要一次性看到所有失败，不要跑一半就停
+fail-fast = false
+failure-output = "immediate-final"
+status-level = "retry"
+final-status-level = "flaky"
+slow-timeout = { period = "60s", terminate-after = 3 }
+
+# 输出 JUnit 报告，GitHub Actions 的测试报告插件可以直接消费
+[profile.ci.junit]
+path = "junit.xml"

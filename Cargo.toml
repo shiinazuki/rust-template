@@ -1,17 +1,49 @@
+# 生成的项目默认自成一个 workspace root。
+# 这样即使把项目放进别的 workspace 目录下，也不会被父级 workspace 意外接管
+# （否则 cargo 会报 "current package believes it's in a workspace when it's not"）。
+[workspace]
+
 [package]
 name = "{{ project-name }}"
 version = "0.1.0"
 edition = "2024"
-# rust-version = "1.85"                                                  # edition 2024 要求的最低版本
-license = "MIT"
+rust-version = "1.85" # MSRV：edition 2024 要求的最低版本，改动前先跑 `just msrv`
+license = "{{ license }}"
 description = "{{ description }}"
 repository = "https://github.com/{{ gh-username }}/{{ project-name }}"
 authors = ["{{ authors }}"]
+readme = "README.md"
+# keywords = ["cli"]                        # 最多 5 个，发布到 crates.io 时用于搜索
+# categories = ["command-line-utilities"]   # 取值见 https://crates.io/categories
+# publish = false                           # 内部项目建议打开，防止误发布到 crates.io
+
+# 打包发布时排除掉只对开发有意义的文件，减小 .crate 体积
+exclude = [
+  ".github/",
+  ".vscode/",
+  ".config/",
+  ".pre-commit-config.yaml",
+  "cliff.toml",
+  "deny.toml",
+  "justfile",
+  "bacon.toml",
+  "release.toml",
+]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 
+[dev-dependencies]
+
+# ---------------------------------------------------------------------------
+# 编译配置
+# ---------------------------------------------------------------------------
+
+# 依赖用 O2 编译、自身代码保持 O0：调试体验不变，但依赖里的热点代码（解析、
+# 加解密、序列化等）在 debug 运行时快一个数量级。代价是首次编译稍慢。
+[profile.dev.package."*"]
+opt-level = 2
 
 [profile.release]
 opt-level = 3
@@ -20,12 +52,45 @@ codegen-units = 1
 strip = "symbols"
 # panic = "abort" # 二进制更小，但会禁用 unwind 并影响 #[should_panic] 测试
 
+# 做性能分析（flamegraph / samply / instruments）时用：
+#   cargo build --profile profiling
+# 优化级别与 release 一致，但保留符号，火焰图才有可读的函数名。
+[profile.profiling]
+inherits = "release"
+debug = true
+strip = "none"
+
+# ---------------------------------------------------------------------------
 # 统一代码规范与 Clippy 约束
+#
+# 注意 lint 组（group）必须带 priority = -1，否则组会覆盖掉后面单条 lint 的设置。
+# ---------------------------------------------------------------------------
+
 [lints.rust]
-unsafe_code = "forbid"                 # 默认禁止 unsafe（根据项目实际情况调整）
+unsafe_code = "forbid"                       # 默认禁止 unsafe（确实需要时改成 "deny" 并按处 allow）
 missing_debug_implementations = "warn"
+unreachable_pub = "warn"                     # 只在 crate 内部用的类型不要暴露成 pub
+unused_qualifications = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+# 库项目自动打开：强制公开 API 写文档注释（二进制项目生成为 "allow"）
+missing_docs = "{% if crate_type == 'lib' %}warn{% else %}allow{% endif %}"
 
 [lints.clippy]
-enum_glob_use = "deny"
-unwrap_used = "warn"                         # 提示不要随手 unwrap，改用 ? 或 expect
+all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
+
+# 手动加严：这几条 clippy 默认不开，但线上事故多半出在这里
+enum_glob_use = "deny"
+unwrap_used = "warn"      # 不要随手 unwrap，改用 ? 或 expect("说明为什么不会失败")
+dbg_macro = "warn"        # 调试用的 dbg! 不要带进提交
+todo = "warn"
+mem_forget = "deny"
+
+# 降噪：pedantic 里在业务代码中收益不高的几条。按需删掉即可恢复检查。
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+
+# 测试里用 unwrap/expect/panic 是常态，由 clippy.toml 的 allow-*-in-tests 统一放行，
+# 不需要再在源码里写 #![cfg_attr(test, allow(clippy::unwrap_used))]。

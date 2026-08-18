@@ -1,3 +1,6 @@
+# pre-commit 钩子：https://pre-commit.com
+# 安装：just hooks   （等价于 pre-commit install --install-hooks）
+# 手动全量跑一遍：pre-commit run --all-files
 fail_fast: false
 default_install_hook_types: [pre-commit, commit-msg, pre-push]
 default_stages: [pre-commit, manual]
@@ -12,15 +15,34 @@ repos:
       - id: check-symlinks
       - id: check-yaml
       - id: check-toml
+      - id: check-json
+        # .vscode 下是 JSONC（带注释），标准 JSON 解析器会报错
+        exclude: ^\.vscode/
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+      - id: detect-private-key
+      - id: check-executables-have-shebangs
+      - id: check-shebang-scripts-are-executable
       - id: end-of-file-fixer
       - id: mixed-line-ending
       - id: trailing-whitespace
+
   # cliff.toml 依赖 conventional commits 来分组，这里做强制校验
   - repo: https://github.com/compilerla/conventional-pre-commit
     rev: v4.4.0
     hooks:
       - id: conventional-pre-commit
         stages: [commit-msg]
+
+  # 拼写检查。用官方 hook 而不是本地的 typos 命令，pre-commit 会自己装好对应版本，
+  # 免去"没装 typos 就静默跳过"的问题。
+  - repo: https://github.com/crate-ci/typos
+    rev: v1.49.0
+    hooks:
+      - id: typos
+        # 默认会自动改写文件，这里只做检查，改不改交给人决定
+        args: []
+
   # 下面的 cargo 类钩子都带一句 `grep -qF "{{ project-name }}" Cargo.toml && exit 0`：
   # 模板仓库自身的 Cargo.toml 里还是占位符，不是合法 crate，任何 cargo 命令都会报
   # "invalid character `{` in package name"。检测到占位符就跳过。
@@ -34,11 +56,19 @@ repos:
         language: system
         files: \.rs$
         pass_filenames: false
-      - id: typos
-        name: typos
-        description: check typo
-        entry: bash -c 'typos'
+      - id: cargo-check
+        name: cargo check
+        description: Check the package for errors.
+        entry: bash -c 'grep -qF "{{ project-name }}" Cargo.toml && exit 0; cargo check --all-targets --all-features'
         language: system
+        files: (\.rs|Cargo\.(toml|lock))$
+        pass_filenames: false
+      - id: cargo-clippy
+        name: cargo clippy
+        description: Lint rust sources
+        entry: bash -c 'grep -qF "{{ project-name }}" Cargo.toml && exit 0; cargo clippy --all-targets --all-features -- -D warnings'
+        language: system
+        files: (\.rs|Cargo\.(toml|lock)|clippy\.toml)$
         pass_filenames: false
       - id: cargo-deny
         name: cargo deny check
@@ -46,20 +76,6 @@ repos:
         entry: bash -c 'grep -qF "{{ project-name }}" Cargo.toml && exit 0; cargo deny check'
         language: system
         files: (Cargo\.(toml|lock)|deny\.toml)$
-        pass_filenames: false
-      - id: cargo-check
-        name: cargo check
-        description: Check the package for errors.
-        entry: bash -c 'grep -qF "{{ project-name }}" Cargo.toml && exit 0; cargo check --all-targets --all-features'
-        language: system
-        files: \.rs$
-        pass_filenames: false
-      - id: cargo-clippy
-        name: cargo clippy
-        description: Lint rust sources
-        entry: bash -c 'grep -qF "{{ project-name }}" Cargo.toml && exit 0; cargo clippy --all-targets --all-features -- -D warnings'
-        language: system
-        files: \.rs$
         pass_filenames: false
       # 全量测试比较慢，放到 pre-push 而不是每次 commit
       - id: cargo-test

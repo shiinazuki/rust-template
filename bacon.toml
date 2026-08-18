@@ -1,0 +1,65 @@
+#:schema https://dystroy.org/bacon/.bacon.schema.json
+# bacon：后台实时监控文件变化并重跑检查。启动：just dev
+# 完整配置说明见 https://dystroy.org/bacon/config/
+#
+# 运行时按键切换任务：c=check-all  l=clippy-all  t=nextest  d=doc
+# 这里定义的任务会覆盖 bacon 的同名默认任务。
+
+default_job = "clippy-all"
+
+env.CARGO_TERM_COLOR = "always"
+
+[jobs.check-all]
+command = ["cargo", "check", "--all-targets", "--all-features"]
+need_stdout = false
+
+# 和 CI 用完全一样的参数，本地就能提前发现会挂 CI 的 lint
+[jobs.clippy-all]
+command = [
+  "cargo",
+  "clippy",
+  "--all-targets",
+  "--all-features",
+  "--",
+  "-D",
+  "warnings",
+]
+need_stdout = false
+
+[jobs.nextest]
+command = [
+  "cargo",
+  "nextest",
+  "run",
+  "--all-targets",
+  "--all-features",
+  "--hide-progress-bar",
+  "--failure-output",
+  "final",
+]
+need_stdout = true
+analyzer = "nextest"
+
+[jobs.doc]
+command = ["cargo", "doc", "--no-deps", "--all-features"]
+need_stdout = false
+
+# 生成文档并在浏览器里打开
+[jobs.doc-open]
+command = ["cargo", "doc", "--no-deps", "--all-features", "--open"]
+need_stdout = false
+on_success = "back" # 打开一次就退回上一个任务，不要反复弹浏览器
+
+# `bacon run` 直接跑起来，改代码自动重启
+[jobs.run]
+command = ["cargo", "run", "--all-features"]
+need_stdout = true
+allow_warnings = true
+background = false
+
+[keybindings]
+c = "job:check-all"
+l = "job:clippy-all"
+t = "job:nextest"
+d = "job:doc"
+r = "job:run"

@@ -1,3 +1,32 @@
+# Clippy 的行为配置（lint 的开关在 Cargo.toml 的 [lints.clippy] 里）。
+
+# 测试代码里 unwrap / expect / panic 是常态，统一在这里放行，
+# 就不需要在每个源文件顶部写 #![cfg_attr(test, allow(clippy::unwrap_used))]。
+# 注意：这几项同时覆盖单元测试和 tests/ 下的集成测试。
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-dbg-in-tests = true
+
+# 1.0 之前不必为了 API 兼容性而束手束脚，允许 clippy 提出会破坏公开 API 的建议。
+# 发布 1.0 之后建议改回 true。
+avoid-breaking-exported-api = false
+
+# 这些词在文档注释里出现时不要报 doc_markdown（需要反引号包裹）
+doc-valid-idents = [
+  "..",  # 保留 clippy 的默认列表
+  "gRPC",
+  "OpenTelemetry",
+  "PostgreSQL",
+  "WebAssembly",
+]
+
+# 常用阈值，按项目习惯调整（注释掉即使用 clippy 默认值）
+# too-many-arguments-threshold = 7
+# type-complexity-threshold = 250
+# cognitive-complexity-threshold = 25
+
+# ---------------------------------------------------------------------------
 # 本模板默认不假设项目使用 async runtime，因此下面的限制默认全部关闭。
 #
 # 如果项目引入了 tokio，把下面两段取消注释即可禁止在 async 上下文里误用
@@ -5,6 +34,7 @@
 #
 # ⚠️ 启用前请注意：CI 使用 `-D warnings`，一旦启用，任何一处同步文件操作
 #    都会直接让构建失败，包括测试和构建脚本里的。
+# ---------------------------------------------------------------------------
 
 # disallowed-types = [
 #   { path = "std::fs::DirBuilder", replacement = "tokio::fs::DirBuilder" },

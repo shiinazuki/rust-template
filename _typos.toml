@@ -1,4 +1,26 @@
+# typos 拼写检查配置：https://github.com/crate-ci/typos
+# 本地：typos           查看问题
+#       typos --write-changes   自动修正
+
+[default]
+locale = "en-us"
+
+# 整行匹配这些正则的内容不检查（比如 base64 串、哈希值、故意的拼写）
+extend-ignore-re = [
+  # "(?Rm)^.*(#|//)\\s*spellchecker:disable-line$",
+]
+
+# 项目里的专有名词、缩写、人名等，写在这里避免误报。
+# 格式是 "被识别成拼写错误的词" = "希望替换成的词"，两边写成一样即表示放行。
 [default.extend-words]
+# ba = "ba"
 
 [files]
-extend-exclude = ["CHANGELOG.md", "Cargo.lock", "vendors/", "target/"]
+extend-exclude = [
+  "CHANGELOG.md",  # 由 git-cliff 从提交信息生成，改不了
+  "Cargo.lock",
+  "target/",
+  "vendors/",
+  "*.svg",
+  "*.lock",
+]

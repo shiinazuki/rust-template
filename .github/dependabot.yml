@@ -1,0 +1,35 @@
+# 依赖自动升级：https://docs.github.com/code-security/dependabot
+version: 2
+
+updates:
+  # Rust 依赖
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      # 和 conventional commits 对齐，cliff.toml 里会把 chore(deps) 从 CHANGELOG 中过滤掉
+      prefix: "chore"
+      include: scope
+    groups:
+      # 补丁 / 小版本升级合并成一个 PR，避免每周被十几个 PR 淹没
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+  # GitHub Actions 自身的版本
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: "ci"
+      include: scope
+    groups:
+      actions:
+        patterns:
+          - "*"

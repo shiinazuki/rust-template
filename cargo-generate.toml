@@ -1,17 +1,40 @@
+# cargo-generate 模板配置：https://cargo-generate.github.io/cargo-generate/
+#
+# 用法：
+#   cargo generate --git https://github.com/<owner>/rust-template --name my-app
+#   cargo generate --git ... --name my-lib --lib      # 生成库项目
+#
+# --bin（默认）生成 src/main.rs，--lib 生成 src/lib.rs + tests/，
+# 由下面的 [conditional.'crate_type == ...'] 控制。
+
 [template]
+# 用到了 0.23 才有的 array 类型占位符与 conditional 能力
+cargo_generate_version = ">=0.23.0"
+
 # 这些文件里的 {% %} / {{ }} 属于别的模板语言，会和 cargo-generate 的 liquid
 # 引擎冲突，必须排除在变量替换之外（文件本身照常复制到生成的项目里）：
 #   - cliff.toml：git-cliff 的 Tera 模板
 #   - .github/**：GitHub Actions 的 ${{ ... }} 表达式
 #   - justfile：just 自己的 {{ 变量 }} 插值
+#   - release.toml：cargo-release 的 {{version}} / {{crate_name}} 占位符
 #   - .pre-commit-config.yaml：钩子里用 `{{ project-name }}` 判断是不是模板仓库本身，
 #     这段字面量必须原样保留，不能被替换成真实包名
 exclude = [
   "cliff.toml",
   ".github/**",
   "justfile",
+  "release.toml",
   ".pre-commit-config.yaml",
 ]
+
+# 只对模板仓库自己有意义、不该出现在生成项目里的文件
+ignore = [
+  "CHANGELOG.md",
+]
+
+[hooks]
+# 按所选 License 整理 LICENSE 文件
+post = ["post-script.rhai"]
 
 [placeholders.description]
 type = "string"
@@ -22,3 +45,20 @@ default = "A Rust project"
 type = "string"
 prompt = "GitHub 用户名或组织名（用于 repository 字段）"
 default = "your-github-username"
+
+[placeholders.license]
+type = "string"
+prompt = "选择开源协议"
+choices = ["MIT", "Apache-2.0", "MIT OR Apache-2.0"]
+default = "MIT"
+
+# --- 按 crate 类型裁剪源码骨架 -------------------------------------------
+# crate_type 是 cargo-generate 的内置变量，由命令行的 --bin / --lib 决定，
+# 不传时默认为 bin。
+
+[conditional.'crate_type == "lib"']
+ignore = ["src/main.rs"]
+
+[conditional.'crate_type == "bin"']
+# 二进制 crate 没有可供外部 use 的库目标，集成测试示例一起去掉
+ignore = ["src/lib.rs", "tests/integration.rs"]
