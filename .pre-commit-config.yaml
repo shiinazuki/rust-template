@@ -40,8 +40,12 @@ repos:
     rev: v1.49.0
     hooks:
       - id: typos
-        # 默认会自动改写文件，这里只做检查，改不改交给人决定
-        args: []
+        # 上游默认是 args: [--write-changes, --force-exclude]。
+        # 去掉 --write-changes：只做检查，改不改交给人决定。
+        # 但必须把 --force-exclude 留着——pre-commit 是把文件名显式传给 typos 的，
+        # 没有这个参数时 _typos.toml 里的 [files] extend-exclude（CHANGELOG.md、
+        # Cargo.lock、*.svg 等）会被完全无视。
+        args: [--force-exclude]
 
   # 下面的 cargo 类钩子都带一句 `grep -qF "{{ project-name }}" Cargo.toml && exit 0`：
   # 模板仓库自身的 Cargo.toml 里还是占位符，不是合法 crate，任何 cargo 命令都会报

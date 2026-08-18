@@ -42,6 +42,15 @@ dev:
 doc:
     cargo doc --no-deps --all-features --open
 
+# ⚠️ 如果你在 ~/.cargo/config.toml 里设了全局共享的 build.target-dir，
+#    `cargo clean` 清掉的是那个共享目录，会连带删掉其它项目的编译缓存。
+#    只想清本项目的话改成 `cargo clean -p <包名>`。
+[group('dev')]
+[doc('清理编译产物与本地生成的报告')]
+clean:
+    cargo clean
+    rm -f lcov.info junit.xml flamegraph.svg perf.data perf.data.old
+
 # ---------------------------------------------------------------------------
 # 检查
 # ---------------------------------------------------------------------------
@@ -73,6 +82,26 @@ coverage:
 [doc('依赖安全与 License 检查')]
 audit:
     cargo deny check
+
+# 刻意不放进 `just ci`：cargo-machete 靠扫源码里的符号判断，只在宏里用到的依赖会被
+# 误报。误报时在 Cargo.toml 里加 [package.metadata.cargo-machete] ignored = [...] 放行。
+[group('check')]
+[doc('找出声明了却没被用到的依赖（需要 cargo-machete）')]
+unused:
+    cargo machete
+
+# 同样不放进 `just ci`：要和已发布的版本比对，本地没网或没发布过时没意义。
+# 发布库之前手动跑一次，确认版本号该抬 patch 还是 minor/major。
+[group('check')]
+[doc('检查公开 API 有没有破坏性变更（仅 lib 项目；需要 cargo-semver-checks）')]
+semver:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ ! -f src/lib.rs ]; then
+        echo "没有 lib target，跳过 semver 检查"
+        exit 0
+    fi
+    cargo semver-checks
 
 # nightly 项目自动跳过：可能用了 #![feature(...)]，在 stable 上必然编不过，
 # 检查没有意义。判断依据是 rust-toolchain.toml 的 channel，和 CI 里的逻辑一致。
@@ -173,8 +202,32 @@ release-execute level="patch": ci
 [group('setup')]
 [doc('安装本项目用到的全部 cargo 工具')]
 install-tools:
-    cargo install --locked cargo-nextest cargo-deny cargo-llvm-cov cargo-release cargo-outdated
-    cargo install --locked typos-cli git-cliff bacon
+    #!/usr/bin/env bash
+    set -euo pipefail
+    tools=(
+        cargo-nextest      # 测试运行器
+        cargo-deny         # 依赖安全与 License 检查
+        cargo-llvm-cov     # 覆盖率
+        cargo-release      # 发版
+        cargo-outdated     # 检查依赖是否有新版本
+        cargo-machete      # 找出没用到的依赖
+        cargo-semver-checks # 公开 API 的破坏性变更检查
+        typos-cli          # 拼写检查
+        git-cliff          # 生成 CHANGELOG
+        bacon              # 后台实时监控
+    )
+    # 这些工具从源码编译一遍要十几分钟。cargo-binstall 直接下载上游发布的预编译
+    # 二进制，几十秒就能装完；没有预编译包的会自动退回源码编译。
+    if command -v cargo-binstall >/dev/null 2>&1; then
+        cargo binstall --no-confirm --locked "${tools[@]}"
+    else
+        echo "提示：先装 cargo-binstall 能直接下预编译二进制，比源码编译快一个数量级："
+        echo "        cargo install cargo-binstall"
+        echo "      （其它安装方式见 https://github.com/cargo-bins/cargo-binstall）"
+        echo "本次先用 cargo install 逐个编译，请耐心等待……"
+        echo ""
+        cargo install --locked "${tools[@]}"
+    fi
     rustup toolchain install nightly --profile minimal --component rustfmt
 
 [group('setup')]

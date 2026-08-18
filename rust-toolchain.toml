@@ -14,9 +14,16 @@
 #   "1.85.0"             完全锁死到某个具体版本
 [toolchain]
 channel = "{{ toolchain }}"
-# llvm-tools-preview 是 cargo-llvm-cov 生成覆盖率所必需的
-components = ["rustfmt", "clippy", "llvm-tools-preview"]
+# profile = "minimal" 只装 rustc / cargo / rust-std，其余按需在这里点名：
+#   rustfmt / clippy      格式化与 lint
+#   rust-src              rust-analyzer 解析标准库所必需——缺了它编辑器里对 std
+#                         没有补全和跳转，还会报 "can't find crate for core"
+#   llvm-tools-preview    cargo-llvm-cov 生成覆盖率所必需
+components = ["rustfmt", "clippy", "rust-src", "llvm-tools-preview"]
 profile = "minimal"
+
+# ⚠️ channel 是滚动的 "nightly" 时，偶尔会碰上某天的 nightly 缺其中某个组件，
+#    rustup 会直接拒绝安装整个工具链。真遇上了就把 channel 钉成前一天的日期版本。
 
 # 关于格式化：
 # rustfmt.toml 里用到了 imports_granularity、group_imports、wrap_comments 等

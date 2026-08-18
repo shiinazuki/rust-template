@@ -22,12 +22,14 @@ cargo_generate_version = ">=0.23.0"
 #   - release.toml：cargo-release 的 {{version}} / {{crate_name}} 占位符
 #   - .pre-commit-config.yaml：钩子里用 `{{ project-name }}` 判断是不是模板仓库本身，
 #     这段字面量必须原样保留，不能被替换成真实包名
+#   - README.md：模板仓库自己的说明文档，里面全是占位符示例
 exclude = [
   "cliff.toml",
   ".github/**",
   "justfile",
   "release.toml",
   ".pre-commit-config.yaml",
+  "README.md",
 ]
 
 # 只对模板仓库自己有意义、不该出现在生成项目里的文件
@@ -35,8 +37,17 @@ ignore = [
   "CHANGELOG.md",
 ]
 
+# 关于两个 README：
+#   README.md   模板仓库自己的说明（怎么用这个模板），在上面的 exclude 里，
+#               生成后由 post-script 删掉
+#   _README.md  生成项目要用的 README，正常做变量替换，post-script 把它改名成 README.md
+#
+# 为什么不用 cargo-generate 的 `README.md.liquid` 自动改名机制？因为 exclude / ignore
+# 的匹配发生在 `.liquid` 后缀被去掉之后，`exclude = ["README.md"]` 会把
+# `README.md.liquid` 一起排除掉，导致生成项目里的 README 全是没替换的占位符。
+
 [hooks]
-# 按所选 License 整理 LICENSE 文件
+# 生成后收尾：整理 LICENSE 文件、把 _README.md 顶替成 README.md、打印下一步提示
 post = ["post-script.rhai"]
 
 [placeholders.description]
@@ -48,6 +59,9 @@ default = "A Rust project"
 type = "string"
 prompt = "GitHub 用户名或组织名（用于 repository 字段）"
 default = "your-github-username"
+# 按 GitHub 的用户名规则校验：只能是字母 / 数字 / 连字符，最长 39 位。
+# 输错了会当场重问，而不是生成一个指向 404 的 repository 链接。
+regex = "^[A-Za-z0-9][A-Za-z0-9-]{0,38}$"
 
 [placeholders.toolchain]
 type = "string"
