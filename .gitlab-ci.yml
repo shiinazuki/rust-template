@@ -1,0 +1,171 @@
+# GitLab CI —— 与 .github/workflows/build.yaml 等价的一套流水线。
+# 生成项目时选 `ci = gitlab` 才会保留本文件（选 github 则保留 .github/）。
+#
+# 结构：lint / test / audit 三个 job 并行，msrv 视工具链自动跳过，
+#       打 v* tag 时额外跑 release。
+
+stages:
+  - check
+  - release
+
+default:
+  # 用官方 rust 镜像作底；真正的版本由仓库里的 rust-toolchain.toml 决定，
+  # 下面每个 job 起手都会 `rustup toolchain install` 按声明装好。
+  image: rust:1-slim-bookworm
+  interruptible: true
+  # 同一分支连续推送时，新流水线自动取消旧的
+  retry:
+    max: 1
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
+
+variables:
+  CARGO_TERM_COLOR: always
+  # CI 是一次性环境，增量编译只会拖慢速度并撑大缓存
+  CARGO_INCREMENTAL: "0"
+  RUST_BACKTRACE: "1"
+  # 把 cargo 的家目录放进工程目录，GitLab 的 cache 只能缓存工程目录下的路径
+  CARGO_HOME: $CI_PROJECT_DIR/.cargo
+  GIT_SUBMODULE_STRATEGY: recursive
+
+# 依赖与编译产物缓存。key 跟着 Cargo.lock 走：锁文件没变就直接复用。
+# 以 `.` 开头的是 GitLab 的隐藏 job，只作模板用，不会真的被调度执行。
+.cargo-cache:
+  cache:
+    key:
+      files:
+        - Cargo.lock
+    paths:
+      - .cargo/registry/index/
+      - .cargo/registry/cache/
+      - .cargo/git/db/
+      - target/
+    policy: pull-push
+
+# 各 job 共用的准备动作
+.rust-setup:
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends git curl ca-certificates
+    # 按 rust-toolchain.toml 装好 channel 与 components
+    - rustup show active-toolchain || rustup toolchain install
+    - rustc --version && cargo --version
+
+workflow:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v/
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "web"
+
+# ---------------------------------------------------------------------------
+# 格式化 / 拼写 / clippy / 文档：不跑测试，失败得最快
+# ---------------------------------------------------------------------------
+lint:
+  stage: check
+  # extends 是 GitLab 原生的复用机制，天然支持多个父模板并做深合并。
+  # 不要退回 YAML 锚点的 `<<: *a` + `<<: *b`——同一个 mapping 里出现两个 `<<`
+  # 是非法 YAML（duplicate merge key），解析器会直接报错。
+  extends:
+    - .cargo-cache
+    - .rust-setup
+  script:
+    # rustfmt.toml 用了 unstable 选项，stable 的 rustfmt 会静默忽略，必须走 nightly
+    - rustup toolchain install nightly --profile minimal --component rustfmt
+    - cargo +nightly fmt --all -- --check
+    - cargo install --locked typos-cli
+    - typos
+    - cargo clippy --locked --all-targets --all-features -- -D warnings
+    - RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --all-features --document-private-items
+
+# ---------------------------------------------------------------------------
+# 测试 + 覆盖率
+# ---------------------------------------------------------------------------
+test:
+  stage: check
+  # extends 是 GitLab 原生的复用机制，天然支持多个父模板并做深合并。
+  # 不要退回 YAML 锚点的 `<<: *a` + `<<: *b`——同一个 mapping 里出现两个 `<<`
+  # 是非法 YAML（duplicate merge key），解析器会直接报错。
+  extends:
+    - .cargo-cache
+    - .rust-setup
+  script:
+    - cargo install --locked cargo-nextest cargo-llvm-cov
+    - cargo check --locked --all-targets --all-features
+    # 用 .config/nextest.toml 里的 ci profile：不 fail-fast、失败重试、输出 JUnit
+    - cargo llvm-cov nextest --locked --profile ci --all-features --lcov --output-path lcov.info
+    # nextest 不跑 doctest，有 lib target 时补一次
+    - if [ -f src/lib.rs ]; then cargo test --locked --doc --all-features; fi
+    # 让 GitLab 的 MR 页面直接显示覆盖率百分比
+    - cargo llvm-cov report --summary-only | tail -5
+  coverage: '/TOTAL.*?(\d+\.\d+)%/'
+  artifacts:
+    when: always
+    expire_in: 14 days
+    paths:
+      - lcov.info
+    reports:
+      junit: target/nextest/ci/junit.xml
+
+# ---------------------------------------------------------------------------
+# 依赖审计：不需要编译，几秒出结果
+# ---------------------------------------------------------------------------
+deny:
+  stage: check
+  extends: .rust-setup
+  script:
+    - cargo install --locked cargo-deny
+    - cargo deny check
+
+# ---------------------------------------------------------------------------
+# MSRV：验证 Cargo.toml 里声明的最低版本真的能编译。
+# 工具链是 nightly 时自动跳过（nightly 项目可能用 #![feature(...)]，
+# 那种代码在任何 stable 上都编不过，检查没有意义）。
+# ---------------------------------------------------------------------------
+msrv:
+  stage: check
+  extends: .rust-setup
+  script:
+    - |
+      channel=$(grep -m1 '^channel' rust-toolchain.toml | sed -E 's/.*"([^"]+)".*/\1/')
+      version=$(grep -m1 '^rust-version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/' || true)
+      if [ "${channel#nightly}" != "$channel" ]; then
+        echo "工具链是 ${channel}，跳过 MSRV 检查"; exit 0
+      fi
+      if [ -z "$version" ]; then
+        echo "Cargo.toml 里没有 rust-version，跳过 MSRV 检查"; exit 0
+      fi
+      echo "MSRV = $version"
+      rustup toolchain install "$version" --profile minimal
+      cargo "+$version" check --locked --all-targets --all-features
+
+# ---------------------------------------------------------------------------
+# 打了 v* tag 才跑：用 git-cliff 生成本次变更说明并创建 GitLab Release
+# ---------------------------------------------------------------------------
+changelog:
+  stage: release
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v/
+  extends: .rust-setup
+  variables:
+    GIT_DEPTH: 0 # git-cliff 需要完整历史才能算出版本区间
+  script:
+    - cargo install --locked git-cliff
+    - git cliff --offline --latest --strip header -o CHANGES.md
+  artifacts:
+    paths:
+      - CHANGES.md
+
+release:
+  stage: release
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v/
+  needs:
+    - job: changelog
+      artifacts: true
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  script:
+    - echo "creating release for $CI_COMMIT_TAG"
+  release:
+    tag_name: $CI_COMMIT_TAG
+    description: CHANGES.md

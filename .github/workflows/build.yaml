@@ -174,11 +174,79 @@ jobs:
         if: steps.msrv.outputs.skip == 'false'
         run: cargo +${{ steps.msrv.outputs.version }} check --locked --all-targets --all-features
 
+  # 特性组合检查：只跑 `--all-features` 会漏掉「单独开启某个 feature 编不过」这类问题，
+  # 而使用者恰恰可能只开其中一个。cargo-hack 把 [features] 的幂集逐个 check 一遍。
+  #
+  # 现在模板没有声明任何 feature，这个 job 相当于一次普通 check（几秒钟）；
+  # 等你往 Cargo.toml 里加 [features] 之后它才真正开始发挥作用，无需再改 CI。
+  hack:
+    name: feature powerset
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - name: Install Rust (版本由 rust-toolchain.toml 固定)
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: Install cargo-hack
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-hack
+      - uses: Swatinem/rust-cache@v2
+      # --depth 2 限制组合爆炸：feature 一多，完整幂集是 2^n 个组合，CI 会跑到天荒地老
+      - name: Check feature powerset
+        run: cargo hack --locked --feature-powerset --depth 2 --no-dev-deps check
+
+  # Miri：在解释器里跑测试，检测未定义行为（越界、悬垂指针、数据竞争、对齐错误）。
+  # 仅 nightly 可用，所以工具链是 stable 时整个 job 自动跳过。
+  #
+  # 本模板默认 `unsafe_code = "forbid"`，你自己的代码里跑不出 UB；
+  # 它的价值在于依赖里的 unsafe 也会被一并检查到。
+  #
+  # ⚠️ Miri 比原生慢一到两个数量级，且不支持大多数 FFI / 系统调用。
+  #    项目一旦引入 C 依赖或做真实 IO，这个 job 会失败——那时直接删掉它即可。
+  miri:
+    name: miri (nightly only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      # 判断依据和 msrv job 一致：读 rust-toolchain.toml 的 channel，
+      # 以后换工具链不用再改这里。
+      - name: Is this a nightly project?
+        id: check
+        run: |
+          channel=$(grep -m1 '^channel' rust-toolchain.toml | sed -E 's/.*"([^"]+)".*/\1/')
+          if [ "${channel#nightly}" != "$channel" ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "工具链是 ${channel}，Miri 仅 nightly 可用，跳过"
+          fi
+      # 装的是「最新可用 miri 的那个 nightly」而不是今天的 nightly：
+      # miri 组件偶尔会在某天的 nightly 里缺席，rustup 的这个别名能自动避开。
+      - name: Install nightly with miri
+        if: steps.check.outputs.skip == 'false'
+        run: |
+          rustup toolchain install nightly --profile minimal --component miri,rust-src
+          cargo +nightly miri setup
+      - uses: Swatinem/rust-cache@v2
+        if: steps.check.outputs.skip == 'false'
+      - name: Run tests under Miri
+        if: steps.check.outputs.skip == 'false'
+        env:
+          # -Zmiri-disable-isolation: 允许测试读时钟 / 环境变量，否则很多测试直接报错
+          MIRIFLAGS: -Zmiri-disable-isolation
+        run: cargo +nightly miri test --locked --all-features
+
   # 打了 v* tag 才跑：生成 changelog 并创建 GitHub Release
   release:
     name: release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [lint, test, deny]
+    needs: [lint, test, deny, hack]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

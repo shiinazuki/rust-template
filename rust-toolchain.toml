@@ -22,6 +22,18 @@ channel = "{{ toolchain }}"
 components = ["rustfmt", "clippy", "rust-src", "llvm-tools-preview"]
 profile = "minimal"
 
+# 可选组件，按需加进上面的 components：
+#   rust-analyzer   rustup 分发的 LSP 服务端。多数人用编辑器插件自带的那份就够了；
+#                   只有在需要让 LSP 版本与工具链严格对齐（比如 nightly 专有语法
+#                   导致插件版本解析不了）时才有必要加。加了之后要把编辑器指向
+#                   `rustup run <channel> rust-analyzer`。
+#   miri            检测未定义行为，跑 `cargo +nightly miri test`（仅 nightly）
+#   rustc-dev       写 clippy / rustc 插件才需要
+
+# 交叉编译目标。留空表示只装当前平台；要交叉编译时在这里点名，
+# rustup 会连同标准库一起装好：
+# targets = ["x86_64-unknown-linux-musl", "aarch64-apple-darwin"]
+
 # ⚠️ channel 是滚动的 "nightly" 时，偶尔会碰上某天的 nightly 缺其中某个组件，
 #    rustup 会直接拒绝安装整个工具链。真遇上了就把 channel 钉成前一天的日期版本。
 

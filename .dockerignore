@@ -1,0 +1,32 @@
+# 构建上下文越小，docker build 越快。target/ 动辄好几个 G，务必排除。
+target/
+.git/
+.github/
+.vscode/
+.idea/
+
+# 容器里用不到的开发期文件
+*.md
+!README.md
+.pre-commit-config.yaml
+cliff.toml
+deny.toml
+release.toml
+bacon.toml
+justfile
+docker.just
+.editorconfig
+.gitattributes
+.gitignore
+Dockerfile
+.dockerignore
+
+# 本地产物与密钥
+lcov.info
+junit.xml
+flamegraph.svg
+perf.data*
+coverage/
+.env
+.env.*
+!.env.example

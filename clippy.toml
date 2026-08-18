@@ -27,42 +27,59 @@ doc-valid-idents = [
 # cognitive-complexity-threshold = 25
 
 # ---------------------------------------------------------------------------
-# 本模板默认不假设项目使用 async runtime，因此下面的限制默认全部关闭。
+# 异步运行时下的阻塞 API 禁令
 #
-# 如果项目引入了 tokio，把下面两段取消注释即可禁止在 async 上下文里误用
-# std 的阻塞式文件 / 进程 API。
+# 下面这段由 cargo-generate 按生成时的 `async_runtime` 开关决定是注释还是生效：
+# 选了 tokio 就直接启用，禁止在 async 上下文里误用 std 的阻塞式文件 / 进程 API
+# （一次同步 read 就能把整个 runtime 的一个 worker 线程钉死）。
 #
-# ⚠️ 启用前请注意：CI 使用 `-D warnings`，一旦启用，任何一处同步文件操作
-#    都会直接让构建失败，包括测试和构建脚本里的。
+# ⚠️ CI 使用 `-D warnings`：启用后任何一处同步文件操作都会让构建失败，
+#    包括测试和 build.rs 里的。确有需要时在那一处写 #[allow(clippy::disallowed_types)]。
+#
+# ⚠️ 这里的 liquid 标签一律挂在注释行行尾（「注释锚定」写法），好处是本文件在模板
+#    仓库里同时也是合法 TOML，编辑器与 check-toml 钩子都不会误报。
 # ---------------------------------------------------------------------------
 
+# 下面这段是否生效，由生成时的 async_runtime 开关决定{% if async_runtime %}
+disallowed-types = [
+  { path = "std::fs::DirBuilder", replacement = "tokio::fs::DirBuilder" },
+  { path = "std::fs::DirEntry", replacement = "tokio::fs::DirEntry" },
+  { path = "std::fs::File", replacement = "tokio::fs::File" },
+  { path = "std::fs::OpenOptions", replacement = "tokio::fs::OpenOptions" },
+  { path = "std::fs::ReadDir", replacement = "tokio::fs::ReadDir" },
+  { path = "std::process::Command", replacement = "tokio::process::Command" },
+]
+
+disallowed-methods = [
+  { path = "std::fs::canonicalize", replacement = "tokio::fs::canonicalize" },
+  { path = "std::fs::copy", replacement = "tokio::fs::copy" },
+  { path = "std::fs::create_dir", replacement = "tokio::fs::create_dir" },
+  { path = "std::fs::create_dir_all", replacement = "tokio::fs::create_dir_all" },
+  { path = "std::fs::exists", replacement = "tokio::fs::try_exists" },
+  { path = "std::fs::hard_link", replacement = "tokio::fs::hard_link" },
+  { path = "std::fs::metadata", replacement = "tokio::fs::metadata" },
+  { path = "std::fs::read", replacement = "tokio::fs::read" },
+  { path = "std::fs::read_dir", replacement = "tokio::fs::read_dir" },
+  { path = "std::fs::read_link", replacement = "tokio::fs::read_link" },
+  { path = "std::fs::read_to_string", replacement = "tokio::fs::read_to_string" },
+  { path = "std::fs::remove_dir", replacement = "tokio::fs::remove_dir" },
+  { path = "std::fs::remove_dir_all", replacement = "tokio::fs::remove_dir_all" },
+  { path = "std::fs::remove_file", replacement = "tokio::fs::remove_file" },
+  { path = "std::fs::rename", replacement = "tokio::fs::rename" },
+  { path = "std::fs::set_permissions", replacement = "tokio::fs::set_permissions" },
+  { path = "std::fs::soft_link", replacement = "tokio::fs::soft_link" },
+  { path = "std::fs::symlink_metadata", replacement = "tokio::fs::symlink_metadata" },
+  { path = "std::fs::write", replacement = "tokio::fs::write" },
+]
+# 确有必要时在那一处写 #[allow(clippy::disallowed_types)] 并说明原因{% else %}
+# 本项目没有引入 async runtime，禁令默认关闭。
+# 以后接入 tokio 时，把下面两行的注释去掉并按需补全路径即可：
+#
 # disallowed-types = [
-#   { path = "std::fs::DirBuilder", replacement = "tokio::fs::DirBuilder" },
-#   { path = "std::fs::DirEntry", replacement = "tokio::fs::DirEntry" },
 #   { path = "std::fs::File", replacement = "tokio::fs::File" },
-#   { path = "std::fs::OpenOptions", replacement = "tokio::fs::OpenOptions" },
-#   { path = "std::fs::ReadDir", replacement = "tokio::fs::ReadDir" },
 #   { path = "std::process::Command", replacement = "tokio::process::Command" },
 # ]
-
 # disallowed-methods = [
-#   { path = "std::fs::canonicalize", replacement = "tokio::fs::canonicalize" },
-#   { path = "std::fs::copy", replacement = "tokio::fs::copy" },
-#   { path = "std::fs::create_dir", replacement = "tokio::fs::create_dir" },
-#   { path = "std::fs::create_dir_all", replacement = "tokio::fs::create_dir_all" },
-#   { path = "std::fs::exists", replacement = "tokio::fs::try_exists" },
-#   { path = "std::fs::hard_link", replacement = "tokio::fs::hard_link" },
-#   { path = "std::fs::metadata", replacement = "tokio::fs::metadata" },
-#   { path = "std::fs::read", replacement = "tokio::fs::read" },
-#   { path = "std::fs::read_dir", replacement = "tokio::fs::read_dir" },
-#   { path = "std::fs::read_link", replacement = "tokio::fs::read_link" },
 #   { path = "std::fs::read_to_string", replacement = "tokio::fs::read_to_string" },
-#   { path = "std::fs::remove_dir", replacement = "tokio::fs::remove_dir" },
-#   { path = "std::fs::remove_dir_all", replacement = "tokio::fs::remove_dir_all" },
-#   { path = "std::fs::remove_file", replacement = "tokio::fs::remove_file" },
-#   { path = "std::fs::rename", replacement = "tokio::fs::rename" },
-#   { path = "std::fs::set_permissions", replacement = "tokio::fs::set_permissions" },
-#   { path = "std::fs::soft_link", replacement = "tokio::fs::soft_link" },
-#   { path = "std::fs::symlink_metadata", replacement = "tokio::fs::symlink_metadata" },
 #   { path = "std::fs::write", replacement = "tokio::fs::write" },
-# ]
+# ]{% endif %}

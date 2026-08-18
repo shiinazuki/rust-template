@@ -4,7 +4,7 @@
 #   cargo generate --git https://github.com/<owner>/rust-template --name my-app
 #   cargo generate --git ... --name my-lib --lib      # 生成库项目
 #
-# 交互式会依次询问：项目简介 / GitHub 用户名 / 工具链（nightly 或 stable）/ 开源协议。
+# 交互式会依次询问：项目简介 / GitHub 用户名 / 工具链 / 协议 / CI / Docker / async。
 # 非交互可以全部用 --define 指定，例如 --define toolchain=stable。
 #
 # --bin（默认）生成 src/main.rs，--lib 生成 src/lib.rs + tests/，
@@ -14,22 +14,40 @@
 # 用到了 0.23 才有的 array 类型占位符与 conditional 能力
 cargo_generate_version = ">=0.23.0"
 
-# 这些文件里的 {% %} / {{ }} 属于别的模板语言，会和 cargo-generate 的 liquid
-# 引擎冲突，必须排除在变量替换之外（文件本身照常复制到生成的项目里）：
-#   - cliff.toml：git-cliff 的 Tera 模板
-#   - .github/**：GitHub Actions 的 ${{ ... }} 表达式
-#   - justfile：just 自己的 {{ 变量 }} 插值
-#   - release.toml：cargo-release 的 {{version}} / {{crate_name}} 占位符
-#   - .pre-commit-config.yaml：钩子里用 `{{ project-name }}` 判断是不是模板仓库本身，
-#     这段字面量必须原样保留，不能被替换成真实包名
-#   - README.md：模板仓库自己的说明文档，里面全是占位符示例
+# ---------------------------------------------------------------------------
+# exclude：文件照常复制到生成项目，但**不做** liquid 变量替换。
+#          （其它模板引擎沿用 cookiecutter 叫法时称为 copy_without_render，
+#            cargo-generate 没有这个键，等价能力就是这里的 exclude。）
+# ignore ：文件**根本不进入**生成项目，见下面的 ignore 段。
+# 两者匹配的都是「去掉 .liquid 后缀之后」的路径，别弄混。
+# ---------------------------------------------------------------------------
 exclude = [
-  "cliff.toml",
-  ".github/**",
-  "justfile",
-  "release.toml",
-  ".pre-commit-config.yaml",
-  "README.md",
+  # --- 花括号属于别的模板语言，必须躲开 liquid ---------------------------
+  "cliff.toml",              # git-cliff 的 Tera 模板
+  ".github/**",              # GitHub Actions 的 ${{ ... }}
+  ".gitlab-ci.yml",          # GitLab CI 的 $VARIABLE / 规则表达式
+  "justfile",                # just 自己的 {{ 变量 }} 插值
+  "docker.just",             # 同上，just 的插值
+  "release.toml",            # cargo-release 的 {{version}} / {{crate_name}}
+  ".pre-commit-config.yaml", # 钩子里用 `{{ project-name }}` 判断是不是模板仓库本身，
+                             # 这段字面量必须原样保留，不能被替换成真实包名
+  "README.md",               # 模板仓库自己的说明文档，里面全是占位符示例
+
+  # --- 二进制与非文本资源：一旦被 liquid 处理就会损坏 ---------------------
+  # cargo-generate 对二进制内容没有可靠的自动豁免，模板里但凡放了图标、字体、
+  # 测试夹具，都必须在这里点名。下面这组是预防性的通配，目录现在为空也无妨——
+  # 等你真的往 assets/ 丢一张 logo.png 时不需要再想起改这里。
+  #
+  # ⚠️ 注意反面：LICENSE-MIT / LICENSE-APACHE 里的 {{ authors }} 和
+  #    {{ "now" | date: "%Y" }} 是**有意**要被渲染的，所以绝不能把 LICENSE*
+  #    加进这个列表。「凡是不确定就 exclude」在这里是错的。
+  "*.png", "*.jpg", "*.jpeg", "*.gif", "*.webp", "*.ico", "*.svg",
+  "*.pdf", "*.woff", "*.woff2", "*.ttf", "*.otf",
+  "*.zip", "*.gz", "*.xz", "*.tar", "*.bin", "*.wasm",
+  "*.der", "*.pem", "*.p12", "*.jks",
+  "assets/**",
+  "fixtures/**",
+  "tests/snapshots/**",
 ]
 
 # 只对模板仓库自己有意义、不该出现在生成项目里的文件
@@ -47,8 +65,23 @@ ignore = [
 # `README.md.liquid` 一起排除掉，导致生成项目里的 README 全是没替换的占位符。
 
 [hooks]
-# 生成后收尾：整理 LICENSE 文件、把 _README.md 顶替成 README.md、打印下一步提示
+# 生成后收尾：整理 LICENSE、把 _README.md 顶替成 README.md、按需删 Cargo.lock、
+# 检查 nightly 组件是否齐全、打印下一步提示。
+# （其它模板引擎叫 post_script；cargo-generate 的键就是 [hooks] 下的 pre / post / init。）
 post = ["post-script.rhai"]
+
+# ---------------------------------------------------------------------------
+# 占位符
+#
+# ⚠️ 项目名与作者**不在**这里：
+#      project-name  来自 --name（或交互输入），并自动派生 crate_name（snake_case）
+#      authors / username  由 cargo-generate 从 git / cargo 配置里读出来
+#    这些是内置变量，再定义一遍反而会让用户被问两次。直接在模板里 {{ authors }} 即可。
+#    完整内置列表见 https://cargo-generate.github.io/cargo-generate/templates/builtin_placeholders.html
+#
+# ⚠️ 只有这里（顶层 [placeholders]）定义的变量才能驱动下面的 [conditional.*]。
+#    写在 conditional 里的占位符可以在模板文件中使用，但不能再去控制别的 conditional。
+# ---------------------------------------------------------------------------
 
 [placeholders.description]
 type = "string"
@@ -75,13 +108,49 @@ prompt = "选择开源协议"
 choices = ["MIT", "Apache-2.0", "MIT OR Apache-2.0"]
 default = "MIT"
 
-# --- 按 crate 类型裁剪源码骨架 -------------------------------------------
-# crate_type 是 cargo-generate 的内置变量，由命令行的 --bin / --lib 决定，
-# 不传时默认为 bin。
+[placeholders.ci]
+type = "string"
+prompt = "CI 平台"
+choices = ["github", "gitlab", "none"]
+default = "github"
+
+[placeholders.docker]
+type = "bool"
+prompt = "生成 Dockerfile（多阶段构建 + distroless 运行镜像）？"
+default = false
+
+[placeholders.async_runtime]
+type = "bool"
+prompt = "引入 tokio 异步运行时？（同时开启 clippy 的阻塞 API 禁令）"
+default = false
+
+# ---------------------------------------------------------------------------
+# 按 crate 类型裁剪源码骨架
+# crate_type 是内置变量，由命令行的 --bin / --lib 决定，不传时默认 bin。
+# ---------------------------------------------------------------------------
 
 [conditional.'crate_type == "lib"']
-ignore = ["src/main.rs"]
+# 库项目没有可执行入口，Dockerfile / 容器编排一并去掉
+ignore = ["src/main.rs", "Dockerfile", ".dockerignore", "docker.just"]
 
 [conditional.'crate_type == "bin"']
 # 二进制 crate 没有可供外部 use 的库目标，集成测试示例一起去掉
 ignore = ["src/lib.rs", "tests/integration.rs"]
+
+# ---------------------------------------------------------------------------
+# 按 CI 平台裁剪
+# ---------------------------------------------------------------------------
+
+[conditional.'ci != "github"']
+# dependabot 是 GitHub 专有的，跟着 workflows 一起走
+ignore = [".github"]
+
+[conditional.'ci != "gitlab"']
+ignore = [".gitlab-ci.yml"]
+
+# ---------------------------------------------------------------------------
+# 按功能开关裁剪
+# ---------------------------------------------------------------------------
+
+[conditional.'docker == false']
+ignore = ["Dockerfile", ".dockerignore", "docker.just"]

@@ -1,5 +1,10 @@
 # 项目命令入口。`just` 列出全部命令，`just --list` 同理。
 #
+# Docker 相关命令拆在 docker.just 里，用可选 import 引进来：
+# 生成项目时没选 Docker，那个文件不存在，`import?` 会静默跳过（普通 import 会报错）。
+import? 'docker.just'
+
+#
 # 从 git remote 推导 owner/repo，git-cliff 用它生成 changelog 里的提交链接
 gh_repo := `git remote get-url origin 2>/dev/null | sed -e 's,^git@github.com:,,' -e 's,^https://github.com/,,' -e 's,\.git$,,'`
 
@@ -198,6 +203,73 @@ release-execute level="patch": ci
 # ---------------------------------------------------------------------------
 # 初始化
 # ---------------------------------------------------------------------------
+
+[group('setup')]
+[doc('体检：检查工具链组件与配套 cargo 工具是否齐全，并给出补装命令')]
+doctor:
+    #!/usr/bin/env bash
+    # 刻意不加 `set -e`：体检要把所有问题一次列全，不能碰到第一个就退出。
+    set -uo pipefail
+    missing=0
+
+    echo "== 工具链 =="
+    if ! command -v rustup >/dev/null 2>&1; then
+        echo "  ✗ 未找到 rustup（https://rustup.rs）"
+        exit 1
+    fi
+    channel=$(grep -m1 '^channel' rust-toolchain.toml | sed -E 's/.*"([^"]+)".*/\1/')
+    echo "  rust-toolchain.toml 声明的 channel: ${channel}"
+    rustc --version 2>/dev/null | sed 's/^/  /' || {
+        echo "  ✗ 工具链 ${channel} 尚未安装 -> rustup toolchain install"
+        missing=1
+    }
+
+    echo "== 组件 =="
+    installed=$(rustup component list --installed 2>/dev/null)
+    # llvm-tools 在 `component list` 里显示为 llvm-tools（不带 -preview 后缀）
+    for c in clippy rust-src llvm-tools; do
+        if grep -q "^${c}" <<<"$installed"; then
+            echo "  ✓ ${c}"
+        else
+            echo "  ✗ ${c} -> rustup component add ${c}"
+            missing=1
+        fi
+    done
+
+    # 格式化恒定依赖 nightly 的 rustfmt：rustfmt.toml 里用了 unstable 选项，
+    # stable 的 rustfmt 会静默忽略它们（不报错，但也不生效）。
+    if rustup component list --toolchain nightly --installed 2>/dev/null | grep -q '^rustfmt'; then
+        echo "  ✓ rustfmt (nightly)"
+    else
+        echo "  ✗ rustfmt (nightly) -> rustup toolchain install nightly --profile minimal --component rustfmt"
+        missing=1
+    fi
+
+    echo "== 配套工具 =="
+    for t in cargo-nextest cargo-deny cargo-llvm-cov cargo-release cargo-outdated \
+             cargo-machete cargo-semver-checks typos git-cliff bacon; do
+        if command -v "$t" >/dev/null 2>&1; then
+            echo "  ✓ ${t}"
+        else
+            echo "  ✗ ${t} -> just install-tools"
+            missing=1
+        fi
+    done
+
+    echo "== 可选 =="
+    for t in pre-commit cargo-binstall docker; do
+        command -v "$t" >/dev/null 2>&1 \
+            && echo "  ✓ ${t}" \
+            || echo "  - ${t}（未安装，非必需）"
+    done
+
+    echo ""
+    if [ "$missing" -eq 0 ]; then
+        echo "一切就绪，可以 just ci 了。"
+    else
+        echo "有缺失项，按上面的 -> 提示补装后重跑 just doctor。"
+        exit 1
+    fi
 
 [group('setup')]
 [doc('安装本项目用到的全部 cargo 工具')]

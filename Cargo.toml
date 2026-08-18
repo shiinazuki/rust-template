@@ -2,9 +2,15 @@
 # 这样即使把项目放进别的 workspace 目录下，也不会被父级 workspace 意外接管
 # （否则 cargo 会报 "current package believes it's in a workspace when it's not"）。
 [workspace]
+# 现在只有根 crate 一个成员。以后拆分子 crate（比如 crates/core、crates/cli）时
+# 在这里登记，下面 [workspace.package] / [workspace.dependencies] / [workspace.lints]
+# 里的配置它们可以直接继承，不必每个子 crate 抄一遍。
+members = []
+resolver = "3"
 
-[package]
-name = "{{ project-name }}"
+# --- 供所有成员继承的公共元数据 -------------------------------------------
+# 子 crate 里写 `version.workspace = true` 即可继承，发版时只改这一处。
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
 # MSRV（最低支持版本）。它只是下限，不限制上限——用更新的 stable 或 nightly 编译都没问题。
@@ -13,10 +19,34 @@ edition = "2024"
 # `just msrv` 和 CI 的 msrv job 会验证它属实；nightly 项目会自动跳过该检查。
 rust-version = "1.85"
 license = "{{ license }}"
-description = "{{ description }}"
 repository = "https://github.com/{{ gh-username }}/{{ project-name }}"
 authors = ["{{ authors }}"]
+
+# --- 供所有成员继承的依赖版本 ---------------------------------------------
+# 版本号统一在这里定，成员里只写 `foo = { workspace = true }`，
+# 避免多个子 crate 各自声明版本导致同一个库被编进来两份。
+#
+# ⚠️ 下面用的是「注释锚定」写法：liquid 的 {% raw %}{% if %}{% endraw %} /
+#    {% raw %}{% endif %}{% endraw %} 标签一律挂在 TOML 注释行的**行尾**，
+#    于是本文件在模板仓库里**同时也是合法 TOML**——编辑器的 TOML 语言服务
+#    （taplo / even-better-toml）不会再把两个标签行当成重复键而报
+#    "Duplicate dependency name"，`check-toml` 钩子也能照常检查。
+#    反例：单独占一行的裸 {% raw %}{%- if ... %}{% endraw %} 会让本文件变成非法 TOML。
+[workspace.dependencies]
+# 这里是版本目录：成员写 `foo = { workspace = true }` 引用后才真正生效{% if async_runtime %}
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+# tokio 的 feature 在此统一收口，子 crate 不要各自再开{% endif %}
+
+[package]
+name = "{{ project-name }}"
+description = "{{ description }}"
 readme = "README.md"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
 # keywords = ["cli"]                        # 最多 5 个，发布到 crates.io 时用于搜索
 # categories = ["command-line-utilities"]   # 取值见 https://crates.io/categories
 # publish = false                           # 内部项目建议打开，防止误发布到 crates.io
@@ -24,12 +54,17 @@ readme = "README.md"
 # 打包发布时排除掉只对开发有意义的文件，减小 .crate 体积
 exclude = [
   ".github/",
+  ".gitlab-ci.yml",
   ".vscode/",
   ".config/",
   ".pre-commit-config.yaml",
+  ".gitattributes",
+  ".dockerignore",
+  "Dockerfile",
   "cliff.toml",
   "deny.toml",
   "justfile",
+  "docker.just",
   "bacon.toml",
   "release.toml",
 ]
@@ -37,6 +72,9 @@ exclude = [
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+# 版本继承自上面的 [workspace.dependencies]，这里只声明「本 crate 要用」{% if async_runtime %}
+tokio = { workspace = true }
+# 入口是 #[tokio::main]，见 src/main.rs{% endif %}
 
 [dev-dependencies]
 
@@ -53,13 +91,20 @@ exclude = [
 # 加解密、序列化等）在 debug 运行时快一个数量级。代价是首次编译稍慢。
 [profile.dev.package."*"]
 opt-level = 2
+# 依赖的调试符号基本用不上，去掉能显著缩小 target/ 并加快链接
+debug = false
+
+[profile.dev]
+# macOS / Linux 上把调试信息留在 .o 里而不是打包进二进制，链接快很多。
+# Windows 上 cargo 会自动忽略这一项。
+split-debuginfo = "unpacked"
 
 [profile.release]
 opt-level = 3
 lto = "thin"      # 需要更激进可改成 "fat"，体积更小但编译明显变慢
 codegen-units = 1
 strip = "symbols"
-# panic = "abort" # 二进制更小，但会禁用 unwind 并影响 #[should_panic] 测试
+panic = "unwind"  # 改成 "abort" 二进制更小，但会禁用 unwind 并影响 #[should_panic] 测试
 
 # 做性能分析（flamegraph / samply / instruments）时用：
 #   cargo build --profile profiling
@@ -69,13 +114,26 @@ inherits = "release"
 debug = true
 strip = "none"
 
+# benchmark 跟着 release 的优化走，否则测出来的是 O0 的数字，没有参考价值
+[profile.bench]
+inherits = "release"
+debug = true
+strip = "none"
+
+# 测试用 O1：比 O0 跑得快不少，又不像 O3 那样每次都要等半天编译
+[profile.test]
+opt-level = 1
+
 # ---------------------------------------------------------------------------
 # 统一代码规范与 Clippy 约束
+#
+# 放在 [workspace.lints] 而不是 [lints]，将来加子 crate 时它们只需写
+# `[lints] workspace = true` 就能继承同一套规则，不会各自漂移。
 #
 # 注意 lint 组（group）必须带 priority = -1，否则组会覆盖掉后面单条 lint 的设置。
 # ---------------------------------------------------------------------------
 
-[lints.rust]
+[workspace.lints.rust]
 unsafe_code = "forbid"                       # 默认禁止 unsafe（确实需要时改成 "deny" 并按处 allow）
 missing_debug_implementations = "warn"
 unreachable_pub = "warn"                     # 只在 crate 内部用的类型不要暴露成 pub
@@ -84,7 +142,7 @@ rust_2018_idioms = { level = "warn", priority = -1 }
 # 库项目自动打开：强制公开 API 写文档注释（二进制项目生成为 "allow"）
 missing_docs = "{% if crate_type == 'lib' %}warn{% else %}allow{% endif %}"
 
-[lints.clippy]
+[workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 
@@ -103,3 +161,7 @@ missing_panics_doc = "allow"
 
 # 测试里用 unwrap/expect/panic 是常态，由 clippy.toml 的 allow-*-in-tests 统一放行，
 # 不需要再在源码里写 #![cfg_attr(test, allow(clippy::unwrap_used))]。
+
+# 根 crate 继承上面那套规则
+[lints]
+workspace = true
