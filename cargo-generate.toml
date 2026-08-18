@@ -4,6 +4,9 @@
 #   cargo generate --git https://github.com/<owner>/rust-template --name my-app
 #   cargo generate --git ... --name my-lib --lib      # 生成库项目
 #
+# 交互式会依次询问：项目简介 / GitHub 用户名 / 工具链（nightly 或 stable）/ 开源协议。
+# 非交互可以全部用 --define 指定，例如 --define toolchain=stable。
+#
 # --bin（默认）生成 src/main.rs，--lib 生成 src/lib.rs + tests/，
 # 由下面的 [conditional.'crate_type == ...'] 控制。
 
@@ -45,6 +48,12 @@ default = "A Rust project"
 type = "string"
 prompt = "GitHub 用户名或组织名（用于 repository 字段）"
 default = "your-github-username"
+
+[placeholders.toolchain]
+type = "string"
+prompt = "Rust 工具链（写入 rust-toolchain.toml 的 channel）"
+choices = ["nightly", "stable"]
+default = "nightly"
 
 [placeholders.license]
 type = "string"

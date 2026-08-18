@@ -74,12 +74,23 @@ coverage:
 audit:
     cargo deny check
 
+# nightly 项目自动跳过：可能用了 #![feature(...)]，在 stable 上必然编不过，
+# 检查没有意义。判断依据是 rust-toolchain.toml 的 channel，和 CI 里的逻辑一致。
 [group('check')]
-[doc('验证 Cargo.toml 里声明的 MSRV 真的能编译')]
+[doc('验证 Cargo.toml 里声明的 MSRV 真的能编译（nightly 项目自动跳过）')]
 msrv:
     #!/usr/bin/env bash
     set -euo pipefail
-    version=$(grep -m1 '^rust-version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')
+    channel=$(grep -m1 '^channel' rust-toolchain.toml | sed -E 's/.*"([^"]+)".*/\1/')
+    version=$(grep -m1 '^rust-version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/' || true)
+    if [ "${channel#nightly}" != "$channel" ]; then
+        echo "工具链是 ${channel}，跳过 MSRV 检查"
+        exit 0
+    fi
+    if [ -z "$version" ]; then
+        echo "Cargo.toml 里没有 rust-version，跳过 MSRV 检查"
+        exit 0
+    fi
     echo "MSRV = $version"
     rustup toolchain install "$version" --profile minimal
     cargo "+$version" check --locked --all-targets --all-features

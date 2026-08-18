@@ -2,17 +2,30 @@
 # 进入目录时 rustup 会按这里的声明自动安装并切换，团队成员之间不会再出现
 # "我这边能过 CI 你那边不过" 的版本漂移。
 #
-# 想完全锁死版本，把 channel 改成具体版本号，例如 channel = "1.85.0"。
+# ⚠️ 这个文件会覆盖你 rustup 的全局默认工具链：无论 `rustup default` 设的是什么，
+#    在本项目目录内一律以这里的 channel 为准。
+#
+# channel 可选：
+#   "nightly"            滚动更新的最新 nightly（本项目当前的选择方式）
+#   "nightly-2026-08-01" 钉死到某一天的 nightly：能用 #![feature(...)]，
+#                        又不会因为 nightly 每天变动导致 CI 莫名其妙挂掉。
+#                        某个 nightly 缺少 rustfmt/clippy 组件时也靠它绕过。
+#   "stable"             跟随最新 stable
+#   "1.85.0"             完全锁死到某个具体版本
 [toolchain]
-channel = "stable"
+channel = "{{ toolchain }}"
 # llvm-tools-preview 是 cargo-llvm-cov 生成覆盖率所必需的
 components = ["rustfmt", "clippy", "llvm-tools-preview"]
 profile = "minimal"
 
-# 注意：rustfmt.toml 里使用了若干 unstable 选项（imports_granularity、
-# group_imports、wrap_comments 等），格式化必须走 nightly：
+# 关于格式化：
+# rustfmt.toml 里用到了 imports_granularity、group_imports、wrap_comments 等
+# unstable 选项，只有 nightly 的 rustfmt 才认，stable 会静默忽略它们。
+# 所以 justfile / CI / pre-commit 里的格式化命令一律显式写成 `cargo +nightly fmt`：
 #
-#   rustup toolchain install nightly --profile minimal --component rustfmt
-#   cargo +nightly fmt --all
+#   - channel 是 nightly 时，+nightly 指向的就是同一个工具链，等价于 `cargo fmt`
+#   - channel 是 stable 时，需要额外装一次 nightly 的 rustfmt：
+#       rustup toolchain install nightly --profile minimal --component rustfmt
 #
-# 构建、测试、clippy 全部跑在上面固定的 stable 上。
+# 例外：如果把 channel 钉成了日期版本（nightly-2026-08-01），`+nightly` 指的是
+# 另一个「最新 nightly」工具链，需要单独安装，或者把那些命令里的 +nightly 去掉。

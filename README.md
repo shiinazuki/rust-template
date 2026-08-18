@@ -6,15 +6,33 @@
 
 ### Rust 工具链
 
-工具链版本由 [`rust-toolchain.toml`](rust-toolchain.toml) 固定（stable），首次进入目录时 rustup 会自动安装。
-`Cargo.toml` 里的 `rust-version` 声明了 MSRV（最低支持版本），CI 会用它单独跑一次编译验证。
+工具链由 [`rust-toolchain.toml`](rust-toolchain.toml) 固定为 **{{ toolchain }}**，首次进入目录时 rustup 会自动安装。
+注意这个文件会**覆盖你 rustup 的全局默认工具链**，在本项目目录内一律以它为准。
 
-格式化额外需要 nightly —— [`rustfmt.toml`](rustfmt.toml) 里用到了 `imports_granularity`、
-`group_imports`、`wrap_comments` 等 unstable 选项，stable 的 rustfmt 会静默忽略它们：
+[`rustfmt.toml`](rustfmt.toml) 用到了 `imports_granularity`、`group_imports`、`wrap_comments`
+等 unstable 选项，只有 nightly 的 rustfmt 才认，所以格式化命令统一写成 `cargo +nightly fmt`。
+{% if toolchain == "stable" %}
+本项目跑在 stable 上，需要额外装一次 nightly 的 rustfmt：
 
 ```bash
 rustup toolchain install nightly --profile minimal --component rustfmt
 ```
+{% else %}
+本项目本身就跑在 nightly 上，`+nightly` 指向的是同一个工具链，不需要额外安装。
+
+nightly 是滚动更新的，偶尔会出现某个版本缺 `rustfmt` / `clippy` 组件，或者 clippy 新增的
+lint 让 CI 的 `-D warnings` 突然挂掉。真遇上了就把 `channel` 钉成日期版本，例如
+`channel = "nightly-2026-08-01"`——但那之后 `+nightly` 会指向另一个工具链，
+需要单独安装 nightly，或把命令里的 `+nightly` 去掉。
+{% endif %}
+### MSRV
+
+`Cargo.toml` 里的 `rust-version` 声明了最低支持版本。它**只是下限，不限制上限**，
+用更新的 stable 或 nightly 编译都没问题。
+
+`just msrv` 和 CI 的 msrv job 会真的用那个版本编译一遍来验证声明属实；
+但如果 `rust-toolchain.toml` 的 channel 是 nightly，这项检查会**自动跳过**——
+nightly 项目可能用了 `#![feature(...)]`，那种代码在任何 stable 上都编不过，检查没有意义。
 
 ### 配套工具
 

@@ -138,23 +138,40 @@ jobs:
       - name: Check dependencies (advisories / licenses / bans / sources)
         run: cargo deny check
 
-  # 验证 Cargo.toml 里声明的 MSRV 确实能编译，避免用了新版本才有的 API 却没改 rust-version
+  # 验证 Cargo.toml 里声明的 MSRV 确实能编译，避免用了新版本才有的 API 却没改 rust-version。
+  #
+  # 项目跑在 nightly 上时自动跳过：nightly 项目可能用 #![feature(...)]，
+  # 这类代码在任何 stable 上都编不过（E0554），MSRV 检查没有意义。
+  # 判断依据是 rust-toolchain.toml 里的 channel，所以以后换工具链不用再改这里。
   msrv:
     name: msrv
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
-      - name: Read MSRV from Cargo.toml
+      - name: Resolve MSRV
         id: msrv
         run: |
+          channel=$(grep -m1 '^channel' rust-toolchain.toml | sed -E 's/.*"([^"]+)".*/\1/')
           version=$(grep -m1 '^rust-version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "MSRV = $version"
+          if [ "${channel#nightly}" != "$channel" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "工具链是 ${channel}，跳过 MSRV 检查"
+          elif [ -z "$version" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Cargo.toml 里没有 rust-version，跳过 MSRV 检查"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "version=$version" >> "$GITHUB_OUTPUT"
+            echo "MSRV = $version"
+          fi
       - name: Install Rust ${{ steps.msrv.outputs.version }}
+        if: steps.msrv.outputs.skip == 'false'
         run: rustup toolchain install ${{ steps.msrv.outputs.version }} --profile minimal
       - uses: Swatinem/rust-cache@v2
+        if: steps.msrv.outputs.skip == 'false'
       - name: Check with MSRV toolchain
+        if: steps.msrv.outputs.skip == 'false'
         run: cargo +${{ steps.msrv.outputs.version }} check --locked --all-targets --all-features
 
   # 打了 v* tag 才跑：生成 changelog 并创建 GitHub Release

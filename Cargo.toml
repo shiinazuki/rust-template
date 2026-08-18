@@ -7,7 +7,11 @@
 name = "{{ project-name }}"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85" # MSRV：edition 2024 要求的最低版本，改动前先跑 `just msrv`
+# MSRV（最低支持版本）。它只是下限，不限制上限——用更新的 stable 或 nightly 编译都没问题。
+# 作用：低于它时 cargo 直接报错；resolver 选依赖版本时会避开要求更高 rustc 的版本；
+# clippy 也会读它，不建议你用比 MSRV 更新的 API。
+# `just msrv` 和 CI 的 msrv job 会验证它属实；nightly 项目会自动跳过该检查。
+rust-version = "1.85"
 license = "{{ license }}"
 description = "{{ description }}"
 repository = "https://github.com/{{ gh-username }}/{{ project-name }}"
