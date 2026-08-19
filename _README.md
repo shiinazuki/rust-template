@@ -1,10 +1,20 @@
 # {{ project-name }}
-
+{% if ci == "github" %}
+[![build](https://github.com/{{ gh-username }}/{{ project-name }}/actions/workflows/build.yaml/badge.svg)](https://github.com/{{ gh-username }}/{{ project-name }}/actions/workflows/build.yaml)
+[![audit](https://github.com/{{ gh-username }}/{{ project-name }}/actions/workflows/audit.yaml/badge.svg)](https://github.com/{{ gh-username }}/{{ project-name }}/actions/workflows/audit.yaml)
+{% endif %}![license](https://img.shields.io/badge/license-{{ license | replace: " ", "%20" }}-blue)
+{% if crate_type == "lib" %}
+<!-- 发布到 crates.io 之后把下面两行的注释去掉 -->
+<!-- [![crates.io](https://img.shields.io/crates/v/{{ project-name }}.svg)](https://crates.io/crates/{{ project-name }}) -->
+<!-- [![docs.rs](https://docs.rs/{{ project-name }}/badge.svg)](https://docs.rs/{{ project-name }}) -->
+{% endif %}
 {{ description }}
 
 ## 快速开始
 
 ```bash
+git add -A && git commit -m "chore: 从模板初始化项目"   # 生成器只做了 git init
+
 just doctor          # 体检：工具链组件与配套工具是否齐全（会告诉你缺什么、怎么装）
 just install-tools   # 安装配套 cargo 工具（首次）
 just hooks           # 安装 git 钩子（首次，需要先装 pre-commit）
@@ -14,6 +24,26 @@ just dev             # 开始写代码：bacon 盯着文件变化实时重跑 cl
 
 `just` 不带参数会列出全部命令（按用途分组）。
 
+## 项目骨架
+{% if crate_type == "lib" %}
+```
+src/
+  lib.rs           公开 API 入口{% if error_handling %}
+  error.rs         公开错误类型（thiserror）{% endif %}
+tests/
+  integration.rs   集成测试：以外部使用者的视角调用公开 API
+```
+{% else %}```
+src/
+  main.rs          可执行入口{% if cli %}
+  cli.rs           命令行参数定义（clap derive）{% endif %}{% if logging %}
+  telemetry.rs     日志 / 追踪初始化（tracing）{% endif %}{% if error_handling %}
+  error.rs         领域错误类型（thiserror）{% endif %}
+```
+
+业务逻辑一旦超过几十行就该从 `main.rs` 挪进子模块或 `lib.rs`——
+`main.rs` 里的东西没法被集成测试和 benchmark 直接调用。
+{% endif %}
 ## 开发环境
 
 ### Rust 工具链
@@ -31,15 +61,16 @@ just dev             # 开始写代码：bacon 盯着文件变化实时重跑 cl
 本项目跑在 stable 上，需要额外装一次 nightly 的 rustfmt：
 
 ```bash
-rustup toolchain install nightly --profile minimal --component rustfmt
+rustup toolchain install nightly --allow-downgrade --profile minimal --component rustfmt
 ```
 {% else %}
 本项目本身就跑在 nightly 上，`+nightly` 指向的是同一个工具链，不需要额外安装。
 
 nightly 是滚动更新的，偶尔会出现某个版本缺 `rustfmt` / `clippy` 组件，或者 clippy 新增的
-lint 让 CI 的 `-D warnings` 突然挂掉。真遇上了就把 `channel` 钉成日期版本，例如
+lint 让 CI 的 `-D warnings` 突然挂掉。前者用 `rustup toolchain install nightly --allow-downgrade`
+就能绕过（自动退回到组件齐全的那天）；后者真遇上了就把 `channel` 钉成日期版本，例如
 `channel = "nightly-2026-08-01"`——但那之后 `+nightly` 会指向另一个工具链，
-需要单独安装 nightly，或把命令里的 `+nightly` 去掉。
+需要单独安装，或把命令里的 `+nightly` 去掉。
 {% endif %}
 ### MSRV
 
@@ -80,6 +111,7 @@ cargo install cargo-binstall
 | `cargo-outdated` | 检查依赖是否有新版本 |
 | `cargo-machete` | 找出声明了却没用到的依赖 |
 | `cargo-semver-checks` | 公开 API 的破坏性变更检查 |
+| `cargo-hack` | feature 幂集检查 |
 | `typos-cli` | 拼写检查 |
 | `git-cliff` | 生成 CHANGELOG |
 | `bacon` | 后台实时监控 |
@@ -94,6 +126,12 @@ just hooks
 `just hooks` 会装上 `pre-commit`、`commit-msg`、`pre-push` 三类钩子：
 提交前跑格式化 / clippy / 拼写检查，提交时校验 commit message 规范，推送前跑全量测试。
 
+### 容器里开发（可选）
+
+[`.devcontainer/`](.devcontainer/) 里有一份 Dev Container 配置，
+VS Code 的 Dev Containers 插件或 GitHub Codespaces 可以直接用，
+省掉本机装工具链的过程。
+
 ## 常用命令
 
 `just` 直接列出全部命令（按用途分组）。
@@ -107,14 +145,18 @@ just fmt                # 格式化（nightly）
 just fix                # clippy --fix 自动修复 + 格式化
 just dev                # bacon 实时监控
 just doc                # 生成并打开 API 文档
+just bench              # 跑 benchmark
+just flamegraph         # 采样生成火焰图
 just clean              # 清理编译产物与本地报告
 
-just lint               # 格式化检查 + clippy + typos
+just lint               # 格式化检查 + clippy + typos + 文档警告
 just test               # 运行测试（含 doctest）
 just coverage           # 生成覆盖率报告 lcov.info
+just coverage-html      # HTML 覆盖率报告并打开
 just audit              # cargo deny check
+just hack               # feature 幂集检查
 just msrv               # 验证 MSRV 能编译
-just ci                 # 本地跑一遍 CI 的全部检查
+just ci                 # 本地跑一遍 CI 的主要检查（lint / test / audit）
 
 just unused             # 找出没用到的依赖（cargo-machete）
 just semver             # 公开 API 破坏性变更检查（仅 lib 项目）
@@ -126,19 +168,26 @@ just changelog          # 刷新 CHANGELOG.md
 just release minor      # 发版预演（不改动任何东西）
 just release-execute minor  # 真正发版：抬版本号 + CHANGELOG + tag + 推送
 ```
-{% if docker %}
+{% if docker and crate_type == "bin" %}
 容器相关命令来自 [`docker.just`](docker.just)（根 justfile 用 `import?` 可选加载）：
 
 ```bash
-just docker-build       # 构建镜像（多阶段 + distroless）
+just docker-build       # 构建镜像（多阶段 + distroless，同时打 latest 与版本号 tag）
 just docker-run -- --help   # 运行镜像
 just docker-inspect     # 用 dive 看分层体积
+just docker-scan        # 用 trivy 扫已知漏洞
 just docker-clean       # 删除本地镜像
 ```
 {% endif %}
-`just ci` 只包含 `lint` / `test` / `audit` 三项，和 CI 上跑的一致。
-`unused` 和 `semver` 刻意留在外面手动跑：前者对宏里用到的依赖会误报，
-后者需要和已发布版本联网比对——都不适合当成每次提交的硬性门槛。
+`just ci` 包含 `lint` / `test` / `audit` 三项。其中 `lint` 和 CI 的 lint job 严格对齐，
+**含 `cargo doc` 的文档警告检查**——`[workspace.lints.rustdoc]` 里 `bare_urls`、
+`invalid_html_tags` 这些都只是 `warn`，本地不跑 `cargo doc` 就看不见，
+推上去才会在 CI 的 `RUSTDOCFLAGS="-D warnings"` 上挂掉。
+
+`unused`、`semver`、`hack`、`msrv` 刻意留在外面手动跑：第一个对宏里用到的依赖会误报，
+第二个需要和已发布版本联网比对，第三个在 feature 多起来之后会比较慢，
+第四个会往你机器上装一整条工具链——都不适合塞进「随手跑一下」的命令里。
+CI 上这四项该跑的照常跑。
 
 ## 工程结构
 
@@ -156,8 +205,11 @@ just docker-clean       # 删除本地镜像
 | `dev` | 自身代码 O0 保证调试体验；依赖 O2（`[profile.dev.package."*"]`），运行时快一个数量级 |
 | `test` | O1，比 O0 跑得快又不用等 O3 的编译时间 |
 | `release` | O3 + thin LTO + `codegen-units = 1` + strip |
-| `profiling` | 继承 release 但保留符号，火焰图才有可读函数名：`cargo build --profile profiling` |
+| `profiling` | 继承 release 但保留符号，火焰图才有可读函数名：`just flamegraph` |
 | `bench` | 继承 release 且保留符号，保证 benchmark 测的是优化后的代码 |
+
+`Cargo.toml` 末尾还注释着两项按需打开的配置：`build-override`（加速 proc-macro 编译）
+和 `overflow-checks`（release 下也检查整数溢出，账务 / 协议解析类项目建议打开）。
 {% if async_runtime %}
 ### 异步运行时
 
@@ -167,6 +219,45 @@ just docker-clean       # 删除本地镜像
 在 async 上下文里误用 `std::fs` / `std::process` 这类**阻塞** API 会直接报错——
 一次同步 `read` 就足以把 runtime 的一个 worker 线程钉死。请改用 `tokio::fs` 对应项。
 确有必要时在那一处写 `#[allow(clippy::disallowed_types)]` 并说明原因。
+{% endif %}{% if error_handling %}
+### 错误处理
+{% if crate_type == "lib" %}
+[`src/error.rs`](src/error.rs) 里用 [thiserror](https://docs.rs/thiserror) 定义了公开错误类型
+`Error` 与 `Result<T>` 别名，并从 `lib.rs` 重新导出。
+
+库只用 thiserror、不用 anyhow，这是有意的：库抛 `anyhow::Error` 等于告诉调用方
+「出错了，但我不告诉你是什么错」，对方除了打印之外什么都做不了。
+`Error` 上标了 `#[non_exhaustive]`，以后新增变体不构成破坏性变更。
+{% else %}
+两层分工，[`src/error.rs`](src/error.rs) 与 `main.rs` 各管一段：
+
+- **领域层**用 [thiserror](https://docs.rs/thiserror) 定义**具体**错误（`Error::EmptyName`），
+  调用方可以 `match` 之后分别处理——该重试的重试，该降级的降级；
+- **`main`** 用 [anyhow](https://docs.rs/anyhow) 收口，`.context("...")` 补充上下文后统一上报。
+
+只有 anyhow 的项目，在需要「按错误类型决定要不要重试」时会非常难受；
+全都手写 enum 又太啰嗦。两者搭配是应用层的常见解法。
+{% endif %}{% endif %}{% if cli and crate_type == "bin" %}
+### 命令行
+
+[`src/cli.rs`](src/cli.rs) 用 [clap](https://docs.rs/clap) 的 derive 宏定义参数，
+只负责解析与校验，不掺业务逻辑——这样 `Cli` 在测试里可以直接构造，
+不必真的起进程传参数。里面还带了 clap 官方推荐的 `debug_assert()` 自检测试，
+「两个参数用了同一个 short」这类问题会在测试期就暴露。
+
+打开了 `env` feature：`#[arg(env = "LOG_LEVEL")]` 声明的参数会自动回落到环境变量，
+容器里不用改启动命令也能调整行为。
+{% endif %}{% if logging and crate_type == "bin" %}
+### 日志
+
+[`src/telemetry.rs`](src/telemetry.rs) 用 [tracing](https://docs.rs/tracing) +
+`tracing-subscriber` 初始化全局 subscriber：
+
+- 过滤规则运行时可调：`RUST_LOG=warn,{{ crate_name }}=debug`，不必重新编译；
+- 日志写 **stderr**，stdout 留给程序真正的输出，管道和重定向才不会串味；
+- 过滤表达式写错不会 panic（`parse_lossy`），不至于因为一个环境变量拼错就起不来。
+
+要输出 JSON 给日志采集系统、或者接 OpenTelemetry，文件末尾的注释里写了怎么改。
 {% endif %}
 ## 项目里的各个配置文件
 
@@ -180,33 +271,59 @@ just docker-clean       # 删除本地镜像
 | [`cliff.toml`](cliff.toml) | git-cliff 生成 CHANGELOG 的模板与分组规则 |
 | [`release.toml`](release.toml) | cargo-release 的发版流程配置 |
 | [`bacon.toml`](bacon.toml) | bacon 实时监控的任务定义 |
-| [`justfile`](justfile) | 全部日常命令的入口 |{% if docker %}
+| [`justfile`](justfile) | 全部日常命令的入口 |{% if docker and crate_type == "bin" %}
 | [`docker.just`](docker.just) | 容器相关命令（被 justfile 可选 import） |
 | [`Dockerfile`](Dockerfile) | 多阶段构建 + distroless 运行镜像 |{% endif %}
-| [`.config/nextest.toml`](.config/nextest.toml) | 测试运行器配置（含 CI 专用 profile） |
+| [`.config/nextest.toml`](.config/nextest.toml) | 测试运行器配置（含 CI 专用 profile 与测试分组示例） |
 | [`.pre-commit-config.yaml`](.pre-commit-config.yaml) | Git 钩子（pre-commit / commit-msg / pre-push） |
 | [`.editorconfig`](.editorconfig) | 跨编辑器的基础排版约定 |
 | [`.gitattributes`](.gitattributes) | 入库换行统一、二进制标记、`Cargo.lock` 折叠 |
-| [`.vscode/`](.vscode/) | rust-analyzer 配置与推荐插件 |{% if ci == "github" %}
-| [`.github/workflows/`](.github/workflows/) | CI：lint / test / deny / msrv / hack / miri / release + 每日安全审计 |
-| [`.github/dependabot.yml`](.github/dependabot.yml) | 依赖与 Actions 的自动升级 |{% endif %}{% if ci == "gitlab" %}
-| [`.gitlab-ci.yml`](.gitlab-ci.yml) | GitLab CI：lint / test / deny / msrv + tag 触发 release |{% endif %}
+| [`.devcontainer/`](.devcontainer/) | Dev Container / Codespaces 配置 |
+| [`.vscode/`](.vscode/) | rust-analyzer 配置与推荐插件 |{% if open_source %}
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | 参与开发的流程与约定 |
+| [`SECURITY.md`](SECURITY.md) | 漏洞报告流程与已有防线 |{% endif %}{% if ci == "github" %}
+| [`.github/workflows/`](.github/workflows/) | CI（build / release / audit） |
+| [`.github/dependabot.yml`](.github/dependabot.yml) | cargo / actions / docker 三类依赖的自动升级 |{% if open_source %}
+| [`.github/ISSUE_TEMPLATE/`](.github/ISSUE_TEMPLATE/) | issue 模板 |{% endif %}{% endif %}{% if ci == "gitlab" %}
+| [`.gitlab-ci.yml`](.gitlab-ci.yml) | GitLab CI：lint / test / deny / hack / msrv + tag 触发 release |{% endif %}
 {% if ci == "github" %}
 ## CI
 
-推送和 PR 会触发 [`build.yaml`](.github/workflows/build.yaml)，并行跑这些 job：
+推送和 PR 触发 [`build.yaml`](.github/workflows/build.yaml)，并行跑这些 job：
 
+- **detect** —— 探测仓库里有哪些 target，供下面的 job 做条件判断（几秒钟）
 - **lint** —— 格式化、拼写、clippy（`-D warnings`）、文档警告
 - **test** —— `cargo check` + nextest（CI profile：不 fail-fast、失败重试、输出 JUnit）+ 覆盖率 + doctest
 - **deny** —— 依赖的安全公告 / License / 重复版本 / 来源
+- **workflows** —— 用 [zizmor](https://docs.zizmor.sh/) 审计 workflow 自身（脚本注入、过宽权限、缓存投毒）
 - **msrv** —— 用 `Cargo.toml` 里声明的最低版本编译一遍（nightly 项目自动跳过）
-- **hack** —— 用 cargo-hack 遍历 feature 幂集，防止"单独开某个 feature 编不过"
+- **hack** —— 遍历 feature 幂集，防止「单独开某个 feature 编不过」
+- **semver** —— 以上一个 tag 为基线检查公开 API 破坏性变更（仅 lib 项目，没有 tag 时跳过）
 - **miri** —— 在解释器里跑测试检测未定义行为（**仅 nightly**，stable 项目自动跳过）
+- **docker** —— 构建一次容器镜像确认 Dockerfile 没坏（仅选了 Docker 的项目；只构建不推送）
 
-打上 `v*` tag 后，在 lint / test / deny / hack 通过的前提下额外跑 **release** job：
-用 git-cliff 生成本次的变更说明并创建 GitHub Release。
+打 `v*` tag 触发 [`release.yaml`](.github/workflows/release.yaml)：
 
-[`audit.yaml`](.github/workflows/audit.yaml) 每天定时跑一次依赖审计——安全公告是"代码没动风险也会变"的东西，只靠 PR 触发发现不了。
+- **verify** —— 把 tag 指向的 commit 从零验证一遍，并核对 tag 与 `Cargo.toml` 版本一致
+- **github-release** —— git-cliff 生成变更说明并创建 Release
+- **binaries** —— 五个目标平台（Linux musl x64/arm64、macOS x64/arm64、Windows x64）
+  交叉编译、打包、生成 sha256 并挂到 Release 上（仅 bin 项目）
+- **crates-io** —— 用 crates.io 的 Trusted Publishing（OIDC，无需长期 token）发布，
+  **默认关闭**，需要在仓库 Variables 里加 `PUBLISH_TO_CRATES_IO=true`
+
+[`audit.yaml`](.github/workflows/audit.yaml) 每天定时跑一次依赖审计——
+安全公告是「代码没动风险也会变」的东西，只靠 PR 触发发现不了。
+
+两点值得注意：
+
+- **CI 与发布分成两个 workflow**，因为发布流程刻意不使用编译缓存。缓存是可写的，
+  一旦发布产物建立在缓存之上，「污染缓存」就等价于「污染 release 二进制」。
+- **按 target 裁剪的 job（semver / binaries / docker）一律靠 `detect` 传出的 outputs 判断**，
+  而不是在 job 级写 `if: hashFiles(...)`。job 级的 `if:` 在 checkout 之前就求值，
+  那时工作区还是空的，hashFiles 恒为空串——条件永远不成立，job 被静默跳过，不报任何错。
+- **第三方 action 全部用 commit hash 钉死**（后面的 `# vX.Y.Z` 是给人看的）。
+  tag 是可变的，上游账号一旦被攻破，把 `v3` 指向恶意提交就能直接进你的 CI。
+  hash 由 dependabot 每周自动更新。
 
 > Miri 比原生慢一到两个数量级，且不支持大多数 FFI / 系统调用。项目一旦引入 C 依赖或做真实 IO，
 > 这个 job 会开始失败——那时直接把它从 workflow 里删掉即可，它是可选项。
@@ -218,9 +335,14 @@ just docker-clean       # 删除本地镜像
 - **lint** —— 格式化、拼写、clippy（`-D warnings`）、文档警告
 - **test** —— `cargo check` + nextest + 覆盖率（MR 页面直接显示百分比）+ JUnit 报告
 - **deny** —— 依赖的安全公告 / License / 重复版本 / 来源
+- **hack** —— feature 幂集检查
 - **msrv** —— 用声明的最低版本编译一遍（nightly 项目自动跳过）
 
-打上 `v*` tag 时额外跑 **changelog** + **release**，用 git-cliff 生成说明并创建 GitLab Release。
+打 `v*` tag 时额外跑 **verify-tag**（从零验证 + 核对版本号）、**changelog**、
+**build-binary**、**release**。
+
+配套 cargo 工具用 cargo-binstall 下预编译二进制，并单独缓存 `.cargo-home/bin/`：
+第一条流水线之后就不会再花时间装工具了。
 {% endif %}{% if ci == "none" %}
 ## CI
 
@@ -238,7 +360,8 @@ fix: 修正边界条件下的 panic
 docs: 补充 README
 ```
 
-commit message 由 pre-commit 的 `conventional-pre-commit` 钩子强制校验。
+commit message 由 pre-commit 的 `conventional-pre-commit` 钩子强制校验。{% if open_source %}
+更多约定见 [CONTRIBUTING.md](CONTRIBUTING.md)。{% endif %}
 
 ## VSCode
 

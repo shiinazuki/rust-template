@@ -15,20 +15,21 @@ repos:
       - id: check-symlinks
       - id: check-yaml
       - id: check-toml
-        # Cargo.toml 与 clippy.toml 里有块级 liquid 条件（{% if async_runtime %} …），
-        # 在模板仓库里它们本来就不是合法 TOML——带条件块的模板文件不可能同时是合法 TOML。
-        # 生成出来的项目里这两个文件是合法的，但本配置对两边是同一份，只能一起排除。
+        # 注意：模板里所有 TOML 都遵守「liquid 标签只挂在注释行行尾」的写法
+        # （见 Cargo.toml 顶部的说明），因此它们在模板仓库里同样是合法 TOML，
+        # 这个钩子对两边都有效，不需要任何排除。
         #
-        # 实际并没有损失：这两个文件的正确性由下面的 cargo-check / cargo-clippy 钩子
-        # 兜底，比单纯的 TOML 语法检查严格得多。其余 TOML（deny / cliff / release /
-        # bacon / rustfmt / nextest / _typos）照常检查。
-        exclude: ^(Cargo|clippy)\.toml$
+        # 反例是单独占一行的裸 {%- if ... %}：那样写文件就成了非法 TOML，
+        # 编辑器的 TOML 语言服务和这个钩子都会开始报错。
       - id: check-json
-        # .vscode 下是 JSONC（带注释），标准 JSON 解析器会报错
-        exclude: ^\.vscode/
+        # .vscode 与 .devcontainer 下是 JSONC（带注释），标准 JSON 解析器会报错
+        exclude: ^(\.vscode|\.devcontainer)/
       - id: check-added-large-files
         args: [--maxkb=1024]
       - id: detect-private-key
+      # Windows 上不能创建的文件名（aux / con / 带冒号等）。Linux 上提交没事，
+      # Windows 协作者一 clone 就报错，而且很难猜到原因。
+      - id: check-illegal-windows-names
       - id: check-executables-have-shebangs
       - id: check-shebang-scripts-are-executable
       - id: end-of-file-fixer

@@ -4,8 +4,10 @@
 #   cargo generate --git https://github.com/<owner>/rust-template --name my-app
 #   cargo generate --git ... --name my-lib --lib      # 生成库项目
 #
-# 交互式会依次询问：项目简介 / GitHub 用户名 / 工具链 / 协议 / CI / Docker / async。
-# 非交互可以全部用 --define 指定，例如 --define toolchain=stable。
+# 交互式会依次询问：项目简介 / GitHub 用户名 / 工具链 / 协议 / CI / Docker /
+# async / 错误处理 / 命令行 / 日志 / 开源社区文件。
+# 非交互可以全部用 --define 指定，例如 --define toolchain=stable；
+# --silent 模式下**所有**占位符都必须给全，漏一个就会直接失败。
 #
 # --bin（默认）生成 src/main.rs，--lib 生成 src/lib.rs + tests/，
 # 由下面的 [conditional.'crate_type == ...'] 控制。
@@ -24,7 +26,10 @@ cargo_generate_version = ">=0.23.0"
 exclude = [
   # --- 花括号属于别的模板语言，必须躲开 liquid ---------------------------
   "cliff.toml",              # git-cliff 的 Tera 模板
-  ".github/**",              # GitHub Actions 的 ${{ ... }}
+  # 只排除 workflows：Actions 的 ${{ ... }} 会被 liquid 当成占位符吃掉。
+  # .github 下的其它文件（CODEOWNERS、issue 模板）反而**需要**替换 {{ gh-username }}，
+  # 所以不能像以前那样整个目录一刀切。
+  ".github/workflows/**",
   ".gitlab-ci.yml",          # GitLab CI 的 $VARIABLE / 规则表达式
   "justfile",                # just 自己的 {{ 变量 }} 插值
   "docker.just",             # 同上，just 的插值
@@ -32,6 +37,8 @@ exclude = [
   ".pre-commit-config.yaml", # 钩子里用 `{{ project-name }}` 判断是不是模板仓库本身，
                              # 这段字面量必须原样保留，不能被替换成真实包名
   "README.md",               # 模板仓库自己的说明文档，里面全是占位符示例
+  "scripts/**",              # 模板自测脚本，里面有 shell 的 ${...} 与 cargo-generate 参数
+  "template.just",           # 模板仓库自己的 just 配方（just 的 {{ 变量 }} 插值）
 
   # --- 二进制与非文本资源：一旦被 liquid 处理就会损坏 ---------------------
   # cargo-generate 对二进制内容没有可靠的自动豁免，模板里但凡放了图标、字体、
@@ -50,9 +57,16 @@ exclude = [
   "tests/snapshots/**",
 ]
 
-# 只对模板仓库自己有意义、不该出现在生成项目里的文件
+# 只对模板仓库自己有意义、不该出现在生成项目里的文件。
+#
+# 注意 template-ci.yaml：它是**模板自己的** CI（矩阵生成项目再跑一遍检查），
+# 生成出来的项目不需要它。虽然 `.github/**` 在上面的 exclude 里（不做变量替换），
+# 但 exclude 只影响「渲不渲染」，要让文件彻底不进生成项目必须写在这里。
 ignore = [
   "CHANGELOG.md",
+  ".github/workflows/template-ci.yaml",
+  "template.just",
+  "scripts/",
 ]
 
 # 关于两个 README：
@@ -124,14 +138,53 @@ type = "bool"
 prompt = "引入 tokio 异步运行时？（同时开启 clippy 的阻塞 API 禁令）"
 default = false
 
+# --- 应用骨架开关 -----------------------------------------------------------
+# 这三个开关决定生成哪些源码模块。它们各自独立，可以任意组合；
+# 关掉时对应的文件根本不会出现，不会留下一堆注释掉的死代码。
+
+[placeholders.error_handling]
+type = "bool"
+prompt = "生成错误处理骨架（库用 thiserror；应用再叠一层 anyhow）？"
+default = true
+
+[placeholders.cli]
+type = "bool"
+prompt = "生成命令行参数骨架（clap derive）？【仅 bin 项目生效】"
+default = false
+
+[placeholders.logging]
+type = "bool"
+prompt = "生成日志 / 追踪骨架（tracing + RUST_LOG 过滤）？【仅 bin 项目生效】"
+default = false
+
+# --- 开源社区文件 -----------------------------------------------------------
+# SECURITY / CODE_OF_CONDUCT / CONTRIBUTING / issue 与 PR 模板 / CODEOWNERS。
+#
+# 默认关闭是有意的：这几份文件只有在「项目公开 + 期待外部贡献者」时才产生价值。
+# 私有仓库或个人项目里，它们是你永远不会打开、但每次 ls 都会看见的六个文件。
+# 哪天真开源了，把这个开关打开重新生成一份、把文件拷过去即可。
+[placeholders.open_source]
+type = "bool"
+prompt = "生成开源社区文件（SECURITY / CODE_OF_CONDUCT / CONTRIBUTING / issue 与 PR 模板 / CODEOWNERS）？"
+default = false
+
 # ---------------------------------------------------------------------------
 # 按 crate 类型裁剪源码骨架
 # crate_type 是内置变量，由命令行的 --bin / --lib 决定，不传时默认 bin。
 # ---------------------------------------------------------------------------
 
 [conditional.'crate_type == "lib"']
-# 库项目没有可执行入口，Dockerfile / 容器编排一并去掉
-ignore = ["src/main.rs", "Dockerfile", ".dockerignore", "docker.just"]
+# 库项目没有可执行入口，Dockerfile / 容器编排一并去掉。
+# cli / telemetry 同理：解析命令行和安装全局 subscriber 都是**应用**的职责，
+# 库只管定义错误类型和发出 tracing 事件，不该替调用方决定这些。
+ignore = [
+  "src/main.rs",
+  "src/cli.rs",
+  "src/telemetry.rs",
+  "Dockerfile",
+  ".dockerignore",
+  "docker.just",
+]
 
 [conditional.'crate_type == "bin"']
 # 二进制 crate 没有可供外部 use 的库目标，集成测试示例一起去掉
@@ -154,3 +207,22 @@ ignore = [".gitlab-ci.yml"]
 
 [conditional.'docker == false']
 ignore = ["Dockerfile", ".dockerignore", "docker.just"]
+
+[conditional.'cli == false']
+ignore = ["src/cli.rs"]
+
+[conditional.'logging == false']
+ignore = ["src/telemetry.rs"]
+
+[conditional.'error_handling == false']
+ignore = ["src/error.rs"]
+
+[conditional.'open_source == false']
+ignore = [
+  "SECURITY.md",
+  "CODE_OF_CONDUCT.md",
+  "CONTRIBUTING.md",
+  ".github/CODEOWNERS",
+  ".github/PULL_REQUEST_TEMPLATE.md",
+  ".github/ISSUE_TEMPLATE",
+]

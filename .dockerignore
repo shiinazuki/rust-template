@@ -2,8 +2,14 @@
 target/
 .git/
 .github/
+.gitlab-ci.yml
 .vscode/
 .idea/
+.devcontainer/
+scripts/
+# 以后若加了项目级 cargo 配置：里面多半是只在宿主机成立的设置（比如指定 mold
+# 链接器），带进容器会让构建直接失败
+.cargo/
 
 # 容器里用不到的开发期文件
 *.md

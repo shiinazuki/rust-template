@@ -4,14 +4,18 @@ on:
   push:
     branches:
       - main
-    tags:
-      - v*
   pull_request:
     branches:
       - main
   workflow_dispatch: # 允许在 Actions 页面手动触发
 
-# 同一分支/PR 连续推送时取消上一次尚未跑完的 run（tag 触发的发布流程不取消）
+# 发布流程在 release.yaml 里，本文件只负责 push / PR 上的持续检查。
+#
+# 为什么分开：一个既使用编译缓存、又能把产物发布出去的 workflow，等于给
+# 「污染缓存 -> 污染发布产物」留了一条路径（zizmor 的 cache-poisoning 审计）。
+# 拆开之后，缓存只服务于 CI，发布流程从零构建。
+#
+# 同一分支/PR 连续推送时取消上一次尚未跑完的 run
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -27,26 +31,62 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  # 探测仓库里有哪些 target，供后面的 job 做条件判断。
+  #
+  # ⚠️ 为什么要为这点小事单开一个 job：**job 级的 `if:` 在 checkout 之前就被求值**，
+  #    那时 GITHUB_WORKSPACE 还是空的，`hashFiles('src/lib.rs')` 恒为空串，
+  #    条件永远不成立、job 永远被静默跳过——不报错，只是那个 job 从此形同虚设。
+  #    先 checkout 再把结论用 outputs 传出去，是唯一可靠的写法。
+  #    （**步骤级**的 `if: hashFiles(...)` 没有这个问题：那时代码已经拉下来了。）
+  detect:
+    name: detect targets
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      is_lib: ${{ steps.probe.outputs.is_lib }}
+      is_bin: ${{ steps.probe.outputs.is_bin }}
+      has_docker: ${{ steps.probe.outputs.has_docker }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Probe repository layout
+        id: probe
+        run: |
+          is_lib=$([ -f src/lib.rs ] && echo true || echo false)
+          is_bin=$([ -f src/main.rs ] && echo true || echo false)
+          has_docker=$([ -f Dockerfile ] && echo true || echo false)
+          {
+            echo "is_lib=$is_lib"
+            echo "is_bin=$is_bin"
+            echo "has_docker=$has_docker"
+          } >> "$GITHUB_OUTPUT"
+          echo "lib=$is_lib bin=$is_bin docker=$has_docker"
+
   # 格式化 / 拼写 / clippy / 文档：不跑测试，失败得最快，PR 上第一时间给反馈
   lint:
     name: lint
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
+          # 后续步骤都不需要推东西回仓库。留着凭据等于把一枚可写 token 摊在
+          # 工作区的 .git/config 里，任何一个依赖的 build.rs 都能读到。
+          persist-credentials: false
       - name: Install Rust (版本由 rust-toolchain.toml 固定)
         run: rustup show active-toolchain || rustup toolchain install
       # rustfmt.toml 用到了 imports_granularity / group_imports 等 unstable 选项，
       # stable 的 rustfmt 会静默忽略它们，所以格式检查必须走 nightly。
+      # --allow-downgrade：某天的 nightly 偶尔缺 rustfmt，让 rustup 自动退回到有的那天。
       - name: Install nightly rustfmt
-        run: rustup toolchain install nightly --profile minimal --component rustfmt
+        run: rustup toolchain install nightly --allow-downgrade --profile minimal --component rustfmt
       - name: Install cargo tools
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@5b4d68e2e660441203ab128a23676f1e4faf1532 # v2.86.3
         with:
           tool: typos
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Check code format
         run: cargo +nightly fmt --all -- --check
       - name: Check spelling
@@ -82,16 +122,17 @@ jobs:
     #       --health-timeout 5s
     #       --health-retries 5
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
+          persist-credentials: false
       - name: Install Rust (版本由 rust-toolchain.toml 固定)
         run: rustup show active-toolchain || rustup toolchain install
       - name: Install cargo tools
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@5b4d68e2e660441203ab128a23676f1e4faf1532 # v2.86.3
         with:
           tool: cargo-nextest,cargo-llvm-cov
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       # - name: Install Protoc
       #   uses: arduino/setup-protoc@v3
       - name: Check the package for errors
@@ -99,19 +140,21 @@ jobs:
       # 用 .config/nextest.toml 里的 ci profile：不 fail-fast、失败重试 2 次、输出 JUnit
       - name: Execute rust tests with coverage
         run: cargo llvm-cov nextest --locked --profile ci --all-features --lcov --output-path lcov.info
-      # nextest 不跑 doctest，有 lib target 时补一次
+      # nextest 不跑 doctest，有 lib target 时补一次。
+      # 这里的 hashFiles 是**步骤级**的，此刻已经 checkout 过，结果可信；
+      # 同样的写法放到 job 级就会恒为空——见文件开头 detect job 的说明。
       - name: Execute doc tests
         if: hashFiles('src/lib.rs') != ''
         run: cargo test --locked --doc --all-features
       - name: Upload coverage report
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage-${{ matrix.platform }}
           path: lcov.info
           retention-days: 14
       - name: Upload test results
         if: always() # 测试失败时更需要这份报告
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: junit-${{ matrix.platform }}
           path: target/nextest/ci/junit.xml
@@ -119,7 +162,7 @@ jobs:
           if-no-files-found: ignore
       # 需要 codecov 的话打开这一步，并在仓库 Secrets 里配置 CODECOV_TOKEN
       # - name: Upload coverage to Codecov
-      #   uses: codecov/codecov-action@v7
+      #   uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
       #   with:
       #     files: lcov.info
       #     token: ${{ secrets.CODECOV_TOKEN }}
@@ -130,13 +173,34 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Install cargo-deny
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@5b4d68e2e660441203ab128a23676f1e4faf1532 # v2.86.3
         with:
           tool: cargo-deny
       - name: Check dependencies (advisories / licenses / bans / sources)
         run: cargo deny check
+
+  # workflow 文件自己的静态检查。CI 配置和业务代码一样会腐坏，而且它出问题的方式
+  # 更隐蔽——脚本注入、过宽的 token 权限、被缓存投毒的发布流程，都不会让构建变红。
+  workflows:
+    name: lint workflows
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install zizmor
+        uses: taiki-e/install-action@5b4d68e2e660441203ab128a23676f1e4faf1532 # v2.86.3
+        with:
+          tool: zizmor
+      # --min-severity medium：低危项多是风格建议，卡 CI 性价比不高。
+      # 想更严可以去掉这个参数，或加 --persona=pedantic。
+      - name: Audit GitHub Actions workflows
+        run: zizmor --min-severity medium --no-progress .github/workflows
 
   # 验证 Cargo.toml 里声明的 MSRV 确实能编译，避免用了新版本才有的 API 却没改 rust-version。
   #
@@ -148,7 +212,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Resolve MSRV
         id: msrv
         run: |
@@ -165,14 +231,21 @@ jobs:
             echo "version=$version" >> "$GITHUB_OUTPUT"
             echo "MSRV = $version"
           fi
-      - name: Install Rust ${{ steps.msrv.outputs.version }}
+      # ⚠️ 这里用 env 把 step 输出接进来，而不是直接在 run: 里写 ${{ ... }}。
+      #    后者会被 Actions 在执行前做字符串替换，等于把外部内容拼进 shell 脚本
+      #    （脚本注入）。哪怕这里的值来自自家文件，也保持同一套写法更省心。
+      - name: Install Rust toolchain
         if: steps.msrv.outputs.skip == 'false'
-        run: rustup toolchain install ${{ steps.msrv.outputs.version }} --profile minimal
-      - uses: Swatinem/rust-cache@v2
+        env:
+          MSRV: ${{ steps.msrv.outputs.version }}
+        run: rustup toolchain install "$MSRV" --profile minimal
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         if: steps.msrv.outputs.skip == 'false'
       - name: Check with MSRV toolchain
         if: steps.msrv.outputs.skip == 'false'
-        run: cargo +${{ steps.msrv.outputs.version }} check --locked --all-targets --all-features
+        env:
+          MSRV: ${{ steps.msrv.outputs.version }}
+        run: cargo "+$MSRV" check --locked --all-targets --all-features
 
   # 特性组合检查：只跑 `--all-features` 会漏掉「单独开启某个 feature 编不过」这类问题，
   # 而使用者恰恰可能只开其中一个。cargo-hack 把 [features] 的幂集逐个 check 一遍。
@@ -184,19 +257,59 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
+          persist-credentials: false
       - name: Install Rust (版本由 rust-toolchain.toml 固定)
         run: rustup show active-toolchain || rustup toolchain install
       - name: Install cargo-hack
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@5b4d68e2e660441203ab128a23676f1e4faf1532 # v2.86.3
         with:
           tool: cargo-hack
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       # --depth 2 限制组合爆炸：feature 一多，完整幂集是 2^n 个组合，CI 会跑到天荒地老
       - name: Check feature powerset
         run: cargo hack --locked --feature-powerset --depth 2 --no-dev-deps check
+
+  # 公开 API 的破坏性变更检查（只对 lib 项目有意义）。
+  # 以「上一个 v* tag」为基线：加了 pub 字段、改了函数签名、删了导出项，都会被指出来，
+  # 并告诉你这次该抬 minor 还是 major。仓库还没打过 tag 时自动跳过。
+  semver:
+    name: semver-checks
+    needs: [detect]
+    if: needs.detect.outputs.is_lib == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # 需要完整历史才能找到上一个 tag
+          persist-credentials: false
+      - name: Install Rust (版本由 rust-toolchain.toml 固定)
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: Find baseline tag
+        id: baseline
+        run: |
+          if tag=$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null); then
+            echo "rev=$tag" >> "$GITHUB_OUTPUT"
+            echo "基线版本：$tag"
+          else
+            echo "rev=" >> "$GITHUB_OUTPUT"
+            echo "仓库还没有 v* tag，跳过 semver 检查"
+          fi
+      - name: Install cargo-semver-checks
+        if: steps.baseline.outputs.rev != ''
+        uses: taiki-e/install-action@5b4d68e2e660441203ab128a23676f1e4faf1532 # v2.86.3
+        with:
+          tool: cargo-semver-checks
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        if: steps.baseline.outputs.rev != ''
+      - name: Check for API breakage
+        if: steps.baseline.outputs.rev != ''
+        env:
+          BASELINE: ${{ steps.baseline.outputs.rev }}
+        run: cargo semver-checks --baseline-rev "$BASELINE"
 
   # Miri：在解释器里跑测试，检测未定义行为（越界、悬垂指针、数据竞争、对齐错误）。
   # 仅 nightly 可用，所以工具链是 stable 时整个 job 自动跳过。
@@ -206,34 +319,40 @@ jobs:
   #
   # ⚠️ Miri 比原生慢一到两个数量级，且不支持大多数 FFI / 系统调用。
   #    项目一旦引入 C 依赖或做真实 IO，这个 job 会失败——那时直接删掉它即可。
+  #    检测到 tokio 时会自动跳过：tokio 起 runtime 就要 epoll，而 miri 不支持
+  #    这类系统调用，留着只会得到一个永远红着、谁也不看的 job。
   miri:
     name: miri (nightly only)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
+          persist-credentials: false
       # 判断依据和 msrv job 一致：读 rust-toolchain.toml 的 channel，
       # 以后换工具链不用再改这里。
-      - name: Is this a nightly project?
+      - name: Should Miri run here?
         id: check
         run: |
           channel=$(grep -m1 '^channel' rust-toolchain.toml | sed -E 's/.*"([^"]+)".*/\1/')
-          if [ "${channel#nightly}" != "$channel" ]; then
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          else
+          if [ "${channel#nightly}" = "$channel" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "工具链是 ${channel}，Miri 仅 nightly 可用，跳过"
+          elif grep -qE '^\s*tokio\s*=' Cargo.toml; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "检测到 tokio：Miri 不支持 epoll 等系统调用，跳过"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
-      # 装的是「最新可用 miri 的那个 nightly」而不是今天的 nightly：
-      # miri 组件偶尔会在某天的 nightly 里缺席，rustup 的这个别名能自动避开。
+      # --allow-downgrade 是关键：miri 组件偶尔会在某天的 nightly 里缺席，
+      # 有了它 rustup 会自动退回到最近一个带 miri 的 nightly，而不是直接失败。
       - name: Install nightly with miri
         if: steps.check.outputs.skip == 'false'
         run: |
-          rustup toolchain install nightly --profile minimal --component miri,rust-src
+          rustup toolchain install nightly --allow-downgrade --profile minimal --component miri,rust-src
           cargo +nightly miri setup
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         if: steps.check.outputs.skip == 'false'
       - name: Run tests under Miri
         if: steps.check.outputs.skip == 'false'
@@ -242,36 +361,35 @@ jobs:
           MIRIFLAGS: -Zmiri-disable-isolation
         run: cargo +nightly miri test --locked --all-features
 
-  # 打了 v* tag 才跑：生成 changelog 并创建 GitHub Release
-  release:
-    name: release
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [lint, test, deny, hack]
+  # 容器镜像构建验证（只在生成项目时选了 Docker 才有这个 job）。
+  #
+  # 刻意**只构建、不推送**：推镜像是对外动作，要先决定仓库（GHCR / Docker Hub）、
+  # 凭据与 tag 策略，模板不替你做主。这里补的是另一件事——dependabot 每周盯着
+  # 基础镜像的 CVE，但如果 CI 从不构建，Dockerfile 什么时候坏掉是没人知道的。
+  #
+  # ⚠️ Dockerfile 里的 BuildKit cache mount 在 CI 上恒为空（每次都是全新机器），
+  #    所以这个 job 每次都从零编译一遍依赖。项目大了嫌慢的话，两条路见 Dockerfile
+  #    顶部的说明（build-push-action 的 gha 缓存，或换 cargo-chef）。
+  docker:
+    name: docker build
+    needs: [detect]
+    if: needs.detect.outputs.has_docker == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: write # 创建 Release 需要写权限
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0 # git-cliff 需要完整历史才能算出版本区间
           submodules: recursive
-      - name: Generate a changelog
-        uses: orhun/git-cliff-action@v4
-        id: git-cliff
-        with:
-          config: cliff.toml
-          # --offline: 只用 GITHUB_REPO 拼提交链接，不调 GitHub API（免 token、免限流）
-          args: -vv --latest --strip header --offline
+          persist-credentials: false
+      # 走 env 而不是把 ${{ }} 直接拼进 run，理由同 msrv job
+      - name: Build image
         env:
-          OUTPUT: CHANGES.md
-          GITHUB_REPO: ${{ github.repository }}
-      - name: Release
-        uses: softprops/action-gh-release@v3
-        with:
-          body: ${{ steps.git-cliff.outputs.content }}
-          # 预发布版本（v1.2.3-rc.1）自动标记成 pre-release
-          prerelease: ${{ contains(github.ref_name, '-') }}
-          # 需要附带编译好的二进制时，在上面加一个 build job 产出 artifact，
-          # 下载后用 files: 挂上来
-          # files: dist/*
+          DOCKER_BUILDKIT: "1"
+          REVISION: ${{ github.sha }}
+        run: |
+          version=$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')
+          docker build \
+            --build-arg VERSION="$version" \
+            --build-arg REVISION="$REVISION" \
+            -t ci-build-check:latest \
+            .

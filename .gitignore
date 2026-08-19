@@ -15,7 +15,8 @@ flamegraph.svg
 perf.data*
 profile.json
 
-# 本地环境变量
+# 本地环境变量。最后一行是个惯例性的例外：不加的话，哪天你写了一份
+# .env.example 想提交给同事参考，会被上一行悄悄忽略掉，还很难看出原因。
 .env
 .env.*
 !.env.example
@@ -24,11 +25,17 @@ profile.json
 *.orig
 *.rej
 
+# GitLab CI 把 CARGO_HOME 指到工程目录下（只有工程目录能进 cache），
+# 本地用 gitlab-runner 跑流水线时会留下这个目录
+/.cargo-home
+
 # 编辑器 / 操作系统
 .DS_Store
 .idea/
+.zed/
 *.swp
 *~
+*.log
 
 # .vscode 下只提交团队共享的推荐配置，个人调试配置不进版本库
 .vscode/*

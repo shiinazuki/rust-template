@@ -69,6 +69,9 @@ allow = [
   "Unicode-3.0",
   "Unicode-DFS-2016",
   "Unlicense",
+  # 注意这是 SPDX 里的 License 名，不是那个 C 库：ring（rustls 的默认后端）
+  # 的 License 表达式里带 OpenSSL 这一项。允许它和「不引入 openssl C 依赖」
+  # 并不矛盾——后者是靠下面 [bans] 的 deny 列表来管的。
   "OpenSSL",
 ]
 

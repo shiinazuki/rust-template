@@ -1,21 +1,13 @@
 name: audit
 
-# 依赖的安全公告是"代码没动，风险也会变"的东西：
-# 光靠 PR 触发的检查发现不了今天新披露的漏洞，所以这里额外定时跑一遍。
+# 依赖的安全公告是「代码没动，风险也会变」的东西：光靠 PR 触发的检查发现不了
+# 今天新披露的漏洞，所以这里定时跑。
+#
+# 注意这个 workflow **不**在 push / PR 上触发——那条路径已经由 build.yaml 里的
+# deny job 覆盖了，重复跑一遍只是白烧 CI 时间。这里补的是「时间维度」。
 on:
   schedule:
     - cron: "0 2 * * *" # 每天 UTC 02:00（北京时间 10:00）
-  push:
-    paths:
-      - "**/Cargo.toml"
-      - "**/Cargo.lock"
-      - "deny.toml"
-      - ".github/workflows/audit.yaml"
-  pull_request:
-    paths:
-      - "**/Cargo.toml"
-      - "**/Cargo.lock"
-      - "deny.toml"
   workflow_dispatch:
 
 permissions:
@@ -30,9 +22,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Install cargo-deny
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@5b4d68e2e660441203ab128a23676f1e4faf1532 # v2.86.3
         with:
           tool: cargo-deny
       - name: Check for security advisories

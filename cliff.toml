@@ -1,10 +1,14 @@
 # git-cliff ~ configuration file
 # https://git-cliff.org/docs/configuration
 #
-# 仓库地址不再硬编码：`remote.github.owner` / `remote.github.repo` 由
-# `--github-repo owner/repo` 或环境变量 `GITHUB_REPO` 提供。
-#   - 本地：`just changelog` 会自动从 git remote 推导并注入
-#   - CI：workflow 里把 `GITHUB_REPO` 设为 ${{ github.repository }}
+# 仓库地址不再硬编码，由下面 body 里的 `repo_url` 按托管平台推导：
+#   - GitHub：`--github-repo owner/repo` 或环境变量 `GITHUB_REPO`
+#   - GitLab：`--gitlab-repo owner/repo` 或环境变量 `GITLAB_REPO`
+# 两者 git-cliff 都会解析进 `remote.github.*` / `remote.gitlab.*`，未提供时是空串。
+#   - 本地：`just changelog` 会自动识别 origin 的平台并注入对应的变量
+#   - CI：GitHub 的 workflow 设 `GITHUB_REPO`，GitLab 的流水线设 `GITLAB_REPO`
+#
+# ⚠️ 自建 GitLab 的话，下面拼出来的 host 仍是 gitlab.com，按需改成你自己的域名。
 #
 # 分组名里的 `<!-- N -->` 是排序用的隐藏前缀：Tera 的 group_by 按字符串排序，
 # 加上编号就能固定「Features 在 Bug Fixes 前面」这样的顺序，
@@ -16,7 +20,8 @@ header = """
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.\n
 """
 body = """
-{% set repo_url = "https://github.com/" ~ remote.github.owner ~ "/" ~ remote.github.repo %}\
+{% set_global repo_url = "https://github.com/" ~ remote.github.owner ~ "/" ~ remote.github.repo %}\
+{% if remote.gitlab.owner %}{% set_global repo_url = "https://gitlab.com/" ~ remote.gitlab.owner ~ "/" ~ remote.gitlab.repo %}{% endif %}\
 ---
 {% if version %}\
     {% if previous.version %}\

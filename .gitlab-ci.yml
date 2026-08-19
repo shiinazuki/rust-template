@@ -1,8 +1,8 @@
-# GitLab CI —— 与 .github/workflows/build.yaml 等价的一套流水线。
+# GitLab CI —— 与 .github/workflows/ 等价的一套流水线。
 # 生成项目时选 `ci = gitlab` 才会保留本文件（选 github 则保留 .github/）。
 #
-# 结构：lint / test / audit 三个 job 并行，msrv 视工具链自动跳过，
-#       打 v* tag 时额外跑 release。
+# 结构：lint / test / deny / hack 四个 job 并行，msrv 视工具链自动跳过，
+#       打 v* tag 时额外跑 release（先从零验证一遍，再建 Release）。
 
 stages:
   - check
@@ -13,7 +13,6 @@ default:
   # 下面每个 job 起手都会 `rustup toolchain install` 按声明装好。
   image: rust:1-slim-bookworm
   interruptible: true
-  # 同一分支连续推送时，新流水线自动取消旧的
   retry:
     max: 1
     when:
@@ -25,31 +24,66 @@ variables:
   # CI 是一次性环境，增量编译只会拖慢速度并撑大缓存
   CARGO_INCREMENTAL: "0"
   RUST_BACKTRACE: "1"
-  # 把 cargo 的家目录放进工程目录，GitLab 的 cache 只能缓存工程目录下的路径
-  CARGO_HOME: $CI_PROJECT_DIR/.cargo
+  # GitLab 的 cache 只能缓存工程目录下的路径，所以把 CARGO_HOME 挪进来。
+  #
+  # ⚠️ 刻意不叫 `.cargo`：那是项目级 cargo 配置目录的名字（config.toml 要入库），
+  #    哪天你加了这个目录，缓存会把它覆盖掉。
+  CARGO_HOME: $CI_PROJECT_DIR/.cargo-home
   GIT_SUBMODULE_STRATEGY: recursive
 
-# 依赖与编译产物缓存。key 跟着 Cargo.lock 走：锁文件没变就直接复用。
+# 两份缓存，key 不同，互不牵连：
+#   - 工具（cargo-nextest 等）几乎不变，用固定 key，装一次全局复用；
+#   - 编译产物跟着 Cargo.lock 走，依赖一变就该重建。
+#
 # 以 `.` 开头的是 GitLab 的隐藏 job，只作模板用，不会真的被调度执行。
 .cargo-cache:
   cache:
-    key:
-      files:
-        - Cargo.lock
-    paths:
-      - .cargo/registry/index/
-      - .cargo/registry/cache/
-      - .cargo/git/db/
-      - target/
-    policy: pull-push
+    - key: cargo-tools-v1
+      paths:
+        - .cargo-home/bin/
+    - key:
+        files:
+          - Cargo.lock
+      paths:
+        - .cargo-home/registry/index/
+        - .cargo-home/registry/cache/
+        - .cargo-home/git/db/
+        - target/
+      policy: pull-push
 
-# 各 job 共用的准备动作
+# 各 job 共用的准备动作。
+#
+# ⚠️ 这里定义的 install_tools 是本文件最关键的一处优化：原来每个 job 都 `cargo install`
+#    从源码编译 nextest / llvm-cov / deny，一条流水线要白烧十几分钟。现在改成
+#    「缓存里有就跳过，没有就用 cargo-binstall 下预编译二进制」，从分钟级降到秒级。
 .rust-setup:
   before_script:
     - apt-get update -qq && apt-get install -y -qq --no-install-recommends git curl ca-certificates
+    - export PATH="$CARGO_HOME/bin:$PATH"
     # 按 rust-toolchain.toml 装好 channel 与 components
     - rustup show active-toolchain || rustup toolchain install
     - rustc --version && cargo --version
+    - |
+      install_tools() {
+        missing=""
+        for crate in "$@"; do
+          # 少数 crate 的二进制名和包名不一致，这里做个映射
+          case "$crate" in
+            typos-cli) bin=typos ;;
+            *)         bin="$crate" ;;
+          esac
+          command -v "$bin" >/dev/null 2>&1 || missing="$missing $crate"
+        done
+        if [ -z "$missing" ]; then
+          echo "所需工具都在缓存里，跳过安装"
+          return 0
+        fi
+        echo "需要安装:$missing"
+        # cargo-binstall 自己只在第一条流水线上编译一次，之后从 .cargo-home/bin 缓存里来
+        command -v cargo-binstall >/dev/null 2>&1 || cargo install --locked cargo-binstall
+        # shellcheck disable=SC2086
+        cargo binstall --no-confirm --locked $missing
+      }
 
 workflow:
   rules:
@@ -70,10 +104,11 @@ lint:
     - .cargo-cache
     - .rust-setup
   script:
-    # rustfmt.toml 用了 unstable 选项，stable 的 rustfmt 会静默忽略，必须走 nightly
-    - rustup toolchain install nightly --profile minimal --component rustfmt
+    # rustfmt.toml 用了 unstable 选项，stable 的 rustfmt 会静默忽略，必须走 nightly。
+    # --allow-downgrade：某天的 nightly 偶尔缺 rustfmt，让 rustup 自动退回到有的那天。
+    - rustup toolchain install nightly --allow-downgrade --profile minimal --component rustfmt
+    - install_tools typos-cli
     - cargo +nightly fmt --all -- --check
-    - cargo install --locked typos-cli
     - typos
     - cargo clippy --locked --all-targets --all-features -- -D warnings
     - RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --all-features --document-private-items
@@ -83,21 +118,20 @@ lint:
 # ---------------------------------------------------------------------------
 test:
   stage: check
-  # extends 是 GitLab 原生的复用机制，天然支持多个父模板并做深合并。
-  # 不要退回 YAML 锚点的 `<<: *a` + `<<: *b`——同一个 mapping 里出现两个 `<<`
-  # 是非法 YAML（duplicate merge key），解析器会直接报错。
   extends:
     - .cargo-cache
     - .rust-setup
   script:
-    - cargo install --locked cargo-nextest cargo-llvm-cov
+    - install_tools cargo-nextest cargo-llvm-cov
     - cargo check --locked --all-targets --all-features
-    # 用 .config/nextest.toml 里的 ci profile：不 fail-fast、失败重试、输出 JUnit
-    - cargo llvm-cov nextest --locked --profile ci --all-features --lcov --output-path lcov.info
+    # 分两步：先只跑测试收集数据（--no-report），再从同一份数据出两种报告。
+    # 比跑两遍测试省一半时间，也保证 lcov 和终端里看到的百分比是同一次运行的结果。
+    - cargo llvm-cov --no-report nextest --locked --profile ci --all-features
+    - cargo llvm-cov report --lcov --output-path lcov.info
+    - cargo llvm-cov report --summary-only
     # nextest 不跑 doctest，有 lib target 时补一次
     - if [ -f src/lib.rs ]; then cargo test --locked --doc --all-features; fi
-    # 让 GitLab 的 MR 页面直接显示覆盖率百分比
-    - cargo llvm-cov report --summary-only | tail -5
+  # 让 GitLab 的 MR 页面直接显示覆盖率百分比
   coverage: '/TOTAL.*?(\d+\.\d+)%/'
   artifacts:
     when: always
@@ -112,10 +146,24 @@ test:
 # ---------------------------------------------------------------------------
 deny:
   stage: check
-  extends: .rust-setup
+  extends:
+    - .cargo-cache
+    - .rust-setup
   script:
-    - cargo install --locked cargo-deny
+    - install_tools cargo-deny
     - cargo deny check
+
+# ---------------------------------------------------------------------------
+# 特性组合检查：只跑 --all-features 会漏掉「单独开某个 feature 编不过」
+# ---------------------------------------------------------------------------
+hack:
+  stage: check
+  extends:
+    - .cargo-cache
+    - .rust-setup
+  script:
+    - install_tools cargo-hack
+    - cargo hack --locked --feature-powerset --depth 2 --no-dev-deps check
 
 # ---------------------------------------------------------------------------
 # MSRV：验证 Cargo.toml 里声明的最低版本真的能编译。
@@ -124,7 +172,9 @@ deny:
 # ---------------------------------------------------------------------------
 msrv:
   stage: check
-  extends: .rust-setup
+  extends:
+    - .cargo-cache
+    - .rust-setup
   script:
     - |
       channel=$(grep -m1 '^channel' rust-toolchain.toml | sed -E 's/.*"([^"]+)".*/\1/')
@@ -140,21 +190,78 @@ msrv:
       cargo "+$version" check --locked --all-targets --all-features
 
 # ---------------------------------------------------------------------------
-# 打了 v* tag 才跑：用 git-cliff 生成本次变更说明并创建 GitLab Release
+# 以下只在 v* tag 上跑
 # ---------------------------------------------------------------------------
+
+# 先把 tag 指向的 commit 从零验证一遍——「分支 CI 曾经通过」和「这个 tag 能用」
+# 不是一回事。刻意不带缓存：发布产物不该建立在可被写入的缓存之上。
+verify-tag:
+  stage: check
+  extends: .rust-setup
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v/
+  script:
+    - install_tools cargo-nextest cargo-deny
+    - cargo clippy --locked --all-targets --all-features -- -D warnings
+    - cargo nextest run --locked --all-targets --all-features
+    - if [ -f src/lib.rs ]; then cargo test --locked --doc --all-features; fi
+    - cargo deny check
+    # tag 名必须和 Cargo.toml 里的版本一致，否则发出去的 v1.2.3 里装的是 1.2.2
+    - |
+      version=$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')
+      if [ "v$version" != "$CI_COMMIT_TAG" ]; then
+        echo "tag ($CI_COMMIT_TAG) 与 Cargo.toml 里的版本 (v$version) 不一致"; exit 1
+      fi
+      echo "版本一致：$CI_COMMIT_TAG"
+
 changelog:
   stage: release
   rules:
     - if: $CI_COMMIT_TAG =~ /^v/
   extends: .rust-setup
+  needs: [verify-tag]
   variables:
     GIT_DEPTH: 0 # git-cliff 需要完整历史才能算出版本区间
+    # cliff.toml 里的提交链接按平台推导：不设这个变量的话 remote.gitlab.* 是空的，
+    # 模板会退回 GitHub 分支，生成一份链接全指向 https://github.com// 的 CHANGELOG。
+    GITLAB_REPO: $CI_PROJECT_PATH
   script:
-    - cargo install --locked git-cliff
+    - install_tools git-cliff
     - git cliff --offline --latest --strip header -o CHANGES.md
   artifacts:
     paths:
       - CHANGES.md
+
+# 编译 Linux 二进制并作为构建产物挂出来。
+#
+# 想让它直接出现在 Release 页面的下载列表里，需要先传到 GitLab 的通用软件包库，
+# 再在下面的 release job 里用 assets:links 引用，例如：
+#   curl --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file "$BIN" \
+#     "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/$PKG/$CI_COMMIT_TAG/$PKG"
+build-binary:
+  stage: release
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v/
+  extends: .rust-setup
+  needs: [verify-tag]
+  script:
+    # lib 项目没有可执行文件，target/release/<包名> 根本不存在，cp 会失败，
+    # 连带 needs 它的 release job 一起不跑——发版就卡死在这里。
+    # （GitHub 那边等价的判断是 release.yaml 里 verify job 传出的 is_bin。）
+    - |
+      if [ ! -f src/main.rs ]; then
+        echo "没有 bin target，跳过二进制构建"
+        mkdir -p dist && touch dist/.gitkeep
+        exit 0
+      fi
+    - cargo build --release --locked
+    - pkg=$(grep -m1 '^name' Cargo.toml | sed -E 's/.*"(.*)".*/\1/')
+    - mkdir -p dist && cp "target/release/$pkg" dist/
+    - (cd dist && sha256sum "$pkg" > "$pkg.sha256")
+  artifacts:
+    paths:
+      - dist/
+    expire_in: never
 
 release:
   stage: release
@@ -162,6 +269,8 @@ release:
     - if: $CI_COMMIT_TAG =~ /^v/
   needs:
     - job: changelog
+      artifacts: true
+    - job: build-binary
       artifacts: true
   image: registry.gitlab.com/gitlab-org/release-cli:latest
   script:

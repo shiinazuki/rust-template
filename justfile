@@ -3,10 +3,19 @@
 # Docker 相关命令拆在 docker.just 里，用可选 import 引进来：
 # 生成项目时没选 Docker，那个文件不存在，`import?` 会静默跳过（普通 import 会报错）。
 import? 'docker.just'
+# 模板仓库自己的维护配方（生成出来的项目里没有这个文件，import? 会静默跳过）
+import? 'template.just'
 
 #
-# 从 git remote 推导 owner/repo，git-cliff 用它生成 changelog 里的提交链接
-gh_repo := `git remote get-url origin 2>/dev/null | sed -e 's,^git@github.com:,,' -e 's,^https://github.com/,,' -e 's,\.git$,,'`
+# 从 git remote 推导「托管平台 + owner/repo」，git-cliff 用它生成 changelog 里的提交链接。
+# 平台要单独识别：GitHub 用 GITHUB_REPO，GitLab 用 GITLAB_REPO，喂错变量的话
+# cliff.toml 会照着另一个平台的域名拼链接，生成一份全是死链的 CHANGELOG。
+origin_url := `git remote get-url origin 2>/dev/null || true`
+# git@host:owner/repo.git 与 https://host/owner/repo.git 两种写法都剥成 owner/repo
+repo_slug := `git remote get-url origin 2>/dev/null | sed -E -e 's,^[^/@]+@[^:]+:,,' -e 's,^[a-z]+://[^/]+/,,' -e 's,\.git$,,' || true`
+repo_host := if origin_url =~ 'gitlab' { "gitlab" } else { if origin_url =~ 'github' { "github" } else { "" } }
+# 包名（本文件不做 liquid 替换，只能从 Cargo.toml 里读）
+pkg := `grep -m1 '^name' Cargo.toml | sed -E 's/.*"(.*)".*/\1/'`
 
 # 列出所有可用命令
 default:
@@ -47,6 +56,21 @@ dev:
 doc:
     cargo doc --no-deps --all-features --open
 
+[group('dev')]
+[doc('跑 benchmark（benches/ 下有 target 时才有意义，profile.bench 已配好优化）')]
+bench *args:
+    cargo bench --all-features {{ args }}
+
+# 用的是 profiling profile：优化等级与 release 一致，但保留符号，
+# 否则火焰图上全是地址而不是函数名。
+#
+# macOS 上 cargo-flamegraph 走 dtrace，需要 sudo；不想给 sudo 就换 samply：
+#     cargo build --profile profiling && samply record ./target/profiling/<包名>
+[group('dev')]
+[doc('采样生成火焰图 flamegraph.svg（需要 cargo-flamegraph）')]
+flamegraph *args:
+    cargo flamegraph --profile profiling --bin {{ pkg }} {{ args }}
+
 # ⚠️ 如果你在 ~/.cargo/config.toml 里设了全局共享的 build.target-dir，
 #    `cargo clean` 清掉的是那个共享目录，会连带删掉其它项目的编译缓存。
 #    只想清本项目的话改成 `cargo clean -p <包名>`。
@@ -60,12 +84,18 @@ clean:
 # 检查
 # ---------------------------------------------------------------------------
 
+# 这四条和 CI 的 lint job 一一对应，少一条本地就拦不住对应的 CI 失败。
+#
+# 文档警告尤其容易漏：Cargo.toml 的 [workspace.lints.rustdoc] 里
+# bare_urls / invalid_html_tags / private_intra_doc_links 都只是 warn，
+# 本地不跑 cargo doc 根本看不见，推上去才在 CI 的 RUSTDOCFLAGS="-D warnings" 上挂掉。
 [group('check')]
-[doc('格式化检查 / clippy / 拼写检查')]
+[doc('格式化检查 / clippy / 拼写检查 / 文档警告（与 CI 的 lint job 等价）')]
 lint:
     cargo +nightly fmt --all -- --check
     cargo clippy --all-targets --all-features -- -D warnings
     typos
+    RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features --document-private-items
 
 [group('check')]
 [doc('运行测试（含 doctest）')]
@@ -84,9 +114,21 @@ coverage:
     cargo llvm-cov nextest --all-features --lcov --output-path lcov.info
 
 [group('check')]
+[doc('生成 HTML 覆盖率报告并在浏览器里打开')]
+coverage-html:
+    cargo llvm-cov nextest --all-features --html --open
+
+[group('check')]
 [doc('依赖安全与 License 检查')]
 audit:
     cargo deny check
+
+# 和 CI 的 hack job 等价。只跑 `--all-features` 会漏掉「单独开某个 feature 编不过」，
+# 而使用者恰恰可能只开其中一个。--depth 2 限制组合爆炸。
+[group('check')]
+[doc('遍历 feature 幂集做检查（需要 cargo-hack）')]
+hack:
+    cargo hack --feature-powerset --depth 2 --no-dev-deps check
 
 # 刻意不放进 `just ci`：cargo-machete 靠扫源码里的符号判断，只在宏里用到的依赖会被
 # 误报。误报时在 Cargo.toml 里加 [package.metadata.cargo-machete] ignored = [...] 放行。
@@ -129,8 +171,12 @@ msrv:
     rustup toolchain install "$version" --profile minimal
     cargo "+$version" check --locked --all-targets --all-features
 
+# 覆盖 CI 里的 lint / test / deny 三个 job。
+# 刻意不含 hack 与 msrv：前者要装 cargo-hack，后者会 `rustup toolchain install`
+# 往你机器上装一整条工具链，都不适合塞进「随手跑一下」的命令里。
+# 它们各自是独立配方（just hack / just msrv），CI 上照常会跑。
 [group('check')]
-[doc('本地跑一遍 CI 会跑的全部检查')]
+[doc('本地跑一遍 CI 的主要检查（lint / test / audit）')]
 ci: lint test audit
 
 # ---------------------------------------------------------------------------
@@ -162,15 +208,9 @@ update-submodule:
 changelog:
     #!/usr/bin/env bash
     set -euo pipefail
-    repo="{{ gh_repo }}"
-    # --offline: 只用 owner/repo 拼链接，不去调 GitHub API（免 token、免限流，
+    # --offline: 只用 owner/repo 拼链接，不去调平台 API（免 token、免限流，
     # 也避免仓库还没推上去时 git-cliff 因 404 直接 panic）
-    if [ -z "$repo" ]; then
-        echo "警告: 未检测到 GitHub origin remote，CHANGELOG 里的提交链接会不完整" >&2
-        git cliff --offline -o CHANGELOG.md
-    else
-        GITHUB_REPO="$repo" git cliff --offline -o CHANGELOG.md
-    fi
+    just _cliff --offline -o CHANGELOG.md
 
 # 内部配方：给 cargo-release 的 pre-release-hook 用，把 CHANGELOG 生成到指定版本。
 # 见 release.toml 的 pre-release-hook 配置。
@@ -178,12 +218,23 @@ changelog:
 _changelog-for version:
     #!/usr/bin/env bash
     set -euo pipefail
-    repo="{{ gh_repo }}"
-    args=(--offline --tag "v{{ version }}" -o CHANGELOG.md)
-    if [ -z "$repo" ]; then
-        git cliff "${args[@]}"
+    just _cliff --offline --tag "v{{ version }}" -o CHANGELOG.md
+
+# 内部配方：带上正确的平台变量调用 git-cliff。
+# 两个 changelog 配方共用，免得平台判断逻辑抄两份、改一处漏一处。
+[private]
+_cliff *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    slug="{{ repo_slug }}"
+    host="{{ repo_host }}"
+    if [ -z "$slug" ] || [ -z "$host" ]; then
+        echo "警告: 未识别到 github / gitlab 的 origin remote，CHANGELOG 里的提交链接会不完整" >&2
+        git cliff {{ args }}
+    elif [ "$host" = "gitlab" ]; then
+        GITLAB_REPO="$slug" git cliff {{ args }}
     else
-        GITHUB_REPO="$repo" git cliff "${args[@]}"
+        GITHUB_REPO="$slug" git cliff {{ args }}
     fi
 
 [group('release')]
@@ -241,13 +292,13 @@ doctor:
     if rustup component list --toolchain nightly --installed 2>/dev/null | grep -q '^rustfmt'; then
         echo "  ✓ rustfmt (nightly)"
     else
-        echo "  ✗ rustfmt (nightly) -> rustup toolchain install nightly --profile minimal --component rustfmt"
+        echo "  ✗ rustfmt (nightly) -> rustup toolchain install nightly --allow-downgrade --profile minimal --component rustfmt"
         missing=1
     fi
 
     echo "== 配套工具 =="
     for t in cargo-nextest cargo-deny cargo-llvm-cov cargo-release cargo-outdated \
-             cargo-machete cargo-semver-checks typos git-cliff bacon; do
+             cargo-machete cargo-semver-checks cargo-hack typos git-cliff bacon; do
         if command -v "$t" >/dev/null 2>&1; then
             echo "  ✓ ${t}"
         else
@@ -257,7 +308,7 @@ doctor:
     done
 
     echo "== 可选 =="
-    for t in pre-commit cargo-binstall docker; do
+    for t in pre-commit cargo-binstall cargo-flamegraph docker; do
         command -v "$t" >/dev/null 2>&1 \
             && echo "  ✓ ${t}" \
             || echo "  - ${t}（未安装，非必需）"
@@ -287,6 +338,7 @@ install-tools:
         typos-cli          # 拼写检查
         git-cliff          # 生成 CHANGELOG
         bacon              # 后台实时监控
+        cargo-hack         # feature 幂集检查，和 CI 的 hack job 对齐
     )
     # 这些工具从源码编译一遍要十几分钟。cargo-binstall 直接下载上游发布的预编译
     # 二进制，几十秒就能装完；没有预编译包的会自动退回源码编译。
@@ -300,7 +352,9 @@ install-tools:
         echo ""
         cargo install --locked "${tools[@]}"
     fi
-    rustup toolchain install nightly --profile minimal --component rustfmt
+    # --allow-downgrade：某天的 nightly 偶尔会缺 rustfmt 组件，加上它 rustup 会自动
+    # 退回到最近一个组件齐全的 nightly，而不是直接拒绝安装。
+    rustup toolchain install nightly --allow-downgrade --profile minimal --component rustfmt
 
 [group('setup')]
 [doc('安装 pre-commit 钩子（pre-commit / commit-msg / pre-push）')]

@@ -11,7 +11,10 @@ indent_style = space
 indent_size = 4
 max_line_length = 100
 
-[*.{rs}]
+[*.rs]
+# 和上面的 [*] 一致，写出来是为了和下面 2 空格的那组形成对照。
+# 注意别写成 [*.{rs}]：EditorConfig 的花括号是「逗号分隔的多选」语法，
+# 只有一项、没有逗号时多数实现按字面量处理，那一段等于谁也匹配不上。
 indent_size = 4
 
 [*.{toml,yaml,yml,json,md}]

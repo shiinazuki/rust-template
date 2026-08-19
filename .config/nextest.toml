@@ -30,3 +30,28 @@ slow-timeout = { period = "60s", terminate-after = 3 }
 # 输出 JUnit 报告，GitHub Actions 的测试报告插件可以直接消费
 [profile.ci.junit]
 path = "junit.xml"
+
+# ---------------------------------------------------------------------------
+# 测试分组：给「不能并发跑」的测试上闸
+#
+# nextest 默认每个测试一个进程、全部并行。这对纯计算的单元测试是好事，
+# 但碰上共享资源（同一个数据库、同一个固定端口、同一个临时文件）就会互相打架，
+# 表现为「本地跑单个测试没问题，一起跑就随机失败」。
+#
+# 下面这套写法比在测试里加 Mutex 干净：声明一个并发上限为 1 的组，
+# 再按名字把相关测试划进去。取消注释即可用。
+# ---------------------------------------------------------------------------
+
+# [test-groups.serial]
+# max-threads = 1
+
+# [[profile.default.overrides]]
+# # 过滤表达式语法见 https://nexte.st/docs/filtersets/
+# filter = 'test(/^db::/)'
+# test-group = 'serial'
+
+# 个别测试就是慢（跑真实 IO、起容器），单独放宽超时，
+# 而不是把全局 slow-timeout 调大——那样真卡死的测试也不会被杀掉了。
+# [[profile.default.overrides]]
+# filter = 'test(integration)'
+# slow-timeout = { period = "120s", terminate-after = 2 }

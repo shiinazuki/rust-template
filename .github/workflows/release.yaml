@@ -1,0 +1,196 @@
+name: release
+
+# 只有推 v* tag 时才跑。日常的检查在 build.yaml 里。
+#
+# 为什么和 build.yaml 分开：发布流程里不使用任何编译缓存。缓存是可以被写入的
+# （同一仓库的分支 / PR 都能往里放东西），一旦发布产物是用缓存里的中间结果构建的，
+# 「污染缓存」就等价于「污染 release 二进制」。分开之后这条路径直接不存在，
+# 代价只是发版时多花几分钟从零编译——一次发版而已，值。
+on:
+  push:
+    tags:
+      - v*
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+
+jobs:
+  # 先把 tag 指向的这个 commit 从零验证一遍。
+  # 注意这和「分支 CI 曾经通过」不是一回事：tag 可能打在任何 commit 上。
+  verify:
+    name: verify tagged commit
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # 顺便把「这仓库有没有 bin target」告诉下面的 binaries job。
+    #
+    # ⚠️ 不要图省事在 binaries 上直接写 `if: hashFiles('src/main.rs') != ''`：
+    #    job 级的 `if:` 在 checkout **之前**求值，那时工作区是空的，hashFiles
+    #    恒为空串，job 会被静默跳过——表现就是「发版跑完了，Release 页面上一个
+    #    二进制都没有」，而且没有任何红色提示。必须先 checkout 再用 outputs 传递。
+    outputs:
+      is_bin: ${{ steps.probe.outputs.is_bin }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - name: Install Rust (版本由 rust-toolchain.toml 固定)
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: Install nightly rustfmt
+        run: rustup toolchain install nightly --allow-downgrade --profile minimal --component rustfmt
+      - name: Install cargo tools
+        uses: taiki-e/install-action@5b4d68e2e660441203ab128a23676f1e4faf1532 # v2.86.3
+        with:
+          tool: cargo-nextest,cargo-deny,typos
+      - name: Check code format
+        run: cargo +nightly fmt --all -- --check
+      - name: Check spelling
+        run: typos
+      - name: Lint rust sources
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+      - name: Run tests
+        run: cargo nextest run --locked --all-targets --all-features
+      - name: Run doc tests
+        if: hashFiles('src/lib.rs') != ''
+        run: cargo test --locked --doc --all-features
+      - name: Check dependencies
+        run: cargo deny check
+      # tag 名和 Cargo.toml 里的版本必须一致，否则发出去的 v1.2.3 里装的是 1.2.2。
+      # cargo-release 正常流程不会出这种错，手动打 tag 时很容易。
+      - name: Tag matches Cargo.toml version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version=$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')
+          if [ "v$version" != "$TAG" ]; then
+            echo "::error::tag ($TAG) 与 Cargo.toml 里的版本 (v$version) 不一致"
+            exit 1
+          fi
+          echo "版本一致：$TAG"
+      - name: Probe repository layout
+        id: probe
+        run: |
+          is_bin=$([ -f src/main.rs ] && echo true || echo false)
+          echo "is_bin=$is_bin" >> "$GITHUB_OUTPUT"
+          echo "bin=$is_bin"
+
+  # 生成本次的变更说明并创建 GitHub Release
+  github-release:
+    name: github release
+    needs: [verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write # 创建 Release 需要写权限
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # git-cliff 需要完整历史才能算出版本区间
+          persist-credentials: false
+      - name: Generate a changelog
+        uses: orhun/git-cliff-action@f50e11560dce63f7c33227798f90b924471a88b5 # v4.8.0
+        id: git-cliff
+        with:
+          config: cliff.toml
+          # --offline: 只用 GITHUB_REPO 拼提交链接，不调 GitHub API（免 token、免限流）
+          args: -vv --latest --strip header --offline
+        env:
+          OUTPUT: CHANGES.md
+          GITHUB_REPO: ${{ github.repository }}
+      - name: Create release
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
+        with:
+          body: ${{ steps.git-cliff.outputs.content }}
+          # 预发布版本（v1.2.3-rc.1）自动标记成 pre-release
+          prerelease: ${{ contains(github.ref_name, '-') }}
+
+  # 跨平台编译二进制并挂到上面那个 Release 上（只有 bin 项目才有意义）。
+  #
+  # 用 taiki-e/upload-rust-binary-action：编译、打包（Unix 出 .tar.gz、Windows 出 .zip）、
+  # 生成 sha256 校验和、上传，一步到位，比手写十几行 shell 稳。
+  binaries:
+    name: binary (${{ matrix.target }})
+    # verify 必须列进 needs 才能读到它的 outputs——只靠 github-release 间接依赖不行
+    needs: [verify, github-release]
+    if: needs.verify.outputs.is_bin == 'true'
+    permissions:
+      contents: write # 往 Release 里传附件
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # musl 的两个目标交给 cross 在容器里编，宿主机不用装交叉 linker。
+          # musl 静态链接，产物扔进任何 Linux 发行版（包括 distroless / scratch）都能跑。
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            build-tool: cross
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            build-tool: cross
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            build-tool: cargo
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            build-tool: cargo
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            build-tool: cargo
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Rust (版本由 rust-toolchain.toml 固定)
+        run: rustup show active-toolchain || rustup toolchain install
+      # 二进制名 = 包名，从 Cargo.toml 里读。不要想当然地用仓库名：
+      # 仓库改名、或者一个仓库里有多个 bin 时就对不上了。
+      - name: Resolve binary name
+        id: pkg
+        shell: bash
+        run: echo "name=$(grep -m1 '^name' Cargo.toml | sed -E 's/.*"(.*)".*/\1/')" >> "$GITHUB_OUTPUT"
+      - name: Build and upload
+        uses: taiki-e/upload-rust-binary-action@f0d45ae91ee7b8ee928de7a9d04d893a08bcbec6 # v1.30.2
+        with:
+          bin: ${{ steps.pkg.outputs.name }}
+          target: ${{ matrix.target }}
+          build-tool: ${{ matrix.build-tool }}
+          # 产物名带上 tag，用户把几个版本下载到一起也不会混
+          archive: $bin-$tag-$target
+          checksum: sha256
+          locked: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  # 发布到 crates.io。默认**不启用**——要开的话在仓库
+  # Settings → Secrets and variables → Actions → Variables 里加 PUBLISH_TO_CRATES_IO=true。
+  #
+  # 用的是 crates.io 的 Trusted Publishing（OIDC）：仓库里不存任何长期 token，
+  # 由 GitHub 签发的一次性凭据换取 crates.io 的临时 token，泄漏面小得多。
+  # 首次使用前要先在 crates.io 的 crate 设置页把「仓库 + workflow 文件名」登记为受信任发布者。
+  crates-io:
+    name: publish to crates.io
+    if: vars.PUBLISH_TO_CRATES_IO == 'true'
+    needs: [verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      id-token: write # 换取 crates.io 临时 token 所必需
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Rust (版本由 rust-toolchain.toml 固定)
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: Authenticate with crates.io
+        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+        id: auth
+      - name: Publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: cargo publish --locked

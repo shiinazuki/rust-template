@@ -20,8 +20,12 @@
 *.wasm binary
 
 # 机器生成、评审时无需逐行看的文件：
-# linguist-generated 让 GitHub 的 PR 页面默认折叠它们
-Cargo.lock   linguist-generated=true -diff
+# linguist-generated 让 GitHub 的 PR 页面默认折叠它们（需要时仍可展开）。
+#
+# ⚠️ 刻意**不加** `-diff`：那会让 git 把文件当二进制，本地 `git diff Cargo.lock`
+#    只输出一句 "Binary files differ"。依赖版本变更恰恰是最该被看见的东西
+#    ——供应链攻击就是从一次没人细看的 lock 更新开始的。
+Cargo.lock   linguist-generated=true
 CHANGELOG.md linguist-generated=true
 
 # Rust 源码：让 `git diff` 的 hunk 头显示所在的 fn / impl，读 diff 时省事很多

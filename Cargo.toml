@@ -35,7 +35,16 @@ authors = ["{{ authors }}"]
 [workspace.dependencies]
 # 这里是版本目录：成员写 `foo = { workspace = true }` 引用后才真正生效{% if async_runtime %}
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
-# tokio 的 feature 在此统一收口，子 crate 不要各自再开{% endif %}
+# tokio 的 feature 在此统一收口，子 crate 不要各自再开{% endif %}{% if cli and crate_type == "bin" %}
+clap = { version = "4", features = ["derive", "env"] }
+# derive = 用结构体声明参数；env = 允许 #[arg(env = "...")] 回落到环境变量（容器里的常规做法）{% endif %}{% if logging and crate_type == "bin" %}
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# env-filter 提供 RUST_LOG 那套运行时可调的过滤语法，不用重新编译就能改日志级别{% endif %}{% if error_handling %}
+thiserror = "2"
+# thiserror 只在编译期展开成 impl，不会给运行时增加负担{% endif %}{% if error_handling and crate_type == "bin" %}
+anyhow = "1"
+# anyhow 只给应用层用；库对外暴露它等于剥夺了调用方分类处理错误的能力，见 src/error.rs{% endif %}
 
 [package]
 name = "{{ project-name }}"
@@ -67,14 +76,39 @@ exclude = [
   "docker.just",
   "bacon.toml",
   "release.toml",
+  ".devcontainer/",
+  ".editorconfig",
+  "_typos.toml",
+  "rust-toolchain.toml",
+  "CONTRIBUTING.md",
+  "CODE_OF_CONDUCT.md",
+  "SECURITY.md",
 ]
+
+# docs.rs 元数据只有库项目才生成——bin 不会发布到 docs.rs。{% if crate_type == "lib" %}
+# 用全部 feature 构建文档，否则藏在 optional feature 后面的 API 在线文档里根本看不到；
+# --cfg docsrs 则允许你用 #[cfg_attr(docsrs, doc(cfg(...)))] 标注
+# 「这个 API 需要开哪个 feature」。
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+# 以上仅 lib{% endif %}
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 # 版本继承自上面的 [workspace.dependencies]，这里只声明「本 crate 要用」{% if async_runtime %}
 tokio = { workspace = true }
-# 入口是 #[tokio::main]，见 src/main.rs{% endif %}
+# 入口是 #[tokio::main]，见 src/main.rs{% endif %}{% if cli and crate_type == "bin" %}
+clap = { workspace = true }
+# 参数定义见 src/cli.rs{% endif %}{% if logging and crate_type == "bin" %}
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+# 初始化见 src/telemetry.rs{% endif %}{% if error_handling %}
+thiserror = { workspace = true }
+# 领域错误类型见 src/error.rs{% endif %}{% if error_handling and crate_type == "bin" %}
+anyhow = { workspace = true }
+# main 用它收口，配合 .context() 补充上下文{% endif %}
 
 [dev-dependencies]
 
@@ -124,6 +158,18 @@ strip = "none"
 [profile.test]
 opt-level = 1
 
+# 下面两项默认注释着，按项目性质决定要不要打开：
+#
+# [profile.dev.build-override]
+# build script 与 proc-macro（serde_derive 这类）是用这一段编译的，
+# 上面的 [profile.dev.package."*"] 管不到它们。derive 用得多时打开会更快。
+# opt-level = 1
+#
+# [profile.release]
+# overflow-checks = true
+# release 默认关闭整数溢出检查，溢出会静默回绕。对账务 / 计费 / 协议解析这类
+# 场景，宁可 panic 也不要算错——打开它的代价通常在噪声范围内。
+
 # ---------------------------------------------------------------------------
 # 统一代码规范与 Clippy 约束
 #
@@ -139,6 +185,11 @@ missing_debug_implementations = "warn"
 unreachable_pub = "warn"                     # 只在 crate 内部用的类型不要暴露成 pub
 unused_qualifications = "warn"
 rust_2018_idioms = { level = "warn", priority = -1 }
+# 未来版本里会变成硬错误的用法，趁现在还只是 warning 就改掉
+future_incompatible = { level = "warn", priority = -1 }
+# `let _ = mutex.lock()` 这类「守卫当场被丢弃」的坑：编译器不拦，这条拦
+let_underscore_drop = "warn"
+unused_lifetimes = "warn"
 # 库项目自动打开：强制公开 API 写文档注释（二进制项目生成为 "allow"）
 missing_docs = "{% if crate_type == 'lib' %}warn{% else %}allow{% endif %}"
 
@@ -152,6 +203,12 @@ unwrap_used = "warn"      # 不要随手 unwrap，改用 ? 或 expect("说明为
 dbg_macro = "warn"        # 调试用的 dbg! 不要带进提交
 todo = "warn"
 mem_forget = "deny"
+# 统一模块布局：用 foo.rs + foo/ 而不是 foo/mod.rs，免得一个仓库里两种风格混着来
+self_named_module_files = "warn"
+# 已经是 &str 还 .to_string()：写 .to_owned() 意图更清楚，也少一次格式化机器的开销
+str_to_string = "warn"
+# 只是想读一个文件却手写 File::open + read_to_string 的绕远路写法
+verbose_file_reads = "warn"
 
 # 降噪：pedantic 里在业务代码中收益不高的几条。按需删掉即可恢复检查。
 module_name_repetitions = "allow"
@@ -161,6 +218,15 @@ missing_panics_doc = "allow"
 
 # 测试里用 unwrap/expect/panic 是常态，由 clippy.toml 的 allow-*-in-tests 统一放行，
 # 不需要再在源码里写 #![cfg_attr(test, allow(clippy::unwrap_used))]。
+
+# 文档里的死链是最容易悄悄积累的技术债：写的时候不报错，等有人点开文档才发现。
+# CI 靠 RUSTDOCFLAGS="-D warnings" 兜底，但声明在这里，本地 `cargo doc`
+# 和编辑器里同样生效。
+[workspace.lints.rustdoc]
+broken_intra_doc_links = "deny"
+private_intra_doc_links = "warn"
+invalid_html_tags = "warn"
+bare_urls = "warn"
 
 # 根 crate 继承上面那套规则
 [lints]

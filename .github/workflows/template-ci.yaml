@@ -1,0 +1,111 @@
+name: template-ci
+
+# 模板仓库**自己的** CI：按矩阵生成项目，再逐个跑一遍完整检查。
+# 这个文件在 cargo-generate.toml 的 ignore 列表里，不会进入生成的项目。
+#
+# 为什么必须有它：模板仓库里跑不了 cargo（根目录的 rust-toolchain.toml 与
+# Cargo.toml 里都是占位符），所以「改完模板还能不能生成出可用项目」这件事
+# 完全没有其它办法验证。liquid 标签写错一个、conditional 漏一条、生成的代码
+# 差一个空行过不了 fmt --check——这些都只有真生成一次才会暴露。
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # 每周跑一次完整矩阵：上游的 clippy / rustfmt / 依赖都在变，
+  # 模板没动也可能某天就生成不出能过 CI 的项目了。
+  schedule:
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  # ⚠️ 模板根目录的 rust-toolchain.toml 里 channel 是 `{{ toolchain }}`，不是合法
+  #    工具链名，在这个目录下跑任何 cargo/rustup 命令都会失败。RUSTUP_TOOLCHAIN
+  #    的优先级高于 rust-toolchain.toml，用它绕过去。
+  #    （scripts/smoke.sh 会在真正生成项目前把这个变量解开，
+  #      否则它会连生成项目声明的 channel 一起盖掉。）
+  RUSTUP_TOOLCHAIN: stable
+
+jobs:
+  smoke:
+    name: generate & check
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # nightly 这条不只是给 `cargo +nightly fmt` 用的：矩阵里有 toolchain=nightly
+      # 的组合，进到那种项目目录后 rustup 会照 rust-toolchain.toml 把 components
+      # 补齐。在这里用 --allow-downgrade 一次性装好，rustup 后面就不必现装——
+      # 否则碰上某天的 nightly 缺组件，它没有 --allow-downgrade 可用，会直接失败。
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy
+          rustup toolchain install nightly --allow-downgrade --profile minimal \
+            --component rustfmt,clippy,rust-src,llvm-tools
+      - name: Install tools
+        uses: taiki-e/install-action@5b4d68e2e660441203ab128a23676f1e4faf1532 # v2.86.3
+        with:
+          tool: cargo-generate,cargo-nextest,just
+      # PR / push 上跑默认矩阵（9 组，够覆盖每个开关的开与关）；
+      # 定时任务与手动触发跑完整矩阵（bin 的 4 个源码开关全排列 + lib）。
+      - name: Run smoke matrix
+        env:
+          MODE: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '--full' || '' }}
+        run: bash scripts/smoke.sh $MODE
+
+  hooks:
+    name: pre-commit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+        with:
+          python-version: "3.x"
+      # 模板仓库里的 cargo 类钩子会因为 Cargo.toml 里还是占位符而自动跳过，
+      # 剩下的（空白、行尾、TOML/JSON 语法、拼写、conventional commits）照常检查。
+      - name: Run pre-commit
+        uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1
+
+  workflows:
+    name: lint workflows
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install zizmor
+        uses: taiki-e/install-action@5b4d68e2e660441203ab128a23676f1e4faf1532 # v2.86.3
+        with:
+          tool: zizmor
+      - name: Audit GitHub Actions workflows
+        run: zizmor --min-severity medium --no-progress .github/workflows
+
+  shell:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install shellcheck
+        uses: taiki-e/install-action@5b4d68e2e660441203ab128a23676f1e4faf1532 # v2.86.3
+        with:
+          tool: shellcheck
+      - name: Check shell scripts
+        run: shellcheck scripts/*.sh
