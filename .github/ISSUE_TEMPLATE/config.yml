@@ -1,5 +1,5 @@
 blank_issues_enabled: true
 contact_links:
   - name: 安全漏洞
-    url: https://github.com/{{ gh-username }}/{{ project-name }}/security/advisories/new
+    url: https://github.com/{{ repo-owner }}/{{ project-name }}/security/advisories/new
     about: 请不要开公开 issue，走私密的安全公告流程（见 SECURITY.md）

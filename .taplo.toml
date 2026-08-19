@@ -1,0 +1,20 @@
+# taplo 的 TOML 格式化配置：https://taplo.tamasfe.dev/configuration/formatter-options.html
+#   格式化：just fmt      （rustfmt 管 .rs，taplo 管 .toml）
+#   只检查：just lint     （CI 跑的也是这一条）
+#
+# 为什么需要它：这个项目里有十来个 TOML，光靠人手对齐迟早会漂。rustfmt 不管 .toml，
+# pre-commit 的 check-toml 只验语法不管排版，taplo 是这块唯一的补位。
+#
+# ⚠️ VSCode 装了 even-better-toml 的话，保存时用的就是这份配置，
+#    编辑器里格式化出来的结果和 CI 一致，不会互相打架。
+
+# taplo 默认就会尊重 .gitignore，target/ 里的 TOML 不会被扫到；
+# 这里再显式排除一次，免得哪天有人用 --no-gitignore 跑。
+exclude = ["target/**"]
+
+[formatting]
+# 关掉「把行尾注释对齐成一列」：CJK 字符的显示宽度 taplo 与终端 / 编辑器算法不同，
+# 开着的话同一份文件在不同环境下会被对齐到不同的列，反复产生无意义的 diff。
+align_comments = false
+align_entries = false
+column_width = 100

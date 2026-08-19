@@ -19,19 +19,22 @@ edition = "2024"
 # `just msrv` 和 CI 的 msrv job 会验证它属实；nightly 项目会自动跳过该检查。
 rust-version = "1.85"
 license = "{{ license }}"
-repository = "https://github.com/{{ gh-username }}/{{ project-name }}"
+# 域名按 ci 选项推导，不要写死 github.com——这个字段会跟着 `cargo publish` 进 crates.io，
+# 指错了就是一个所有人都点得到的 404。ci = none 时按 github 处理，需要的话手工改。
+repository = "https://{% if ci == 'gitlab' %}gitlab.com{% else %}github.com{% endif %}/{{ repo-owner }}/{{ project-name }}"
 authors = ["{{ authors }}"]
 
 # --- 供所有成员继承的依赖版本 ---------------------------------------------
 # 版本号统一在这里定，成员里只写 `foo = { workspace = true }`，
 # 避免多个子 crate 各自声明版本导致同一个库被编进来两份。
 #
-# ⚠️ 下面用的是「注释锚定」写法：liquid 的 {% raw %}{% if %}{% endraw %} /
-#    {% raw %}{% endif %}{% endraw %} 标签一律挂在 TOML 注释行的**行尾**，
-#    于是本文件在模板仓库里**同时也是合法 TOML**——编辑器的 TOML 语言服务
-#    （taplo / even-better-toml）不会再把两个标签行当成重复键而报
-#    "Duplicate dependency name"，`check-toml` 钩子也能照常检查。
-#    反例：单独占一行的裸 {% raw %}{%- if ... %}{% endraw %} 会让本文件变成非法 TOML。
+# ⚠️ 下面用的是「注释锚定」写法：模板里的条件标签一律挂在 TOML 注释行的**行尾**，
+#    于是模板仓库里的这个文件**同时也是合法 TOML**——编辑器的 TOML 语言服务
+#    （taplo / even-better-toml）不会把两个标签行当成重复键而报
+#    "Duplicate dependency name"，`check-toml` 钩子与 `taplo fmt` 也能照常工作。
+#    反例：让标签单独占一行，文件就成了非法 TOML。
+#    （标签在生成时已经消失，这段说明留着只是为了解释下面这种排版从何而来；
+#      完整说明见模板仓库 README 的「TOML 文件里的 liquid 标签必须锚在注释行」。）
 [workspace.dependencies]
 # 这里是版本目录：成员写 `foo = { workspace = true }` 引用后才真正生效{% if async_runtime %}
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
@@ -63,6 +66,7 @@ authors.workspace = true
 # 打包发布时排除掉只对开发有意义的文件，减小 .crate 体积
 exclude = [
   ".github/",
+  ".gitlab/",
   ".gitlab-ci.yml",
   ".vscode/",
   ".config/",
@@ -78,11 +82,13 @@ exclude = [
   "release.toml",
   ".devcontainer/",
   ".editorconfig",
-  "_typos.toml",
+  ".taplo.toml",
+  ".typos.toml",
   "rust-toolchain.toml",
   "CONTRIBUTING.md",
   "CODE_OF_CONDUCT.md",
   "SECURITY.md",
+  "CODEOWNERS",
 ]
 
 # docs.rs 元数据只有库项目才生成——bin 不会发布到 docs.rs。{% if crate_type == "lib" %}
@@ -95,6 +101,20 @@ rustdoc-args = ["--cfg", "docsrs"]
 # 以上仅 lib{% endif %}
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+# ---------------------------------------------------------------------------
+# Feature 开关
+#
+# 现在一个都没声明，于是 CI 的 hack job（cargo hack --feature-powerset）等价于
+# 一次普通 check。等你把下面这段的注释去掉，它才真正开始发挥作用——不用改 CI。
+#
+# 为什么值得从第一天就把这个位置留出来：使用者可能只开其中一个 feature，
+# 而你本地永远跑的是 --all-features，「单独开 A 编不过」这类问题只有幂集检查能发现。
+# ---------------------------------------------------------------------------
+# [features]
+# default = []
+# # optional = true 的依赖会自动生成一个同名 feature；想改名字用 dep: 前缀显式转发：
+# # serde = ["dep:serde", "dep:serde_json"]
 
 [dependencies]
 # 版本继承自上面的 [workspace.dependencies]，这里只声明「本 crate 要用」{% if async_runtime %}
@@ -110,6 +130,17 @@ thiserror = { workspace = true }
 anyhow = { workspace = true }
 # main 用它收口，配合 .context() 补充上下文{% endif %}
 
+# 只在测试 / benchmark / example 里用到的依赖放这里，不会进使用者的依赖树。
+# 刻意留空——测试辅助库按项目需要选，预置一堆没人用的反而是负担。常用的几个：
+#
+#   assert_cmd + predicates   跑真实的可执行文件，断言退出码 / stdout / stderr
+#   trycmd                    把 CLI 的输入输出写成 .md 快照，改一行就能重跑对齐
+#   insta                     快照测试，`cargo insta review` 交互式确认差异
+#   rstest                    参数化测试，一个函数跑多组输入
+#   proptest                  性质测试，自动找反例并收缩到最小复现
+#   tempfile                  临时目录 / 文件，测试结束自动清理
+#   pretty_assertions         断言失败时给彩色 diff，而不是两大坨 Debug 输出
+#   divan / criterion         benchmark（配合 benches/ 与 [profile.bench]）
 [dev-dependencies]
 
 # `just unused` 用 cargo-machete 找出声明了却没用到的依赖。它靠扫源码里的符号判断，
@@ -135,10 +166,10 @@ split-debuginfo = "unpacked"
 
 [profile.release]
 opt-level = 3
-lto = "thin"      # 需要更激进可改成 "fat"，体积更小但编译明显变慢
+lto = "thin" # 需要更激进可改成 "fat"，体积更小但编译明显变慢
 codegen-units = 1
 strip = "symbols"
-panic = "unwind"  # 改成 "abort" 二进制更小，但会禁用 unwind 并影响 #[should_panic] 测试
+panic = "unwind" # 改成 "abort" 二进制更小，但会禁用 unwind 并影响 #[should_panic] 测试
 
 # 做性能分析（flamegraph / samply / instruments）时用：
 #   cargo build --profile profiling
@@ -180,9 +211,9 @@ opt-level = 1
 # ---------------------------------------------------------------------------
 
 [workspace.lints.rust]
-unsafe_code = "forbid"                       # 默认禁止 unsafe（确实需要时改成 "deny" 并按处 allow）
+unsafe_code = "forbid" # 默认禁止 unsafe（确实需要时改成 "deny" 并按处 allow）
 missing_debug_implementations = "warn"
-unreachable_pub = "warn"                     # 只在 crate 内部用的类型不要暴露成 pub
+unreachable_pub = "warn" # 只在 crate 内部用的类型不要暴露成 pub
 unused_qualifications = "warn"
 rust_2018_idioms = { level = "warn", priority = -1 }
 # 未来版本里会变成硬错误的用法，趁现在还只是 warning 就改掉
@@ -192,6 +223,12 @@ let_underscore_drop = "warn"
 unused_lifetimes = "warn"
 # 库项目自动打开：强制公开 API 写文档注释（二进制项目生成为 "allow"）
 missing_docs = "{% if crate_type == 'lib' %}warn{% else %}allow{% endif %}"
+# 下面这条配套上面的 [package.metadata.docs.rs]，只对库项目生成{% if crate_type == "lib" %}
+# 自 1.80 起 cargo 会校验 cfg 名字：docsrs 不登记在这里的话，一旦按 docs.rs 那段的建议
+# 写 #[cfg_attr(docsrs, doc(cfg(...)))]，本地 cargo check 就会报 unexpected_cfgs，
+# 而 CI 是 -D warnings ——一条纯粹为了文档写的属性会把构建打红。
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(docsrs)'] }
+# 以上仅 lib{% endif %}
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
@@ -199,8 +236,8 @@ pedantic = { level = "warn", priority = -1 }
 
 # 手动加严：这几条 clippy 默认不开，但线上事故多半出在这里
 enum_glob_use = "deny"
-unwrap_used = "warn"      # 不要随手 unwrap，改用 ? 或 expect("说明为什么不会失败")
-dbg_macro = "warn"        # 调试用的 dbg! 不要带进提交
+unwrap_used = "warn" # 不要随手 unwrap，改用 ? 或 expect("说明为什么不会失败")
+dbg_macro = "warn" # 调试用的 dbg! 不要带进提交
 todo = "warn"
 mem_forget = "deny"
 # 统一模块布局：用 foo.rs + foo/ 而不是 foo/mod.rs，免得一个仓库里两种风格混着来

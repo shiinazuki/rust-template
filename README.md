@@ -51,7 +51,7 @@ just ci
 | 变量 | 说明 | 可选值 / 默认 |
 | --- | --- | --- |
 | `description` | 项目简介，写入 `Cargo.toml` 的 `description` | 默认 `A Rust project` |
-| `gh-username` | GitHub 用户名或组织名，用于拼 `repository` 字段 | 需符合 GitHub 用户名规则 |
+| `repo-owner` | 仓库所有者（GitHub / GitLab 的用户名或组织名），用于拼 `repository` 字段 | 允许字母数字与 `._/-`，GitLab 子组写 `group/subgroup` |
 | `toolchain` | 写入 `rust-toolchain.toml` 的 channel | `nightly`（默认）/ `stable` |
 | `license` | 开源协议 | `MIT`（默认）/ `Apache-2.0` / `MIT OR Apache-2.0` |
 | `ci` | CI 平台 | `github`（默认）/ `gitlab` / `none` |
@@ -61,6 +61,10 @@ just ci
 | `cli` | 是否生成命令行骨架（clap），**仅 bin** | `false`（默认）/ `true` |
 | `logging` | 是否生成日志骨架（tracing），**仅 bin** | `false`（默认）/ `true` |
 | `open_source` | 是否生成开源社区文件（见下） | `false`（默认）/ `true` |
+
+> 没有单独的「托管平台」变量：`repository` 的域名由 `ci` 推导（`gitlab` → `gitlab.com`，
+> 其余 → `github.com`）。`ci = none` 又托管在 GitLab 时，生成完手工改一下 `Cargo.toml`
+> 的 `repository` 即可。
 
 **项目名与作者不在上表里**，它们是 cargo-generate 的内置变量，不需要（也不该）再定义一遍：
 
@@ -79,7 +83,7 @@ just ci
 cargo generate --git https://github.com/shiinazuki/rust-template \
   --name my-app --bin --silent \
   --define description="一个命令行工具" \
-  --define gh-username=shiinazuki \
+  --define repo-owner=shiinazuki \
   --define toolchain=stable \
   --define license="MIT OR Apache-2.0" \
   --define ci=github \
@@ -100,15 +104,32 @@ cargo generate --git https://github.com/shiinazuki/rust-template \
 
 | | `--bin` | `--lib` |
 | --- | --- | --- |
-| 源码 | `src/main.rs` | `src/lib.rs` |
-| 集成测试 | 无 | `tests/integration.rs` |
+| 源码 | `src/lib.rs` + `src/main.rs` | `src/lib.rs` |
+| 集成测试 | `tests/integration.rs` | `tests/integration.rs` |
 | `missing_docs` lint | `allow` | `warn`（强制公开 API 写文档） |
-| `error_handling` | thiserror（领域错误）+ anyhow（`main` 收口） | 只有 thiserror，公开导出 |
+| `error_handling` | thiserror 定义在 lib，`main` 用 anyhow 收口 | 只有 thiserror，公开导出 |
 | `cli` / `logging` | 按开关生成 `src/cli.rs` / `src/telemetry.rs` | **始终不生成**（见下） |
 | Docker 相关文件 | 按 `docker` 开关 | 始终不生成（库没有可执行入口） |
-| docs.rs 元数据 | 无 | `[package.metadata.docs.rs]` |
+| docs.rs 元数据 | 无 | `[package.metadata.docs.rs]` + `unexpected_cfgs` 登记 `docsrs` |
 | CI 的 semver job | 跳过 | 以上一个 tag 为基线检查 API 破坏性变更 |
-| `just test` | 只跑 nextest | nextest + doctest |
+| `just flamegraph` | 可用 | 跳过（没有 bin target） |
+
+#### bin 项目为什么也有 `src/lib.rs`
+
+这是 Rust 里的主流布局，也是模板刻意做的选择：`main.rs` 只做参数解析、日志初始化
+和错误收口，业务逻辑全在 lib 那一侧。
+
+理由很实在——**`main.rs` 里的东西够不着**：集成测试（`tests/` 是独立 crate）、
+benchmark、doctest 都只能 `use` 到 lib target 导出的 `pub` 项。逻辑留在 `main.rs`
+里就只能靠手工跑一遍程序来验证，而这件事没有人会每次都做。
+
+配套的两处判断也跟着调整了，免得内部库被当成对外 API：
+
+- `just semver` 与 CI 的 semver job 只在**纯库**项目（有 `src/lib.rs`、没有
+  `src/main.rs`）上跑。bin 的 lib target 是自用的，改签名不该被判成破坏性变更；
+- `missing_docs` 对 bin 仍是 `allow`——内部库不必每个函数都写文档。
+
+项目确实要同时对外发布库和命令行时，把这两处判断里的 `src/main.rs` 条件删掉即可。
 
 `cli` / `logging` 对库不生效是有意的：解析命令行、安装全局 tracing subscriber
 都是**应用**的职责。库替调用方做这些决定属于越界——一个库如果自己装了 subscriber，
@@ -117,35 +138,46 @@ cargo generate --git https://github.com/shiinazuki/rust-template \
 
 ### 为什么社区文件默认不生成
 
-`SECURITY.md`、`CODE_OF_CONDUCT.md`、`CONTRIBUTING.md`、issue / PR 模板、`CODEOWNERS`
-这六份文件，只有在「项目公开 + 期待外部贡献者」时才产生价值：
+`SECURITY.md`、`CODE_OF_CONDUCT.md`、`CONTRIBUTING.md`、issue / PR（MR）模板、`CODEOWNERS`
+这几份文件，只有在「项目公开 + 期待外部贡献者」时才产生价值：
 
 - `SECURITY.md` 是告诉陌生人「发现漏洞别开公开 issue」——没有陌生人就没有意义；
 - issue 模板是给外部报障者用的表单；
 - `CODEOWNERS` 要配合分支保护规则才有约束力，单人仓库里它什么也不做；
 - `CONTRIBUTING.md` 的内容和生成项目的 README 重了一大半。
 
-私有仓库或个人项目里，它们是你永远不会打开、但每次 `ls` 都会看见的六个文件。
+私有仓库或个人项目里，它们是你永远不会打开、但每次 `ls` 都会看见的一堆文件。
 所以默认关闭，需要时把 `open_source` 打开即可——能力没删，只是移出了默认路径。
+
+协作模板按平台分发，两边是对等的：
+
+| | `ci = github` | `ci = gitlab` | `ci = none` |
+| --- | --- | --- | --- |
+| issue 模板 | `.github/ISSUE_TEMPLATE/`（YAML 表单） | `.gitlab/issue_templates/`（Markdown） | 无 |
+| PR / MR 模板 | `.github/PULL_REQUEST_TEMPLATE.md` | `.gitlab/merge_request_templates/Default.md` | 无 |
+| `CODEOWNERS` | 仓库根目录 | 仓库根目录 | 仓库根目录 |
+| 三份 md | 都有 | 都有 | 都有 |
+
+`CODEOWNERS` 刻意放在**仓库根目录**而不是 `.github/` 下：根目录是 GitHub 与 GitLab
+唯一都认的位置（GitHub 认根 / `.github/` / `docs/`，GitLab 认根 / `.gitlab/` / `docs/`）。
+放进 `.github/` 的话，`ci != github` 时它会被那条 ignore 规则连坐删掉，
+而且就算留下来 GitLab 也读不到。
+
+`ci = none` 时没有 issue / MR 模板，因为不知道该按哪个平台的约定放——
+post-script 会打印一行说明，不会静默少给。
 
 ### 功能开关的实际效果
 
 | 开关 | `true` / 选中时 | `false` / 未选时 |
 | --- | --- | --- |
-| `ci = github` | 保留 `.github/`（workflows + dependabot + issue 模板 + CODEOWNERS） | 其余取值下整个 `.github/` 被 ignore |
-| `ci = gitlab` | 保留 `.gitlab-ci.yml` | 其余取值下该文件被 ignore |
+| `ci = github` | 保留 `.github/`（workflows + dependabot + issue / PR 模板） | 其余取值下整个 `.github/` 被 ignore |
+| `ci = gitlab` | 保留 `.gitlab-ci.yml` 与 `.gitlab/`（issue / MR 模板） | 其余取值下两者都被 ignore |
 | `docker` | 生成 `Dockerfile`、`.dockerignore`、`docker.just` | 三者都不生成 |
 | `async_runtime` | 加 tokio、入口变 `#[tokio::main]`、`clippy.toml` 启用阻塞 API 禁令 | 保持同步骨架，禁令以注释形式留在 `clippy.toml` |
 | `error_handling` | 生成 `src/error.rs`，加 thiserror（bin 再加 anyhow） | 不生成，`main` 返回 `()` |
 | `cli` | 生成 `src/cli.rs`，加 clap，`main` 里解析参数 | 不生成 |
 | `logging` | 生成 `src/telemetry.rs`，加 tracing，`main` 里初始化 | 不生成，输出走 `println!` |
-| `open_source` | 生成 `SECURITY.md` / `CODE_OF_CONDUCT.md` / `CONTRIBUTING.md` / `.github/ISSUE_TEMPLATE/` / `PULL_REQUEST_TEMPLATE.md` / `CODEOWNERS`（后三项**仅当 `ci = github`**，见下） | 六个都不生成 |
-
-⚠️ `open_source` 与 `ci` 有一处交叉：后三份文件都躺在 `.github/` 下，而
-`ci != github` 时整个 `.github/` 会被 ignore。所以 `ci = gitlab` / `none` 配上
-`open_source = true`，实际只会拿到 `SECURITY.md` / `CODE_OF_CONDUCT.md` / `CONTRIBUTING.md`
-三份——post-script 会打印一行说明，不会静默少给。GitLab 的对应物是
-`.gitlab/issue_templates/` 与 `.gitlab/merge_request_templates/`，模板暂不提供，需要的话自己补。
+| `open_source` | 生成 `SECURITY.md` / `CODE_OF_CONDUCT.md` / `CONTRIBUTING.md` / `CODEOWNERS`，外加当前 CI 平台对应的 issue 与 PR/MR 模板（见上表） | 一个都不生成 |
 
 任何一个会加依赖的开关被打开时，post-script 都会删掉模板自带的 `Cargo.lock`
 ——那份 lock 只锁了根 crate 一个包，留着必然过期，而 CI 全程用 `--locked`。
@@ -169,7 +201,8 @@ cargo generate --git https://github.com/shiinazuki/rust-template \
 | `rustfmt.toml` | 格式化规则（含 unstable 选项，走 nightly） |
 | `clippy.toml` | Clippy 行为配置（lint 开关在 `Cargo.toml` 的 `[workspace.lints]`） |
 | `deny.toml` | 依赖的安全公告 / License / 重复版本 / 来源审计 |
-| `_typos.toml` | 拼写检查的词表与排除规则 |
+| `.taplo.toml` | TOML 格式化规则（rustfmt 只管 `.rs`，`.toml` 归 taplo） |
+| `.typos.toml` | 拼写检查的词表与排除规则 |
 | `cliff.toml` | git-cliff 生成 CHANGELOG 的模板与分组规则 |
 | `release.toml` | cargo-release 的发版流程配置 |
 | `bacon.toml` | bacon 实时监控的任务定义 |
@@ -181,13 +214,14 @@ cargo generate --git https://github.com/shiinazuki/rust-template \
 | `.devcontainer/` | Dev Container / Codespaces 配置 |
 | `.editorconfig` / `.gitattributes` / `.gitignore` | 编辑器与 git 的基础约定 |
 | `.vscode/` | rust-analyzer 配置与推荐插件 |
-| `CONTRIBUTING.md` / `SECURITY.md` / `CODE_OF_CONDUCT.md` | 社区文件，`open_source` 开关控制 |
+| `CONTRIBUTING.md` / `SECURITY.md` / `CODE_OF_CONDUCT.md` / `CODEOWNERS` | 社区文件，`open_source` 开关控制 |
 | `.github/workflows/build.yaml` | CI：lint / test / deny / workflows / msrv / hack / semver / miri |
 | `.github/workflows/release.yaml` | tag 触发：验证 → Release → 跨平台二进制 → crates.io |
 | `.github/workflows/audit.yaml` | 每日定时依赖安全审计 |
 | `.github/dependabot.yml` | cargo / actions / docker 三类依赖的自动升级 |
-| `.github/ISSUE_TEMPLATE/` `PULL_REQUEST_TEMPLATE.md` `CODEOWNERS` | 协作模板，`open_source` 开关控制 |
+| `.github/ISSUE_TEMPLATE/` `PULL_REQUEST_TEMPLATE.md` | GitHub 协作模板，`open_source` 开关控制 |
 | `.gitlab-ci.yml` | GitLab CI 的等价流水线，可选生成 |
+| `.gitlab/issue_templates/` `.gitlab/merge_request_templates/` | GitLab 协作模板，`open_source` 开关控制 |
 
 只属于模板仓库、**不会**进入生成项目的文件（在 `cargo-generate.toml` 的 `ignore` 里）：
 
@@ -228,10 +262,10 @@ error: custom toolchain '{{ toolchain }}' specified in override file ... is not 
 **这是唯一可靠的验证方式**，而且已经脚本化了：
 
 ```bash
-just smoke          # 9 组：覆盖每个开关的开与关，含 2 组 nightly
-just smoke-full     # 23 组：bin 的 4 个源码开关全排列 + lib + nightly
+just smoke          # 10 组：覆盖每个开关的开与关，含 2 组 nightly
+just smoke-full     # 25 组：bin 的 4 个源码开关全排列 + lib + nightly + 社区文件组合
 just smoke-keep     # 跑完保留生成的项目，方便进去手工看
-just template-lint  # 检查模板仓库自身：pre-commit + zizmor + shellcheck
+just template-lint  # 检查模板仓库自身：pre-commit + zizmor + actionlint + shellcheck + lychee
 ```
 
 每个组合会依次验证：
@@ -241,13 +275,47 @@ just template-lint  # 检查模板仓库自身：pre-commit + zizmor + shellchec
    使用者第一次跑 CI 就会挂在这上面
 3. `cargo clippy -- -D warnings` —— 和 CI 同样的严格度
 4. 测试（nextest）与 doctest
-5. 留下来的 `Cargo.lock` 与 `Cargo.toml` 对得上（`cargo metadata --locked`）
-6. `justfile` 能被 just 解析
-7. 生成项目里的 TOML 都是合法 TOML
+5. `cargo deny check` —— 某个开关引入的依赖可能带着不在白名单里的协议
+6. 留下来的 `Cargo.lock` 与 `Cargo.toml` 对得上（`cargo metadata --locked`）
+7. `justfile` 能被 just 解析
+8. README 里的 Markdown 表格没有被条件块裁出的空行截断
+9. 生成项目里的 TOML 都是合法 TOML
+10. `taplo fmt --check` —— 排版也要合规，否则使用者第一次跑 CI 会红在
+    一个跟他毫无关系的地方
+11. **没有残留未渲染的 `{{ }}` / `{% %}`** —— 变量改名漏一处、`{% raw %}` 忘了配对，
+    症状就是它，而编译 / clippy / 测试统统发现不了（多半藏在注释和文档里）
+12. **文件清单与开关对得上** —— `conditional` / `ignore` 写错的典型症状是**少了一个文件**：
+    代码照样编过，问题要等使用者去用那个功能时才暴露。这一条把每个开关该生成、
+    不该生成的文件逐个断言了一遍（见 `scripts/smoke.sh` 里的 `assert_layout`）
+13. `docker build` —— 默认关闭，`SMOKE_DOCKER=1` 打开（容器里从零编译，很慢）；
+    模板 CI 里只有每周的完整矩阵会开
 
 CI 上由 [`.github/workflows/template-ci.yaml`](.github/workflows/template-ci.yaml)
 跑同一个脚本：push / PR 跑默认矩阵，每周一定时跑完整矩阵——
 上游的 clippy、rustfmt、依赖都在动，模板没改也可能某天就生成不出能过 CI 的项目了。
+
+### ⚠️ 源码模板里不要把包名写进宏参数
+
+rustfmt 限制调用参数列表宽度的是 `fn_call_width`（默认 **60**），不是 `max_width`
+（100）。所以下面这行在包名短的时候好好的，包名一长就会被 rustfmt 折成三行，
+生成出来的项目**开箱就过不了 `fmt --check`**：
+
+```rust
+assert_eq!({{ crate_name }}::greet("world"), "Hello, world!");
+```
+
+对策是先绑到一个短变量，再让宏只碰这个变量：
+
+```rust
+let msg = {{ crate_name }}::greet("world");
+assert_eq!(msg, "Hello, world!");
+```
+
+集成测试里则统一走一条 `use {{ crate_name }}::{...};`，之后所有调用都是短名字。
+（导入顺序按 rustfmt 的规则是大写在前：`{Error, add, greet}`。）
+
+自测矩阵里专门有一组 `a-deliberately-long-package-name-for-rustfmt` 盯这件事——
+短名字的组合永远测不出来。
 
 ### Liquid 与其它模板语法的冲突
 
@@ -263,10 +331,14 @@ CI 上由 [`.github/workflows/template-ci.yaml`](.github/workflows/template-ci.y
 | `release.toml` | cargo-release 的 `{{version}}` |
 | `.pre-commit-config.yaml` | 钩子里用来识别模板仓库的 `{{ project-name }}` 字面量 |
 | `scripts/**` | shell 的 `${...}` |
+| `.gitlab-ci.yml` | GitLab CI 的 `$VARIABLE` 与规则表达式 |
 | `README.md` | 就是本文件，里面有大量占位符示例 |
 
+⚠️ 改动这份 exclude 列表时，记得同步 `scripts/smoke.sh` 里第 11 项检查的 `--exclude`
+参数——那条检查靠排除这些文件来判断「还有没有该渲染却没渲染的占位符」。
+
 ⚠️ 注意 exclude 的是 `.github/workflows/**` 而**不是** `.github/**`：
-`CODEOWNERS` 和 issue 模板里的 `{{ gh-username }}` 是**需要**被替换的。
+`CODEOWNERS` 和 issue 模板里的 `{{ repo-owner }}` 是**需要**被替换的。
 
 `exclude` 与 `ignore` 是两回事，别弄混：
 

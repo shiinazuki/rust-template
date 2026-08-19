@@ -44,10 +44,12 @@ let ignored_for_lib = !is_bin && (cli || logging);
 let docker_generated = docker && is_bin;
 let docker_ignored_for_lib = docker && !is_bin;
 
-// 开源社区文件里，.github/ 下的那三份（CODEOWNERS / PR 模板 / issue 模板）
-// 受 [conditional.'ci != "github"'] 管辖：CI 选了 gitlab 或 none 时整个 .github/
-// 都不会生成，于是六份社区文件只出来三份。这不是 bug，但必须说一声。
-let oss_partial = open_source && ci != "github";
+// 协作模板（PR / MR 模板、issue 模板）是平台专有的：
+//   ci = github  ->  .github/PULL_REQUEST_TEMPLATE.md + .github/ISSUE_TEMPLATE/
+//   ci = gitlab  ->  .gitlab/merge_request_templates/ + .gitlab/issue_templates/
+//   ci = none    ->  两边都没有，因为不知道该按谁的约定放
+// CODEOWNERS 与三份 md 放在仓库根目录，三种情况下都会生成。
+let oss_partial = open_source && ci == "none";
 
 // --- 1. 按用户选择的 License 收拾 LICENSE 文件 -----------------------------
 //
@@ -87,20 +89,11 @@ if adds_dependencies {
     lock_regenerated = true;
 }
 
-// --- 3.5 清掉被 ignore 掏空的空目录 ----------------------------------------
-//
-// bin 项目会 ignore 掉 tests/integration.rs，但承载它的 tests/ 目录仍会留下来，
-// 生成出一个空文件夹。git 不跟踪空目录，所以不影响仓库，只是本地看着碍眼。
-
-if variable::get("crate_type") == "bin" {
-    file::delete("tests");
-}
-
 // --- 4. 打印下一步该做什么 --------------------------------------------------
 
 print("");
 print("项目 " + name + " 已生成");
-print("  类型    " + crate_type);
+print("  类型    " + crate_type + if is_bin { "（src/lib.rs 放逻辑，src/main.rs 只做收口）" } else { "" });
 print("  工具链  " + toolchain);
 print("  协议    " + license);
 print("  CI      " + ci);
@@ -129,13 +122,10 @@ if docker_ignored_for_lib {
 }
 
 if oss_partial {
-    print("说明：CI 平台选的是 " + ci + "，整个 .github/ 目录不会生成，因此社区文件里");
-    print("      CODEOWNERS / PULL_REQUEST_TEMPLATE.md / ISSUE_TEMPLATE/ 这三份本次已跳过，");
-    print("      只生成了 SECURITY.md / CODE_OF_CONDUCT.md / CONTRIBUTING.md。");
-    if ci == "gitlab" {
-        print("      GitLab 的对应物是 .gitlab/issue_templates/ 与 .gitlab/merge_request_templates/，");
-        print("      需要的话按 GitLab 文档自己补一份。");
-    }
+    print("说明：CI 平台选的是 none，PR / issue 模板是平台专有的（GitHub 放 .github/，");
+    print("      GitLab 放 .gitlab/），不知道该按谁的约定放，本次已跳过。");
+    print("      SECURITY.md / CODE_OF_CONDUCT.md / CONTRIBUTING.md / CODEOWNERS 都已生成。");
+    print("      日后确定了平台，把 open_source 与对应的 ci 一起打开重新生成一份拷过来即可。");
     print("");
 }
 

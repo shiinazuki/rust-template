@@ -23,8 +23,18 @@ pre-release-hook = ["just", "_changelog-for", "{{version}}"]
 push = true
 push-remote = "origin"
 
-# 默认不发布到 crates.io。要发布的话改成 true，
-# 并确认 Cargo.toml 里没有 publish = false。
+# ⚠️ 「发不发 crates.io」有**两个**开关，改一个漏一个是最常见的困惑来源：
+#
+#   1. 这里的 publish —— 控制本地 `just release-execute` 要不要顺手 cargo publish。
+#      保持 false 是有意的：本地机器上的临时凭据、没推上去的提交、装了一半的工具链，
+#      都不该有机会把包发出去。
+#   2. CI 那侧 —— GitHub 的 .github/workflows/release.yaml 里有个 crates-io job，
+#      由仓库变量 PUBLISH_TO_CRATES_IO=true 打开（Settings → Secrets and variables
+#      → Actions → Variables）。它走 crates.io 的 Trusted Publishing（OIDC），
+#      仓库里不存长期 token，是推荐路径。
+#
+# 也就是说：**要发布就打开第 2 个，别动第 1 个**。两个都开会发两次（第二次报
+# "crate version already uploaded"）。另外确认 Cargo.toml 里没有 publish = false。
 publish = false
 
 # 发版前跑一次 `cargo publish --dry-run` 式的校验

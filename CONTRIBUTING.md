@@ -36,6 +36,7 @@ just ci              # 跑一遍完整检查，确认环境就绪
 
 - 格式化走 nightly rustfmt（`just fmt`）——`rustfmt.toml` 里用了 unstable 选项，
   stable 的 rustfmt 会**静默忽略**它们，结果就是你和 CI 格式化出来的东西不一样。
+  `just fmt` 同时会用 taplo 排版 `.toml`（rustfmt 只管 `.rs`），CI 里两项都会检查。
 - clippy 以 `-D warnings` 运行，`pedantic` 组默认开启。
   觉得某条 lint 不合理，改 `Cargo.toml` 里的 `[workspace.lints]` 并在 PR 里说明，
   不要在源码里散落一堆 `#[allow]`。

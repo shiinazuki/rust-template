@@ -43,8 +43,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      is_lib: ${{ steps.probe.outputs.is_lib }}
-      is_bin: ${{ steps.probe.outputs.is_bin }}
+      is_lib_only: ${{ steps.probe.outputs.is_lib_only }}
       has_docker: ${{ steps.probe.outputs.has_docker }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -53,15 +52,20 @@ jobs:
       - name: Probe repository layout
         id: probe
         run: |
-          is_lib=$([ -f src/lib.rs ] && echo true || echo false)
-          is_bin=$([ -f src/main.rs ] && echo true || echo false)
+          # ⚠️ 是 is_lib_only 而不是 is_lib：bin 项目也有 src/lib.rs（业务逻辑在那边，
+          #    main.rs 只做收口），但那是内部库，不对外承诺 API，不该跑 semver 检查。
+          #    真要同时对外发布库和命令行时，把这里改成只判断 src/lib.rs 即可。
+          if [ -f src/lib.rs ] && [ ! -f src/main.rs ]; then
+            is_lib_only=true
+          else
+            is_lib_only=false
+          fi
           has_docker=$([ -f Dockerfile ] && echo true || echo false)
           {
-            echo "is_lib=$is_lib"
-            echo "is_bin=$is_bin"
+            echo "is_lib_only=$is_lib_only"
             echo "has_docker=$has_docker"
           } >> "$GITHUB_OUTPUT"
-          echo "lib=$is_lib bin=$is_bin docker=$has_docker"
+          echo "lib_only=$is_lib_only docker=$has_docker"
 
   # 格式化 / 拼写 / clippy / 文档：不跑测试，失败得最快，PR 上第一时间给反馈
   lint:
@@ -85,10 +89,14 @@ jobs:
       - name: Install cargo tools
         uses: taiki-e/install-action@5b4d68e2e660441203ab128a23676f1e4faf1532 # v2.86.3
         with:
-          tool: typos
+          tool: typos,taplo-cli
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Check code format
         run: cargo +nightly fmt --all -- --check
+      # rustfmt 不管 .toml。项目里十来个 TOML 配置全靠这一步保持排版一致，
+      # 规则见 .taplo.toml；本地对应 `just fmt` / `just lint`。
+      - name: Check TOML format
+        run: taplo fmt --check
       - name: Check spelling
         run: typos
       - name: Lint rust sources
@@ -105,7 +113,10 @@ jobs:
       fail-fast: false
       matrix:
         platform: [ubuntu-latest]
-        # 需要多平台验证时改成：
+        # 默认只跑一个平台：多数项目的代码是平台无关的，三倍的 CI 时间换不来
+        # 等比例的信心。一旦碰了路径分隔符、换行、文件权限、进程 API 或任何 FFI，
+        # 就该把下面这行放开——`.gitattributes` 与 pre-commit 里的
+        # check-illegal-windows-names 已经替 Windows 协作者铺好路了。
         # platform: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.platform }}
     timeout-minutes: 30
@@ -135,6 +146,10 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       # - name: Install Protoc
       #   uses: arduino/setup-protoc@v3
+      # 刻意只 check debug：release 模式再编一遍要多花好几分钟，而 release-only
+      # 的编译错误（`#[cfg(not(debug_assertions))]` 之类）很少见，且发版时
+      # release.yaml 里从零构建那一步一定会撞上。真需要提前拦住就在这里补一条
+      # `cargo check --locked --release --all-targets --all-features`。
       - name: Check the package for errors
         run: cargo check --locked --all-targets --all-features
       # 用 .config/nextest.toml 里的 ci profile：不 fail-fast、失败重试 2 次、输出 JUnit
@@ -146,6 +161,9 @@ jobs:
       - name: Execute doc tests
         if: hashFiles('src/lib.rs') != ''
         run: cargo test --locked --doc --all-features
+      # 想给覆盖率设下限的话，在上一条命令里加 --fail-under-lines N（N 是百分比）。
+      # 刻意不预设一个数字：阈值定低了没意义，定高了会逼着人写凑数的测试。
+      # 建议的做法是先跑几周看看实际水位，再把当前值写进去防止下滑。
       - name: Upload coverage report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -185,6 +203,12 @@ jobs:
 
   # workflow 文件自己的静态检查。CI 配置和业务代码一样会腐坏，而且它出问题的方式
   # 更隐蔽——脚本注入、过宽的 token 权限、被缓存投毒的发布流程，都不会让构建变红。
+  #
+  # 两个工具是互补的，不要只留一个：
+  #   zizmor      安全向——脚本注入、过宽权限、缓存投毒、可变 tag
+  #   actionlint  正确性向——写错的表达式、不存在的 job 依赖、runner 标签打错、
+  #               run: 里的 shell 语法错误（它内部会调 shellcheck）
+  # `needs:` 里把 job 名拼错了这种事 zizmor 不管，actionlint 当场就拦下来。
   workflows:
     name: lint workflows
     runs-on: ubuntu-latest
@@ -193,14 +217,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install zizmor
+      - name: Install linters
         uses: taiki-e/install-action@5b4d68e2e660441203ab128a23676f1e4faf1532 # v2.86.3
         with:
-          tool: zizmor
+          tool: zizmor,actionlint
       # --min-severity medium：低危项多是风格建议，卡 CI 性价比不高。
       # 想更严可以去掉这个参数，或加 --persona=pedantic。
       - name: Audit GitHub Actions workflows
         run: zizmor --min-severity medium --no-progress .github/workflows
+      - name: Lint GitHub Actions workflows
+        run: actionlint -color
 
   # 验证 Cargo.toml 里声明的 MSRV 确实能编译，避免用了新版本才有的 API 却没改 rust-version。
   #
@@ -272,13 +298,13 @@ jobs:
       - name: Check feature powerset
         run: cargo hack --locked --feature-powerset --depth 2 --no-dev-deps check
 
-  # 公开 API 的破坏性变更检查（只对 lib 项目有意义）。
+  # 公开 API 的破坏性变更检查（只对**纯库**项目有意义，判断见 detect job）。
   # 以「上一个 v* tag」为基线：加了 pub 字段、改了函数签名、删了导出项，都会被指出来，
   # 并告诉你这次该抬 minor 还是 major。仓库还没打过 tag 时自动跳过。
   semver:
     name: semver-checks
     needs: [detect]
-    if: needs.detect.outputs.is_lib == 'true'
+    if: needs.detect.outputs.is_lib_only == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:

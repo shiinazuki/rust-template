@@ -1,7 +1,10 @@
 # {{ project-name }}
 {% if ci == "github" %}
-[![build](https://github.com/{{ gh-username }}/{{ project-name }}/actions/workflows/build.yaml/badge.svg)](https://github.com/{{ gh-username }}/{{ project-name }}/actions/workflows/build.yaml)
-[![audit](https://github.com/{{ gh-username }}/{{ project-name }}/actions/workflows/audit.yaml/badge.svg)](https://github.com/{{ gh-username }}/{{ project-name }}/actions/workflows/audit.yaml)
+[![build](https://github.com/{{ repo-owner }}/{{ project-name }}/actions/workflows/build.yaml/badge.svg)](https://github.com/{{ repo-owner }}/{{ project-name }}/actions/workflows/build.yaml)
+[![audit](https://github.com/{{ repo-owner }}/{{ project-name }}/actions/workflows/audit.yaml/badge.svg)](https://github.com/{{ repo-owner }}/{{ project-name }}/actions/workflows/audit.yaml)
+{% elsif ci == "gitlab" %}
+[![pipeline](https://gitlab.com/{{ repo-owner }}/{{ project-name }}/badges/main/pipeline.svg)](https://gitlab.com/{{ repo-owner }}/{{ project-name }}/-/pipelines)
+[![coverage](https://gitlab.com/{{ repo-owner }}/{{ project-name }}/badges/main/coverage.svg)](https://gitlab.com/{{ repo-owner }}/{{ project-name }}/-/pipelines)
 {% endif %}![license](https://img.shields.io/badge/license-{{ license | replace: " ", "%20" }}-blue)
 {% if crate_type == "lib" %}
 <!-- 发布到 crates.io 之后把下面两行的注释去掉 -->
@@ -35,14 +38,20 @@ tests/
 ```
 {% else %}```
 src/
-  main.rs          可执行入口{% if cli %}
-  cli.rs           命令行参数定义（clap derive）{% endif %}{% if logging %}
-  telemetry.rs     日志 / 追踪初始化（tracing）{% endif %}{% if error_handling %}
+  lib.rs           业务逻辑都写在这一侧{% if error_handling %}
   error.rs         领域错误类型（thiserror）{% endif %}
+  main.rs          可执行入口：解析参数、初始化日志、错误收口{% if cli %}
+  cli.rs           命令行参数定义（clap derive）{% endif %}{% if logging %}
+  telemetry.rs     日志 / 追踪初始化（tracing）{% endif %}
+tests/
+  integration.rs   集成测试：以外部使用者的视角调用 lib 的公开 API
 ```
 
-业务逻辑一旦超过几十行就该从 `main.rs` 挪进子模块或 `lib.rs`——
-`main.rs` 里的东西没法被集成测试和 benchmark 直接调用。
+**为什么二进制项目也有 `lib.rs`**：`main.rs` 里的东西集成测试（`tests/` 是独立
+crate）、benchmark、doctest 都够不着，逻辑留在那边就只能靠手工跑一遍程序来验证。
+把 `main.rs` 保持薄薄一层、逻辑放进 `lib.rs`，这三样立刻都能用上。
+
+所以 `main.rs` 长起来了，就说明有东西该往 `lib.rs` 挪了。
 {% endif %}
 ## 开发环境
 
@@ -113,6 +122,7 @@ cargo install cargo-binstall
 | `cargo-semver-checks` | 公开 API 的破坏性变更检查 |
 | `cargo-hack` | feature 幂集检查 |
 | `typos-cli` | 拼写检查 |
+| `taplo-cli` | TOML 格式化与检查（rustfmt 只管 `.rs`） |
 | `git-cliff` | 生成 CHANGELOG |
 | `bacon` | 后台实时监控 |
 
@@ -141,15 +151,15 @@ just                    # 列出所有命令
 just doctor             # 环境体检
 just check              # 快速检查编译
 just run -- --help      # 运行程序，-- 后的参数透传给程序
-just fmt                # 格式化（nightly）
+just fmt                # 格式化 .rs（nightly rustfmt）与 .toml（taplo）
 just fix                # clippy --fix 自动修复 + 格式化
 just dev                # bacon 实时监控
 just doc                # 生成并打开 API 文档
 just bench              # 跑 benchmark
-just flamegraph         # 采样生成火焰图
+just flamegraph         # 采样生成火焰图（仅 bin 项目）
 just clean              # 清理编译产物与本地报告
 
-just lint               # 格式化检查 + clippy + typos + 文档警告
+just lint               # 格式化检查（.rs + .toml）+ clippy + typos + 文档警告
 just test               # 运行测试（含 doctest）
 just coverage           # 生成覆盖率报告 lcov.info
 just coverage-html      # HTML 覆盖率报告并打开
@@ -159,14 +169,15 @@ just msrv               # 验证 MSRV 能编译
 just ci                 # 本地跑一遍 CI 的主要检查（lint / test / audit）
 
 just unused             # 找出没用到的依赖（cargo-machete）
-just semver             # 公开 API 破坏性变更检查（仅 lib 项目）
+just semver             # 公开 API 破坏性变更检查（仅纯库项目）
 
 just update             # 升级 Cargo.lock 并重新审计
 just outdated           # 列出可升级的依赖
 
 just changelog          # 刷新 CHANGELOG.md
-just release minor      # 发版预演（不改动任何东西）
+just release minor      # 发版预演：跑全套检查 + 干跑一遍，不改动任何东西
 just release-execute minor  # 真正发版：抬版本号 + CHANGELOG + tag + 推送
+                            # （紧接在 release 之后跑，不再重复跑一遍检查）
 ```
 {% if docker and crate_type == "bin" %}
 容器相关命令来自 [`docker.just`](docker.just)（根 justfile 用 `import?` 可选加载）：
@@ -229,11 +240,14 @@ CI 上这四项该跑的照常跑。
 「出错了，但我不告诉你是什么错」，对方除了打印之外什么都做不了。
 `Error` 上标了 `#[non_exhaustive]`，以后新增变体不构成破坏性变更。
 {% else %}
-两层分工，[`src/error.rs`](src/error.rs) 与 `main.rs` 各管一段：
+两层分工，[`src/error.rs`](src/error.rs)（属于 lib 那一侧）与 `main.rs` 各管一段：
 
-- **领域层**用 [thiserror](https://docs.rs/thiserror) 定义**具体**错误（`Error::EmptyName`），
+- **库层**用 [thiserror](https://docs.rs/thiserror) 定义**具体**错误（`Error::EmptyName`），
   调用方可以 `match` 之后分别处理——该重试的重试，该降级的降级；
 - **`main`** 用 [anyhow](https://docs.rs/anyhow) 收口，`.context("...")` 补充上下文后统一上报。
+
+`main.rs` 里那行 `{{ crate_name }}::greet(&name).context("...")?` 就是分界线：
+左边是可以 `match` 的具体错误，右边开始是「打印给人看」的 anyhow。
 
 只有 anyhow 的项目，在需要「按错误类型决定要不要重试」时会非常难受；
 全都手写 enum 又太啰嗦。两者搭配是应用层的常见解法。
@@ -267,7 +281,8 @@ CI 上这四项该跑的照常跑。
 | [`rustfmt.toml`](rustfmt.toml) | 格式化规则（含 unstable 选项，走 nightly） |
 | [`clippy.toml`](clippy.toml) | Clippy 行为配置（lint 开关在 `Cargo.toml` 的 `[workspace.lints]`） |
 | [`deny.toml`](deny.toml) | 依赖的安全公告 / License / 重复版本 / 来源审计 |
-| [`_typos.toml`](_typos.toml) | 拼写检查的词表与排除规则 |
+| [`.taplo.toml`](.taplo.toml) | TOML 格式化规则（rustfmt 只管 `.rs`，`.toml` 归 taplo） |
+| [`.typos.toml`](.typos.toml) | 拼写检查的词表与排除规则 |
 | [`cliff.toml`](cliff.toml) | git-cliff 生成 CHANGELOG 的模板与分组规则 |
 | [`release.toml`](release.toml) | cargo-release 的发版流程配置 |
 | [`bacon.toml`](bacon.toml) | bacon 实时监控的任务定义 |
@@ -281,24 +296,30 @@ CI 上这四项该跑的照常跑。
 | [`.devcontainer/`](.devcontainer/) | Dev Container / Codespaces 配置 |
 | [`.vscode/`](.vscode/) | rust-analyzer 配置与推荐插件 |{% if open_source %}
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | 参与开发的流程与约定 |
-| [`SECURITY.md`](SECURITY.md) | 漏洞报告流程与已有防线 |{% endif %}{% if ci == "github" %}
+| [`SECURITY.md`](SECURITY.md) | 漏洞报告流程与已有防线 |
+| [`CODEOWNERS`](CODEOWNERS) | 默认审阅人；放根目录是因为 GitHub 与 GitLab 都只认这一个共同位置 |{% endif %}{% if ci == "github" %}
 | [`.github/workflows/`](.github/workflows/) | CI（build / release / audit） |
 | [`.github/dependabot.yml`](.github/dependabot.yml) | cargo / actions / docker 三类依赖的自动升级 |{% if open_source %}
 | [`.github/ISSUE_TEMPLATE/`](.github/ISSUE_TEMPLATE/) | issue 模板 |{% endif %}{% endif %}{% if ci == "gitlab" %}
-| [`.gitlab-ci.yml`](.gitlab-ci.yml) | GitLab CI：lint / test / deny / hack / msrv + tag 触发 release |{% endif %}
+| [`.gitlab-ci.yml`](.gitlab-ci.yml) | GitLab CI：lint / test / deny / hack / msrv + tag 触发 release |{% if open_source %}
+| [`.gitlab/issue_templates/`](.gitlab/issue_templates/) | issue 模板 |
+| [`.gitlab/merge_request_templates/`](.gitlab/merge_request_templates/) | MR 模板 |{% endif %}{% endif %}
 {% if ci == "github" %}
 ## CI
 
 推送和 PR 触发 [`build.yaml`](.github/workflows/build.yaml)，并行跑这些 job：
 
 - **detect** —— 探测仓库里有哪些 target，供下面的 job 做条件判断（几秒钟）
-- **lint** —— 格式化、拼写、clippy（`-D warnings`）、文档警告
+- **lint** —— 格式化（`.rs` 走 rustfmt、`.toml` 走 taplo）、拼写、clippy（`-D warnings`）、文档警告
 - **test** —— `cargo check` + nextest（CI profile：不 fail-fast、失败重试、输出 JUnit）+ 覆盖率 + doctest
 - **deny** —— 依赖的安全公告 / License / 重复版本 / 来源
-- **workflows** —— 用 [zizmor](https://docs.zizmor.sh/) 审计 workflow 自身（脚本注入、过宽权限、缓存投毒）
+- **workflows** —— 用 [zizmor](https://docs.zizmor.sh/) 审计 workflow 的**安全性**（脚本注入、
+  过宽权限、缓存投毒），再用 [actionlint](https://github.com/rhysd/actionlint) 查**正确性**
+  （表达式写错、不存在的 job 依赖、`run:` 里的 shell 语法）——两者不重叠
 - **msrv** —— 用 `Cargo.toml` 里声明的最低版本编译一遍（nightly 项目自动跳过）
 - **hack** —— 遍历 feature 幂集，防止「单独开某个 feature 编不过」
-- **semver** —— 以上一个 tag 为基线检查公开 API 破坏性变更（仅 lib 项目，没有 tag 时跳过）
+- **semver** —— 以上一个 tag 为基线检查公开 API 破坏性变更（仅**纯库**项目，没有 tag 时跳过；
+  二进制项目的 `src/lib.rs` 是自用的内部库，不对外承诺 API）
 - **miri** —— 在解释器里跑测试检测未定义行为（**仅 nightly**，stable 项目自动跳过）
 - **docker** —— 构建一次容器镜像确认 Dockerfile 没坏（仅选了 Docker 的项目；只构建不推送）
 
@@ -332,7 +353,7 @@ CI 上这四项该跑的照常跑。
 
 推送和 MR 会触发 [`.gitlab-ci.yml`](.gitlab-ci.yml)：
 
-- **lint** —— 格式化、拼写、clippy（`-D warnings`）、文档警告
+- **lint** —— 格式化（`.rs` 走 rustfmt、`.toml` 走 taplo）、拼写、clippy（`-D warnings`）、文档警告
 - **test** —— `cargo check` + nextest + 覆盖率（MR 页面直接显示百分比）+ JUnit 报告
 - **deny** —— 依赖的安全公告 / License / 重复版本 / 来源
 - **hack** —— feature 幂集检查
@@ -340,6 +361,10 @@ CI 上这四项该跑的照常跑。
 
 打 `v*` tag 时额外跑 **verify-tag**（从零验证 + 核对版本号）、**changelog**、
 **build-binary**、**release**。
+
+> 依赖的安全公告是「代码没动风险也会变」的东西，只靠 MR 触发发现不了。
+> 建议到 CI/CD → Schedules 配一条每日定时流水线，专门跑 `deny`
+> （GitHub 那边对应的是 `audit.yaml`）。
 
 配套 cargo 工具用 cargo-binstall 下预编译二进制，并单独缓存 `.cargo-home/bin/`：
 第一条流水线之后就不会再花时间装工具了。

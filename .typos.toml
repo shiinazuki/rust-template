@@ -25,7 +25,7 @@ extend-ignore-re = [
 
 [files]
 extend-exclude = [
-  "CHANGELOG.md",  # 由 git-cliff 从提交信息生成，改不了
+  "CHANGELOG.md", # 由 git-cliff 从提交信息生成，改不了
   "Cargo.lock",
   "target/",
   "vendors/",

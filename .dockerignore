@@ -2,7 +2,9 @@
 target/
 .git/
 .github/
+.gitlab/
 .gitlab-ci.yml
+CODEOWNERS
 .vscode/
 .idea/
 .devcontainer/
@@ -19,6 +21,8 @@ cliff.toml
 deny.toml
 release.toml
 bacon.toml
+.taplo.toml
+.typos.toml
 justfile
 docker.just
 .editorconfig

@@ -70,6 +70,7 @@ variables:
           # 少数 crate 的二进制名和包名不一致，这里做个映射
           case "$crate" in
             typos-cli) bin=typos ;;
+            taplo-cli) bin=taplo ;;
             *)         bin="$crate" ;;
           esac
           command -v "$bin" >/dev/null 2>&1 || missing="$missing $crate"
@@ -107,8 +108,10 @@ lint:
     # rustfmt.toml 用了 unstable 选项，stable 的 rustfmt 会静默忽略，必须走 nightly。
     # --allow-downgrade：某天的 nightly 偶尔缺 rustfmt，让 rustup 自动退回到有的那天。
     - rustup toolchain install nightly --allow-downgrade --profile minimal --component rustfmt
-    - install_tools typos-cli
+    - install_tools typos-cli taplo-cli
     - cargo +nightly fmt --all -- --check
+    # rustfmt 不管 .toml，项目里十来个 TOML 配置靠 taplo 保持排版一致（规则见 .taplo.toml）
+    - taplo fmt --check
     - typos
     - cargo clippy --locked --all-targets --all-features -- -D warnings
     - RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --all-features --document-private-items

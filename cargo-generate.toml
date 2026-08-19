@@ -25,20 +25,21 @@ cargo_generate_version = ">=0.23.0"
 # ---------------------------------------------------------------------------
 exclude = [
   # --- 花括号属于别的模板语言，必须躲开 liquid ---------------------------
-  "cliff.toml",              # git-cliff 的 Tera 模板
+  "cliff.toml", # git-cliff 的 Tera 模板
   # 只排除 workflows：Actions 的 ${{ ... }} 会被 liquid 当成占位符吃掉。
-  # .github 下的其它文件（CODEOWNERS、issue 模板）反而**需要**替换 {{ gh-username }}，
+  # .github 下的其它文件（issue 模板的 config.yml）反而**需要**替换 {{ repo-owner }}，
   # 所以不能像以前那样整个目录一刀切。
   ".github/workflows/**",
-  ".gitlab-ci.yml",          # GitLab CI 的 $VARIABLE / 规则表达式
-  "justfile",                # just 自己的 {{ 变量 }} 插值
-  "docker.just",             # 同上，just 的插值
-  "release.toml",            # cargo-release 的 {{version}} / {{crate_name}}
-  ".pre-commit-config.yaml", # 钩子里用 `{{ project-name }}` 判断是不是模板仓库本身，
-                             # 这段字面量必须原样保留，不能被替换成真实包名
-  "README.md",               # 模板仓库自己的说明文档，里面全是占位符示例
-  "scripts/**",              # 模板自测脚本，里面有 shell 的 ${...} 与 cargo-generate 参数
-  "template.just",           # 模板仓库自己的 just 配方（just 的 {{ 变量 }} 插值）
+  ".gitlab-ci.yml", # GitLab CI 的 $VARIABLE / 规则表达式
+  "justfile", # just 自己的 {{ 变量 }} 插值
+  "docker.just", # 同上，just 的插值
+  "release.toml", # cargo-release 的 {{version}} / {{crate_name}}
+  # 钩子里用 `{{ project-name }}` 判断是不是模板仓库本身，
+  # 这段字面量必须原样保留，不能被替换成真实包名
+  ".pre-commit-config.yaml",
+  "README.md", # 模板仓库自己的说明文档，里面全是占位符示例
+  "scripts/**", # 模板自测脚本，里面有 shell 的 ${...} 与 cargo-generate 参数
+  "template.just", # 模板仓库自己的 just 配方（just 的 {{ 变量 }} 插值）
 
   # --- 二进制与非文本资源：一旦被 liquid 处理就会损坏 ---------------------
   # cargo-generate 对二进制内容没有可靠的自动豁免，模板里但凡放了图标、字体、
@@ -48,10 +49,28 @@ exclude = [
   # ⚠️ 注意反面：LICENSE-MIT / LICENSE-APACHE 里的 {{ authors }} 和
   #    {{ "now" | date: "%Y" }} 是**有意**要被渲染的，所以绝不能把 LICENSE*
   #    加进这个列表。「凡是不确定就 exclude」在这里是错的。
-  "*.png", "*.jpg", "*.jpeg", "*.gif", "*.webp", "*.ico", "*.svg",
-  "*.pdf", "*.woff", "*.woff2", "*.ttf", "*.otf",
-  "*.zip", "*.gz", "*.xz", "*.tar", "*.bin", "*.wasm",
-  "*.der", "*.pem", "*.p12", "*.jks",
+  "*.png",
+  "*.jpg",
+  "*.jpeg",
+  "*.gif",
+  "*.webp",
+  "*.ico",
+  "*.svg",
+  "*.pdf",
+  "*.woff",
+  "*.woff2",
+  "*.ttf",
+  "*.otf",
+  "*.zip",
+  "*.gz",
+  "*.xz",
+  "*.tar",
+  "*.bin",
+  "*.wasm",
+  "*.der",
+  "*.pem",
+  "*.p12",
+  "*.jks",
   "assets/**",
   "fixtures/**",
   "tests/snapshots/**",
@@ -62,12 +81,7 @@ exclude = [
 # 注意 template-ci.yaml：它是**模板自己的** CI（矩阵生成项目再跑一遍检查），
 # 生成出来的项目不需要它。虽然 `.github/**` 在上面的 exclude 里（不做变量替换），
 # 但 exclude 只影响「渲不渲染」，要让文件彻底不进生成项目必须写在这里。
-ignore = [
-  "CHANGELOG.md",
-  ".github/workflows/template-ci.yaml",
-  "template.just",
-  "scripts/",
-]
+ignore = ["CHANGELOG.md", ".github/workflows/template-ci.yaml", "template.just", "scripts/"]
 
 # 关于两个 README：
 #   README.md   模板仓库自己的说明（怎么用这个模板），在上面的 exclude 里，
@@ -102,13 +116,20 @@ type = "string"
 prompt = "项目简介（写入 Cargo.toml 的 description）"
 default = "A Rust project"
 
-[placeholders.gh-username]
+[placeholders.repo-owner]
 type = "string"
-prompt = "GitHub 用户名或组织名（用于 repository 字段）"
-default = "your-github-username"
-# 按 GitHub 的用户名规则校验：只能是字母 / 数字 / 连字符，最长 39 位。
+prompt = "仓库所有者：GitHub / GitLab 的用户名或组织名（用于 repository 字段）"
+default = "your-username"
+# 校验规则要同时容得下两个平台：
+#   GitHub  字母 / 数字 / 连字符，最长 39 位
+#   GitLab  还允许下划线、点，以及 `group/subgroup` 这样的子组路径
 # 输错了会当场重问，而不是生成一个指向 404 的 repository 链接。
-regex = "^[A-Za-z0-9][A-Za-z0-9-]{0,38}$"
+regex = "^[A-Za-z0-9][A-Za-z0-9._/-]{0,98}$"
+
+# ⚠️ 没有单独问「托管在哪个平台」：域名由下面的 ci 选项推导（gitlab -> gitlab.com，
+#    其余 -> github.com），见 Cargo.toml / Dockerfile / SECURITY.md / CODE_OF_CONDUCT.md
+#    里按 ci 分支的那几处。多问一个占位符不值得——CI 平台和代码托管平台在现实里
+#    几乎总是同一个。例外是 ci = none 又托管在 GitLab：生成完手工改一下 repository 即可。
 
 [placeholders.toolchain]
 type = "string"
@@ -186,20 +207,26 @@ ignore = [
   "docker.just",
 ]
 
-[conditional.'crate_type == "bin"']
-# 二进制 crate 没有可供外部 use 的库目标，集成测试示例一起去掉
-ignore = ["src/lib.rs", "tests/integration.rs"]
+# bin 项目**同样**生成 src/lib.rs 与 tests/：这是 Rust 里的主流布局
+# （`main.rs` 薄薄一层负责解析参数与收口错误，逻辑全在 lib 那侧），
+# 也是唯一能让集成测试 / benchmark / doctest 够得着业务代码的做法。
+# 所以这里没有 [conditional.'crate_type == "bin"'] ——bin 不需要裁掉任何东西。
 
 # ---------------------------------------------------------------------------
 # 按 CI 平台裁剪
 # ---------------------------------------------------------------------------
 
 [conditional.'ci != "github"']
-# dependabot 是 GitHub 专有的，跟着 workflows 一起走
+# .github/ 下现在只剩 GitHub 专有的东西（workflows / dependabot / PR 与 issue 模板），
+# 整个目录跟着走。
+#
+# ⚠️ CODEOWNERS 已经挪到仓库根目录了，不在这个目录里——它是 GitHub 与 GitLab
+#    唯一都认的位置，放在 .github/ 下会被这条规则连坐删掉，GitLab 项目里也读不到。
 ignore = [".github"]
 
 [conditional.'ci != "gitlab"']
-ignore = [".gitlab-ci.yml"]
+# .gitlab/ 是 GitLab 版的 issue / MR 模板，和 .github/ 下的那两份等价
+ignore = [".gitlab-ci.yml", ".gitlab/"]
 
 # ---------------------------------------------------------------------------
 # 按功能开关裁剪
@@ -222,7 +249,8 @@ ignore = [
   "SECURITY.md",
   "CODE_OF_CONDUCT.md",
   "CONTRIBUTING.md",
-  ".github/CODEOWNERS",
+  "CODEOWNERS",
   ".github/PULL_REQUEST_TEMPLATE.md",
   ".github/ISSUE_TEMPLATE",
+  ".gitlab/",
 ]

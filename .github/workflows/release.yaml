@@ -170,6 +170,10 @@ jobs:
   # 发布到 crates.io。默认**不启用**——要开的话在仓库
   # Settings → Secrets and variables → Actions → Variables 里加 PUBLISH_TO_CRATES_IO=true。
   #
+  # ⚠️ 这是「发不发 crates.io」的**推荐**开关。release.toml 里还有一个同名的
+  #    publish = false，那个管的是本地 `just release-execute` 要不要顺手发布——
+  #    保持关闭即可，让发布只从 CI 这一条路走。两个都打开会发两次。
+  #
   # 用的是 crates.io 的 Trusted Publishing（OIDC）：仓库里不存任何长期 token，
   # 由 GitHub 签发的一次性凭据换取 crates.io 的临时 token，泄漏面小得多。
   # 首次使用前要先在 crates.io 的 crate 设置页把「仓库 + workflow 文件名」登记为受信任发布者。

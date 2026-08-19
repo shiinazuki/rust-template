@@ -35,10 +35,13 @@ check:
 run *args:
     cargo run --all-features {{ args }}
 
+# rustfmt 只管 .rs，项目里十来个 .toml 归 taplo 管（配置见 .taplo.toml）。
+# 两条一起跑，免得「格式化过了」却还是挂在 CI 的 TOML 检查上。
 [group('dev')]
-[doc('格式化代码（rustfmt.toml 用到 unstable 选项，必须走 nightly）')]
+[doc('格式化代码与 TOML（rustfmt.toml 用到 unstable 选项，必须走 nightly）')]
 fmt:
     cargo +nightly fmt --all
+    taplo fmt
 
 [group('dev')]
 [doc('自动修复 clippy 能修的问题并格式化')]
@@ -67,8 +70,16 @@ bench *args:
 # macOS 上 cargo-flamegraph 走 dtrace，需要 sudo；不想给 sudo 就换 samply：
 #     cargo build --profile profiling && samply record ./target/profiling/<包名>
 [group('dev')]
-[doc('采样生成火焰图 flamegraph.svg（需要 cargo-flamegraph）')]
+[doc('采样生成火焰图 flamegraph.svg（仅 bin 项目；需要 cargo-flamegraph）')]
 flamegraph *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # 纯库项目没有可执行文件，--bin 会直接报 "no bin target"。
+    # 想给库做性能分析的话，写一个 benches/ 或 examples/ 再用 --bench / --example。
+    if [ ! -f src/main.rs ]; then
+        echo "没有 bin target，跳过火焰图（库项目请用 --bench / --example）"
+        exit 0
+    fi
     cargo flamegraph --profile profiling --bin {{ pkg }} {{ args }}
 
 # ⚠️ 如果你在 ~/.cargo/config.toml 里设了全局共享的 build.target-dir，
@@ -84,15 +95,16 @@ clean:
 # 检查
 # ---------------------------------------------------------------------------
 
-# 这四条和 CI 的 lint job 一一对应，少一条本地就拦不住对应的 CI 失败。
+# 这几条和 CI 的 lint job 一一对应，少一条本地就拦不住对应的 CI 失败。
 #
 # 文档警告尤其容易漏：Cargo.toml 的 [workspace.lints.rustdoc] 里
 # bare_urls / invalid_html_tags / private_intra_doc_links 都只是 warn，
 # 本地不跑 cargo doc 根本看不见，推上去才在 CI 的 RUSTDOCFLAGS="-D warnings" 上挂掉。
 [group('check')]
-[doc('格式化检查 / clippy / 拼写检查 / 文档警告（与 CI 的 lint job 等价）')]
+[doc('格式化检查 / TOML 排版 / clippy / 拼写检查 / 文档警告（与 CI 的 lint job 等价）')]
 lint:
     cargo +nightly fmt --all -- --check
+    taplo fmt --check
     cargo clippy --all-targets --all-features -- -D warnings
     typos
     RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features --document-private-items
@@ -103,7 +115,7 @@ test:
     #!/usr/bin/env bash
     set -euo pipefail
     cargo nextest run --all-targets --all-features
-    # nextest 不跑 doctest，有 lib target 时补一次
+    # nextest 不跑 doctest，有 lib target 时补一次（bin 项目也有，见 src/lib.rs）
     if [ -f src/lib.rs ]; then
         cargo test --doc --all-features
     fi
@@ -140,12 +152,15 @@ unused:
 # 同样不放进 `just ci`：要和已发布的版本比对，本地没网或没发布过时没意义。
 # 发布库之前手动跑一次，确认版本号该抬 patch 还是 minor/major。
 [group('check')]
-[doc('检查公开 API 有没有破坏性变更（仅 lib 项目；需要 cargo-semver-checks）')]
+[doc('检查公开 API 有没有破坏性变更（仅纯库项目；需要 cargo-semver-checks）')]
 semver:
     #!/usr/bin/env bash
     set -euo pipefail
-    if [ ! -f src/lib.rs ]; then
-        echo "没有 lib target，跳过 semver 检查"
+    # bin 项目也有 lib target，但那是给自己的 main.rs 和集成测试用的内部库，
+    # 不对外承诺 API，改签名不该被判成破坏性变更。判断依据是有没有 src/main.rs。
+    # 你的项目确实要同时对外发布库和命令行时，把下面这段判断删掉即可。
+    if [ ! -f src/lib.rs ] || [ -f src/main.rs ]; then
+        echo "不是纯库项目，跳过 semver 检查"
         exit 0
     fi
     cargo semver-checks
@@ -238,7 +253,7 @@ _cliff *args:
     fi
 
 [group('release')]
-[doc('发版：跑全套检查 -> 抬版本号 -> 刷新 CHANGELOG -> 打 tag -> 推送。level: patch|minor|major')]
+[doc('发版预演：跑全套检查 + 干跑一遍，看清楚会改什么。level: patch|minor|major')]
 release level="patch": ci
     # 先干跑一遍确认改动符合预期，再真正执行
     cargo release {{ level }}
@@ -246,9 +261,13 @@ release level="patch": ci
     @echo "以上是预演结果。确认无误后执行："
     @echo "    just release-execute {{ level }}"
 
+# ⚠️ 这条**不**依赖 `ci`：正常流程是先 `just release` 预演（那一步已经跑过全套检查），
+#    确认无误后紧接着执行这条，两分钟内再跑一遍完全相同的检查纯属浪费。
+#    真要单独用它发版（跳过预演），请自己先跑一次 `just ci`。
+#    另外 release.toml 里 verify = true，cargo-release 自己还会做一次打包校验。
 [group('release')]
-[doc('真正执行发版（跳过预演）')]
-release-execute level="patch": ci
+[doc('真正执行发版（跳过预演；请确保刚跑过 just release 或 just ci）')]
+release-execute level="patch":
     cargo release {{ level }} --execute
 
 # ---------------------------------------------------------------------------
@@ -298,7 +317,7 @@ doctor:
 
     echo "== 配套工具 =="
     for t in cargo-nextest cargo-deny cargo-llvm-cov cargo-release cargo-outdated \
-             cargo-machete cargo-semver-checks cargo-hack typos git-cliff bacon; do
+             cargo-machete cargo-semver-checks cargo-hack typos taplo git-cliff bacon; do
         if command -v "$t" >/dev/null 2>&1; then
             echo "  ✓ ${t}"
         else
@@ -336,6 +355,7 @@ install-tools:
         cargo-machete      # 找出没用到的依赖
         cargo-semver-checks # 公开 API 的破坏性变更检查
         typos-cli          # 拼写检查
+        taplo-cli          # TOML 格式化与检查
         git-cliff          # 生成 CHANGELOG
         bacon              # 后台实时监控
         cargo-hack         # feature 幂集检查，和 CI 的 hack job 对齐

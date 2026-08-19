@@ -24,7 +24,13 @@ indent_size = 2
 # Markdown 里行尾两个空格是强制换行，不能删
 trim_trailing_whitespace = false
 
+# justfile 本体，以及被 import 进来的 docker.just / template.just。
+# 两条都要写：`[justfile]` 匹配不到 `*.just`，漏掉后者的话导入的配方会按 [*] 的规则走，
+# 和主文件不一致。
 [justfile]
+indent_size = 4
+
+[*.just]
 indent_size = 4
 
 [Makefile]

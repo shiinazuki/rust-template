@@ -46,13 +46,14 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
 #   FROM gcr.io/distroless/cc-debian12:debug
 FROM gcr.io/distroless/cc-debian12:nonroot
 
-# OCI 标准标签。GitHub / GHCR 靠 image.source 把镜像和仓库关联起来，
-# 出问题时也能从 `docker inspect` 直接看出这个镜像是哪个 commit 构建的。
+# OCI 标准标签。镜像仓库（GHCR、GitLab Container Registry 等）靠 image.source
+# 把镜像关联回代码仓库；出问题时也能从 `docker inspect` 直接看出这个镜像是
+# 哪个 commit 构建的。域名跟着生成时选的 CI 平台走，见 Cargo.toml 的 repository。
 ARG VERSION=0.0.0
 ARG REVISION=unknown
 LABEL org.opencontainers.image.title="{{ project-name }}" \
       org.opencontainers.image.description="{{ description }}" \
-      org.opencontainers.image.source="https://github.com/{{ gh-username }}/{{ project-name }}" \
+      org.opencontainers.image.source="https://{% if ci == 'gitlab' %}gitlab.com{% else %}github.com{% endif %}/{{ repo-owner }}/{{ project-name }}" \
       org.opencontainers.image.licenses="{{ license }}" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${REVISION}"

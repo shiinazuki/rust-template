@@ -14,7 +14,7 @@ avoid-breaking-exported-api = false
 
 # 这些词在文档注释里出现时不要报 doc_markdown（需要反引号包裹）
 doc-valid-idents = [
-  "..",  # 保留 clippy 的默认列表
+  "..", # 保留 clippy 的默认列表
   "gRPC",
   "OpenTelemetry",
   "PostgreSQL",

@@ -19,7 +19,7 @@ pub(crate) struct Cli {
     /// 日志级别：error / warn / info / debug / trace
     ///
     /// 也可以用 `RUST_LOG` 环境变量覆盖，且优先级更高——它支持按模块细分，
-    /// 例如 `RUST_LOG=warn,{{ crate_name }}=debug`。
+    /// 例如 `RUST_LOG=warn,本包名=debug`（包名用下划线形式）。
     #[arg(long, short, default_value = "info", env = "LOG_LEVEL")]
     pub(crate) log_level: String,
 {% endif %}}

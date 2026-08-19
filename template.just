@@ -23,24 +23,42 @@ smoke-keep:
     bash scripts/smoke.sh --keep
 
 [group('template')]
-[doc('检查模板仓库自身：pre-commit + workflow 审计 + shell 脚本')]
+[doc('检查模板仓库自身：pre-commit + workflow 审计 + shell 脚本 + 文档链接')]
 template-lint:
     #!/usr/bin/env bash
     set -uo pipefail
     fail=0
     echo "== pre-commit =="
     pre-commit run --all-files || fail=1
-    echo "== zizmor（workflow 静态审计）=="
+    echo "== zizmor（workflow 安全审计）=="
     if command -v zizmor >/dev/null 2>&1; then
         zizmor --min-severity medium --no-progress .github/workflows || fail=1
     else
         echo "  - 未安装 zizmor，跳过（cargo binstall zizmor）"
+    fi
+    echo "== actionlint（workflow 语法与表达式）=="
+    if command -v actionlint >/dev/null 2>&1; then
+        actionlint -color || fail=1
+    else
+        echo "  - 未安装 actionlint，跳过（cargo binstall actionlint）"
     fi
     echo "== shellcheck =="
     if command -v shellcheck >/dev/null 2>&1; then
         shellcheck scripts/*.sh || fail=1
     else
         echo "  - 未安装 shellcheck，跳过（brew install shellcheck）"
+    fi
+    # README.md + _README.md 加起来七百多行，几乎全是链接。文档死链是最容易
+    # 悄悄积累的债：写的时候不报错，等有人点开才发现。
+    #
+    # 刻意**不**放进 CI：lychee 要真的去访问外网，限流、临时 502、需要登录的站点
+    # 都会让它随机变红——一个三天两头误报的 job 很快就没人看了。
+    # 放在这里，改完文档手动跑一次即可。
+    echo "== lychee（文档链接）=="
+    if command -v lychee >/dev/null 2>&1; then
+        lychee --no-progress README.md _README.md '*.md' || fail=1
+    else
+        echo "  - 未安装 lychee，跳过（cargo binstall lychee）"
     fi
     exit "$fail"
 

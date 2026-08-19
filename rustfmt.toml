@@ -12,20 +12,20 @@ comment_width = 100
 newline_style = "Unix"
 
 # --- 注释与文档 ---------------------------------------------------------
-wrap_comments = true               # unstable：超长注释自动折行
+wrap_comments = true # unstable：超长注释自动折行
 format_code_in_doc_comments = true # unstable：文档注释里的示例代码也格式化
-doc_comment_code_block_width = 90  # unstable
-normalize_doc_attributes = true    # unstable：#[doc = "..."] 归一成 /// 形式
+doc_comment_code_block_width = 90 # unstable
+normalize_doc_attributes = true # unstable：#[doc = "..."] 归一成 /// 形式
 
 # --- 字符串与字面量 -----------------------------------------------------
-format_strings = true              # unstable：超长字符串自动折行
-hex_literal_case = "Upper"         # unstable：0xFF 而不是 0xff
+format_strings = true # unstable：超长字符串自动折行
+hex_literal_case = "Upper" # unstable：0xFF 而不是 0xff
 
 # --- import 组织 --------------------------------------------------------
-imports_granularity = "Crate"      # unstable：同一 crate 的 use 合并成一行
+imports_granularity = "Crate" # unstable：同一 crate 的 use 合并成一行
 group_imports = "StdExternalCrate" # unstable：std / 第三方 / 本 crate 分三组
 
 # --- 其它 ---------------------------------------------------------------
-use_field_init_shorthand = true    # Foo { x } 而不是 Foo { x: x }
-use_try_shorthand = true           # ? 而不是 try!
-reorder_impl_items = true          # impl 块内 type / const 排到 fn 前面
+use_field_init_shorthand = true # Foo { x } 而不是 Foo { x: x }
+use_try_shorthand = true # ? 而不是 try!
+reorder_impl_items = true # impl 块内 type / const 排到 fn 前面

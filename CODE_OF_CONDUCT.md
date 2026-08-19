@@ -19,7 +19,7 @@
 
 ## 遇到问题怎么办
 
-请私信仓库维护者（[@{{ gh-username }}](https://github.com/{{ gh-username }})）。
+请私信仓库维护者（[@{{ repo-owner }}](https://{% if ci == 'gitlab' %}gitlab.com{% else %}github.com{% endif %}/{{ repo-owner }})）。
 所有报告都会被认真对待并保密处理。维护者会视情况采取从提醒、删除内容到封禁的措施。
 
 ## 说明

@@ -56,12 +56,14 @@ jobs:
       - name: Install tools
         uses: taiki-e/install-action@5b4d68e2e660441203ab128a23676f1e4faf1532 # v2.86.3
         with:
-          tool: cargo-generate,cargo-nextest,just
-      # PR / push 上跑默认矩阵（9 组，够覆盖每个开关的开与关）；
-      # 定时任务与手动触发跑完整矩阵（bin 的 4 个源码开关全排列 + lib）。
+          tool: cargo-generate,cargo-nextest,just,taplo-cli
+      # PR / push 上跑默认矩阵（10 组，够覆盖每个开关的开与关）；
+      # 定时任务与手动触发跑完整矩阵（bin 的 4 个源码开关全排列 + lib），
+      # 并顺带真正构建一次容器镜像（SMOKE_DOCKER=1，见 scripts/smoke.sh 的第 13 项检查）。
       - name: Run smoke matrix
         env:
           MODE: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '--full' || '' }}
+          SMOKE_DOCKER: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '1' || '0' }}
         run: bash scripts/smoke.sh $MODE
 
   hooks:
@@ -88,12 +90,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install zizmor
+      - name: Install linters
         uses: taiki-e/install-action@5b4d68e2e660441203ab128a23676f1e4faf1532 # v2.86.3
         with:
-          tool: zizmor
+          tool: zizmor,actionlint
       - name: Audit GitHub Actions workflows
         run: zizmor --min-severity medium --no-progress .github/workflows
+      # actionlint 查的是「写法对不对」，和 zizmor 的「安不安全」互补，见 build.yaml 里的说明
+      - name: Lint GitHub Actions workflows
+        run: actionlint -color
 
   shell:
     name: shellcheck

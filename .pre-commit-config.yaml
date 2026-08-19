@@ -52,7 +52,7 @@ repos:
         # 上游默认是 args: [--write-changes, --force-exclude]。
         # 去掉 --write-changes：只做检查，改不改交给人决定。
         # 但必须把 --force-exclude 留着——pre-commit 是把文件名显式传给 typos 的，
-        # 没有这个参数时 _typos.toml 里的 [files] extend-exclude（CHANGELOG.md、
+        # 没有这个参数时 .typos.toml 里的 [files] extend-exclude（CHANGELOG.md、
         # Cargo.lock、*.svg 等）会被完全无视。
         args: [--force-exclude]
 
@@ -62,6 +62,19 @@ repos:
   # 生成出来的项目里占位符已被替换，这行 grep 永远不匹配，钩子照常执行。
   - repo: local
     hooks:
+      # TOML 排版。用本地的 taplo 而不是第三方 pre-commit 镜像仓库：
+      # 这个项目对第三方来源一向谨慎（action 全部 hash 钉死、cargo-deny 管依赖来源），
+      # 为一个排版检查再引一个上游不划算。`just install-tools` 会装好它。
+      #
+      # ⚠️ 这条**不需要**下面那句模板仓库的跳过判断：模板自己的 TOML 也是 taplo 干净的
+      #    （liquid 标签一律锚在注释行行尾，taplo 不会碰它们）。
+      - id: taplo-fmt
+        name: taplo fmt
+        description: Check TOML formatting (见 .taplo.toml).
+        entry: taplo fmt --check
+        language: system
+        files: \.toml$
+        pass_filenames: false
       - id: cargo-fmt
         name: cargo fmt
         description: Format files with rustfmt (nightly, 见 rustfmt.toml).
