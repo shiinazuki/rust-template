@@ -65,7 +65,6 @@ authors.workspace = true
 exclude = [
   ".github/",
   ".gitlab-ci.yml",
-  ".vscode/",
   ".config/",
   ".pre-commit-config.yaml",
   ".gitattributes",

@@ -301,8 +301,7 @@ just docker-clean       # 删除本地镜像
 | [`.pre-commit-config.yaml`](.pre-commit-config.yaml) | Git 钩子（pre-commit / commit-msg / pre-push） |
 | [`.editorconfig`](.editorconfig) | 跨编辑器的基础排版约定 |
 | [`.gitattributes`](.gitattributes) | 入库换行统一、二进制标记、`Cargo.lock` 折叠 |
-| [`.devcontainer/`](.devcontainer/) | Dev Container / Codespaces 配置 |
-| [`.vscode/`](.vscode/) | rust-analyzer 配置与推荐插件 |{% if ci == "github" %}
+| [`.devcontainer/`](.devcontainer/) | Dev Container / Codespaces 配置 |{% if ci == "github" %}
 | [`.github/workflows/`](.github/workflows/) | CI（build / release / audit） |
 | [`.github/dependabot.yml`](.github/dependabot.yml) | 依赖自动升级：cargo / actions{% if docker and crate_type == "bin" %} / docker 基础镜像{% endif %} |{% endif %}{% if ci == "gitlab" %}
 | [`.gitlab-ci.yml`](.gitlab-ci.yml) | GitLab CI：lint / test / deny / hack / msrv + tag 触发 release |{% endif %}
@@ -388,12 +387,6 @@ docs: 补充 README
 ```
 
 commit message 由 pre-commit 的 `conventional-pre-commit` 钩子强制校验。
-
-## VSCode
-
-[`.vscode/extensions.json`](.vscode/extensions.json) 列出了推荐插件，打开项目时 VSCode 会提示安装；
-[`.vscode/settings.json`](.vscode/settings.json) 已经把 rust-analyzer 配好：保存时用 clippy 检查（参数与 CI 一致），
-格式化走 nightly rustfmt，避免编辑器和 CI 的结果不一致。
 
 ## License
 

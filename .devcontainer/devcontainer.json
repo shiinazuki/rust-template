@@ -17,7 +17,8 @@
 
   "customizations": {
     "vscode": {
-      // 和 .vscode/extensions.json 保持一致
+      // 只作用于容器 / Codespaces 里的 VS Code；仓库根目录不放 .vscode/，
+      // 编辑器的本地配置交给各人自己管
       "extensions": [
         "rust-lang.rust-analyzer",
         "tamasfe.even-better-toml",

@@ -29,15 +29,12 @@ profile.json
 # 本地用 gitlab-runner 跑流水线时会留下这个目录
 /.cargo-home
 
-# 编辑器 / 操作系统
+# 编辑器 / 操作系统。编辑器的本地配置一律不进版本库——各人用的编辑器不一样，
+# 而且里面多半有只在自己机器上成立的路径。
 .DS_Store
 .idea/
+.vscode/
 .zed/
 *.swp
 *~
 *.log
-
-# .vscode 下只提交团队共享的推荐配置，个人调试配置不进版本库
-.vscode/*
-!.vscode/extensions.json
-!.vscode/settings.json

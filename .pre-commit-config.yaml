@@ -22,8 +22,8 @@ repos:
         # 反例是单独占一行的裸 {%- if ... %}：那样写文件就成了非法 TOML，
         # 编辑器的 TOML 语言服务和这个钩子都会开始报错。
       - id: check-json
-        # .vscode 与 .devcontainer 下是 JSONC（带注释），标准 JSON 解析器会报错
-        exclude: ^(\.vscode|\.devcontainer)/
+        # .devcontainer 下是 JSONC（带注释），标准 JSON 解析器会报错
+        exclude: ^\.devcontainer/
       - id: check-added-large-files
         args: [--maxkb=1024]
       - id: detect-private-key
