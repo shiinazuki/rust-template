@@ -34,7 +34,7 @@ jobs:
         uses: taiki-e/install-action@5b4d68e2e660441203ab128a23676f1e4faf1532 # v2.86.3
         with:
           tool: cargo-deny
-      - name: Check for security advisories
-        run: cargo deny check advisories
-      - name: Check licenses / bans / sources
-        run: cargo deny check licenses bans sources
+      # 一条就够：`cargo deny check` 等价于 advisories + bans + licenses + sources。
+      # 拆成两条只是 step 名字好看一点，代价是把依赖图整个再解析一遍。
+      - name: Check advisories / licenses / bans / sources
+        run: cargo deny check

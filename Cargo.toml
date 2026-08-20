@@ -117,7 +117,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 # # serde = ["dep:serde", "dep:serde_json"]
 
 [dependencies]
-# 版本继承自上面的 [workspace.dependencies]，这里只声明「本 crate 要用」{% if async_runtime %}
+# 版本继承自上面的 [workspace.dependencies]，这里只声明「本 crate 要用」{% if async_runtime and crate_type == "bin" %}
 tokio = { workspace = true }
 # 入口是 #[tokio::main]，见 src/main.rs{% endif %}{% if cli and crate_type == "bin" %}
 clap = { workspace = true }
@@ -131,7 +131,7 @@ anyhow = { workspace = true }
 # main 用它收口，配合 .context() 补充上下文{% endif %}
 
 # 只在测试 / benchmark / example 里用到的依赖放这里，不会进使用者的依赖树。
-# 刻意留空——测试辅助库按项目需要选，预置一堆没人用的反而是负担。常用的几个：
+# 默认留空——测试辅助库按项目需要选，预置一堆没人用的反而是负担。常用的几个：
 #
 #   assert_cmd + predicates   跑真实的可执行文件，断言退出码 / stdout / stderr
 #   trycmd                    把 CLI 的输入输出写成 .md 快照，改一行就能重跑对齐
@@ -142,6 +142,12 @@ anyhow = { workspace = true }
 #   pretty_assertions         断言失败时给彩色 diff，而不是两大坨 Debug 输出
 #   divan / criterion         benchmark（配合 benches/ 与 [profile.bench]）
 [dev-dependencies]
+# tokio 只在「库 + async」这一种组合下出现在这里：库那一侧只有 #[tokio::test] 用得到它，
+# 放进 [dependencies] 等于让每个使用者都白拉一份。bin 项目的 tokio 在上面那一段——
+# 它的 #[tokio::main] 是真的运行时依赖。{% if async_runtime and crate_type == "lib" %}
+tokio = { workspace = true }
+# 要在库里跑异步逻辑时再把它挪回 [dependencies]；但不要在库里装 runtime，
+# 起不起 runtime 是应用的决定{% endif %}
 
 # `just unused` 用 cargo-machete 找出声明了却没用到的依赖。它靠扫源码里的符号判断，
 # 只在宏展开里用到的依赖会被误报，在这里逐个放行：

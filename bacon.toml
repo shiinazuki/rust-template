@@ -42,16 +42,21 @@ command = ["cargo", "doc", "--no-deps", "--all-features", "--open"]
 need_stdout = false
 on_success = "back" # 打开一次就退回上一个任务，不要反复弹浏览器
 
-# `bacon run` 直接跑起来，改代码自动重启
+# `bacon run` 直接跑起来，改代码自动重启。
+# 只对 bin 项目生成：库没有可执行入口，`cargo run` 会直接报
+# "a bin target must be available"，留着就是一个按 r 必然报错的任务。{% if crate_type == "bin" %}
 [jobs.run]
 command = ["cargo", "run", "--all-features"]
 need_stdout = true
 allow_warnings = true
 background = false
+# 以上仅 bin{% endif %}
 
 [keybindings]
 c = "job:check-all"
 l = "job:clippy-all"
 t = "job:nextest"
 d = "job:doc"
+# r 同上，只在 bin 项目里绑定{% if crate_type == "bin" %}
 r = "job:run"
+# 以上仅 bin{% endif %}

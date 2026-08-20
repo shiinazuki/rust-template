@@ -262,8 +262,9 @@ error: custom toolchain '{{ toolchain }}' specified in override file ... is not 
 **这是唯一可靠的验证方式**，而且已经脚本化了：
 
 ```bash
-just smoke          # 10 组：覆盖每个开关的开与关，含 2 组 nightly
-just smoke-full     # 25 组：bin 的 4 个源码开关全排列 + lib + nightly + 社区文件组合
+just smoke          # 12 组：覆盖每个开关的开与关，含 2 组 nightly、3 种协议
+just smoke-full     # 28 组：bin 的 4 个源码开关全排列 + lib + nightly
+                    #        + 社区文件组合 + 协议
 just smoke-keep     # 跑完保留生成的项目，方便进去手工看
 just template-lint  # 检查模板仓库自身：pre-commit + zizmor + actionlint + shellcheck + lychee
 ```
@@ -275,19 +276,23 @@ just template-lint  # 检查模板仓库自身：pre-commit + zizmor + actionlin
    使用者第一次跑 CI 就会挂在这上面
 3. `cargo clippy -- -D warnings` —— 和 CI 同样的严格度
 4. 测试（nextest）与 doctest
-5. `cargo deny check` —— 某个开关引入的依赖可能带着不在白名单里的协议
-6. 留下来的 `Cargo.lock` 与 `Cargo.toml` 对得上（`cargo metadata --locked`）
-7. `justfile` 能被 just 解析
-8. README 里的 Markdown 表格没有被条件块裁出的空行截断
-9. 生成项目里的 TOML 都是合法 TOML
-10. `taplo fmt --check` —— 排版也要合规，否则使用者第一次跑 CI 会红在
+5. `RUSTDOCFLAGS="-D warnings" cargo doc` —— 文档警告。编译 / clippy / 测试都看不见
+   它，写错一个 intra-doc 链接要等使用者跑 CI 才会红
+6. `cargo deny check` —— 某个开关引入的依赖可能带着不在白名单里的协议
+7. 留下来的 `Cargo.lock` 与 `Cargo.toml` 对得上（`cargo metadata --locked`）
+8. `justfile` 能被 just 解析
+9. README 里的 Markdown 表格没有被条件块裁出的空行截断
+10. 生成项目里的 TOML 都是合法 TOML
+11. `taplo fmt --check` —— 排版也要合规，否则使用者第一次跑 CI 会红在
     一个跟他毫无关系的地方
-11. **没有残留未渲染的 `{{ }}` / `{% %}`** —— 变量改名漏一处、`{% raw %}` 忘了配对，
+12. **没有残留未渲染的 `{{ }}` / `{% %}`** —— 变量改名漏一处、`{% raw %}` 忘了配对，
     症状就是它，而编译 / clippy / 测试统统发现不了（多半藏在注释和文档里）
-12. **文件清单与开关对得上** —— `conditional` / `ignore` 写错的典型症状是**少了一个文件**：
+13. **文件清单与开关对得上** —— `conditional` / `ignore` 写错的典型症状是**少了一个文件**：
     代码照样编过，问题要等使用者去用那个功能时才暴露。这一条把每个开关该生成、
-    不该生成的文件逐个断言了一遍（见 `scripts/smoke.sh` 里的 `assert_layout`）
-13. `docker build` —— 默认关闭，`SMOKE_DOCKER=1` 打开（容器里从零编译，很慢）；
+    不该生成的文件逐个断言了一遍（见 `scripts/smoke.sh` 里的 `assert_layout`），
+    并顺带核对 README 的 license 徽章 URL——shields.io 把 `-` 当字段分隔符，
+    协议名里的 `-` 不转义成 `--` 的话整张徽章 404，而那是一张图片，本地看不出来
+14. `docker build` —— 默认关闭，`SMOKE_DOCKER=1` 打开（容器里从零编译，很慢）；
     模板 CI 里只有每周的完整矩阵会开
 
 CI 上由 [`.github/workflows/template-ci.yaml`](.github/workflows/template-ci.yaml)
@@ -334,7 +339,7 @@ assert_eq!(msg, "Hello, world!");
 | `.gitlab-ci.yml` | GitLab CI 的 `$VARIABLE` 与规则表达式 |
 | `README.md` | 就是本文件，里面有大量占位符示例 |
 
-⚠️ 改动这份 exclude 列表时，记得同步 `scripts/smoke.sh` 里第 11 项检查的 `--exclude`
+⚠️ 改动这份 exclude 列表时，记得同步 `scripts/smoke.sh` 里第 12 项检查的 `--exclude`
 参数——那条检查靠排除这些文件来判断「还有没有该渲染却没渲染的占位符」。
 
 ⚠️ 注意 exclude 的是 `.github/workflows/**` 而**不是** `.github/**`：

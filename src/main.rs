@@ -23,8 +23,9 @@ async {% endif %}fn main(){% if error_handling %} -> anyhow::Result<()>{% endif 
     let greeting = {{ crate_name }}::greet(&name);
     let message = greeting.context("生成问候语失败")?;
 {% else %}    let message = {{ crate_name }}::greet(&name);
-{% endif %}{% if logging %}    tracing::info!("{message}");
-{% else %}    println!("{message}");
-{% endif %}{% if error_handling %}
+{% endif %}{% if logging %}    // 日志走 stderr（给运维看），程序真正的输出走 stdout——见 telemetry.rs
+    tracing::info!(name = %name, "已生成问候语");
+{% endif %}    println!("{message}");
+{% if error_handling %}
     Ok(())
 {% endif %}}

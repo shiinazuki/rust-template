@@ -2,8 +2,9 @@
 #
 # 模板自测：按矩阵生成若干种组合的项目，逐个跑格式化 / clippy / 测试。
 #
-#   bash scripts/smoke.sh            # 默认矩阵（9 组，覆盖各开关的开与关）
-#   bash scripts/smoke.sh --full     # 完整矩阵（bin 的 4 个源码开关全排列 + lib + nightly）
+#   bash scripts/smoke.sh            # 默认矩阵（12 组，覆盖各开关的开与关）
+#   bash scripts/smoke.sh --full     # 完整矩阵（28 组：bin 的 4 个源码开关全排列
+#                                    #   + lib + nightly + 社区文件 + 协议）
 #   bash scripts/smoke.sh --keep     # 跑完保留生成的项目，方便进去手工看
 #
 #   SMOKE_DOCKER=1 bash scripts/smoke.sh   # 顺便真的构建一次容器镜像（慢，默认关闭）
@@ -22,6 +23,10 @@ full=0
 keep=0
 for arg in "$@"; do
     case "$arg" in
+        # 空参数按「没传」处理。模板 CI 里写的是 `bash scripts/smoke.sh $MODE`（不加引号，
+        # MODE 为空时展开成零个参数）；有人出于好意改成 "$MODE"，就会传进来一个空串，
+        # 落到下面的 *) 分支上把整条流水线判成「未知参数」。容忍它比依赖那处不加引号稳。
+        "") ;;
         --full) full=1 ;;
         --keep) keep=1 ;;
         *) echo "未知参数: $arg" >&2; exit 2 ;;
@@ -45,54 +50,68 @@ export CARGO_TERM_COLOR=always
 # 那样 toolchain=nightly 的组合就等于没测。这里显式解开。
 unset RUSTUP_TOOLCHAIN
 
-# 每行一个组合：名字 kind toolchain ci docker async error cli logging open_source
+# 每行一个组合：名字 kind toolchain ci docker async error cli logging open_source license
+#
+# ⚠️ license 列写 `dual` 而不是 `MIT OR Apache-2.0`：行是靠 `set -- $row` 按空格拆的，
+#    带空格的值会被拆成三列。下面读取时再把 `dual` 翻译回完整的 SPDX 表达式。
 #
 # ⚠️ toolchain 那一列不要清一色写 stable：nightly 才是模板的**默认值**，
 #    而且 CI 里的 miri job 只在 nightly 下才跑。全测 stable 等于默认路径没人验过——
 #    nightly 的 clippy/rustfmt 比 stable 严，生成的代码在它上面挂掉是很常见的事。
 matrix=(
-    "minimal            bin stable  none   false false false false false false"
-    "full               bin stable  github true  true  true  true  true  true"
-    "cli-only           bin stable  github false false false true  false false"
-    "logging-only       bin stable  github false false false false true  false"
-    "async-error        bin stable  gitlab false true  true  false false false"
+    "minimal            bin stable  none   false false false false false false MIT"
+    # 全开组顺带把双协议也测了：post-script 的 LICENSE 分支与 Dockerfile 的
+    # image.licenses 标签都跟着它走
+    "full               bin stable  github true  true  true  true  true  true  dual"
+    "cli-only           bin stable  github false false false true  false false MIT"
+    "logging-only       bin stable  github false false false false true  false MIT"
+    "async-error        bin stable  gitlab false true  true  false false false MIT"
     # gitlab + 社区文件：这一组专门盯 .gitlab/ 的 issue / MR 模板与根目录 CODEOWNERS
     # 有没有生成。曾经这里是个真 bug——社区文件挂在 .github/ 下，选 gitlab 时被整个删掉。
-    "gitlab-oss        bin stable  gitlab false false true  false false true"
-    "lib-full           lib stable  github false false true  false false true"
-    "lib-minimal        lib stable  none   false false false false false false"
+    "gitlab-oss        bin stable  gitlab false false true  false false true  MIT"
+    "lib-full           lib stable  github false false true  false false true  Apache-2.0"
+    "lib-minimal        lib stable  none   false false false false false false MIT"
+    # lib + async：tokio 在库项目里只被 #[tokio::test] 用到，该落在 [dev-dependencies]
+    # 而不是 [dependencies]（否则每个使用者都白拉一份）。这组盯的就是那个分支。
+    "lib-async          lib stable  github false true  true  false false false MIT"
     # 长名字专测组。rustfmt 的 fn_call_width 默认是 60（不是 max_width 的 100），
     # 源码里凡是把 `{{ crate_name }}` 写进宏参数的地方，包名一长就会被 rustfmt 折行，
     # 于是生成出来的项目开箱就过不了 fmt --check。短名字的组合永远测不到这一点。
     # 写模板时的对策：先 `let x = <crate>::foo(...)`，再让断言只碰短变量名。
-    "a-deliberately-long-package-name-for-rustfmt bin stable github false true true true true false"
+    "a-deliberately-long-package-name-for-rustfmt bin stable github false true true true true false MIT"
     # 下面两组走 nightly：第一组就是「一路回车」的默认生成结果
-    "nightly-default    bin nightly github false false true  false false false"
-    "nightly-lib        lib nightly github false false true  false false false"
+    "nightly-default    bin nightly github false false true  false false false MIT"
+    "nightly-lib        lib nightly github false false true  false false false MIT"
 )
 if [ "$full" -eq 1 ]; then
     matrix=()
     for a in false true; do for e in false true; do for c in false true; do for l in false true; do
-        matrix+=("bin-a$a-e$e-c$c-l$l bin stable github false $a $e $c $l false")
+        matrix+=("bin-a$a-e$e-c$c-l$l bin stable github false $a $e $c $l false MIT")
     done; done; done; done
-    for e in false true; do
-        matrix+=("lib-e$e lib stable github false false $e false false false")
-    done
+    # lib 这边也要把 async 排进去：tokio 在库项目里走的是 [dev-dependencies] 那条分支
+    for a in false true; do for e in false true; do
+        matrix+=("lib-a$a-e$e lib stable github false $a $e false false false MIT")
+    done; done
     # nightly 的全开 / 全关两端，覆盖 stable 上测不到的 lint 差异
-    matrix+=("nightly-min  bin nightly github false false false false false false")
-    matrix+=("nightly-full bin nightly github true  true  true  true  true  true")
-    matrix+=("nightly-lib  lib nightly github false false true  false false false")
-    # 社区文件开关只影响生成哪些 md 文件，不影响能不能编译，各测一次就够
-    matrix+=("oss-on  bin stable github false false true false false true")
-    matrix+=("oss-off bin stable github false false true false false false")
-    matrix+=("oss-gitlab bin stable gitlab false false true false false true")
-    matrix+=("oss-none   bin stable none   false false true false false true")
+    matrix+=("nightly-min  bin nightly github false false false false false false MIT")
+    matrix+=("nightly-full bin nightly github true  true  true  true  true  true  MIT")
+    matrix+=("nightly-lib  lib nightly github false false true  false false false MIT")
+    # 社区文件开关只影响生成哪些 md 文件，不影响能不能编译，开着的三种平台各测一次。
+    # open_source=false 不再单列：上面 20 组全排列每一组都是 false，已经覆盖到了。
+    matrix+=("oss-on     bin stable github false false true false false true MIT")
+    matrix+=("oss-gitlab bin stable gitlab false false true false false true MIT")
+    matrix+=("oss-none   bin stable none   false false true false false true MIT")
+    # 协议：post-script 的 LICENSE 处理和 README 徽章的转义都跟着它走。
+    # 只测 MIT 是不够的——协议名里带 `-` 的那两个才会踩到徽章的转义规则；
+    # 反过来 MIT 也不必单列，上面每一组用的都是 MIT。
+    matrix+=("lic-apache bin stable github false false true false false false Apache-2.0")
+    matrix+=("lic-dual   bin stable github false false true false false false dual")
 fi
 
 # 按生成时的开关断言文件布局。在生成项目的目录里调用。
 # 每条不符的都打印出来（不提前 return），一次把问题看全。
 assert_layout() {
-    local kind=$1 ci=$2 docker=$3 err=$4 cli=$5 logging=$6 open_source=$7
+    local kind=$1 ci=$2 docker=$3 err=$4 cli=$5 logging=$6 open_source=$7 license=$8
     local bad=0
 
     have() {
@@ -190,13 +209,43 @@ assert_layout() {
     fi
 
     # --- License：单协议时改名成 LICENSE，双协议时两个都留着 --------------
-    # 矩阵里目前统一用 MIT，所以这里只断言单协议的那条路径。
-    have LICENSE "license=MIT 时 post-script 会把 LICENSE-MIT 改名成 LICENSE"
-    gone LICENSE-MIT "已改名成 LICENSE"
-    gone LICENSE-APACHE "选了 MIT，Apache 那份该删掉"
+    if [ "$license" = "MIT OR Apache-2.0" ]; then
+        have LICENSE-MIT "双协议：两份都留着，这是 Rust 生态的标准做法"
+        have LICENSE-APACHE "双协议：两份都留着"
+        gone LICENSE "双协议不改名"
+    else
+        have LICENSE "单协议时 post-script 会把选中的那份改名成 LICENSE"
+        gone LICENSE-MIT "已改名成 LICENSE，或不是选中的那个协议"
+        gone LICENSE-APACHE "已改名成 LICENSE，或不是选中的那个协议"
+    fi
+
+    # README 的 license 徽章。shields.io 把 `-` 当字段分隔符，协议名里的 `-` 必须
+    # 转义成 `--`，否则整张徽章 404——而 404 的是一张图片，编译 / clippy / 测试
+    # 全都发现不了，只有点开 README 才看得出来。
+    # Apache-2.0 与 MIT OR Apache-2.0 都会踩到，MIT 不会：只测 MIT 是查不出来的。
+    local badge expected
+    badge=$(grep -o 'img\.shields\.io/badge/license-[^)]*' README.md)
+    expected="img.shields.io/badge/license-$(printf '%s' "$license" |
+        sed -e 's/-/--/g' -e 's/ /%20/g')-blue"
+    if [ "$badge" != "$expected" ]; then
+        echo "license 徽章 URL 不对：$badge"
+        echo "                 期望：$expected"
+        bad=1
+    fi
 
     return "$bad"
 }
+
+# 有几项检查是靠 `command -v` 守卫的，工具缺了就只能跳过。把缺的先报出来——
+# 「静默跳过」正是最容易让一项检查长期形同虚设的方式：模板 CI 曾经漏装 cargo-deny，
+# 流水线一直是绿的，而依赖审计那一步其实一次都没跑过。
+missing_tools=""
+for t in cargo-nextest cargo-deny just taplo python3; do
+    command -v "$t" >/dev/null 2>&1 || missing_tools="$missing_tools $t"
+done
+if [ -n "$missing_tools" ]; then
+    printf '\033[33m注意：以下工具未安装，依赖它们的检查会被跳过：%s\033[0m\n' "$missing_tools"
+fi
 
 pass=0
 fail=0
@@ -207,11 +256,15 @@ for row in "${matrix[@]}"; do
     set -- $row
     name=$1 kind=$2 toolchain=$3 ci=$4 docker=$5 async=$6 err=$7 cli=$8 logging=$9
     shift 9
-    open_source=$1
+    open_source=$1 license=$2
+    # 矩阵里用 `dual` 这个不含空格的别名，这里翻译回真正的 SPDX 表达式
+    case "$license" in
+        dual) license="MIT OR Apache-2.0" ;;
+    esac
     proj="smoke-$name"
 
-    printf '\n\033[1m== %s ==\033[0m (%s / %s / ci=%s docker=%s async=%s error=%s cli=%s logging=%s oss=%s)\n' \
-        "$name" "$kind" "$toolchain" "$ci" "$docker" "$async" "$err" "$cli" "$logging" "$open_source"
+    printf '\n\033[1m== %s ==\033[0m (%s / %s / ci=%s docker=%s async=%s error=%s cli=%s logging=%s oss=%s license=%s)\n' \
+        "$name" "$kind" "$toolchain" "$ci" "$docker" "$async" "$err" "$cli" "$logging" "$open_source" "$license"
 
     (
         cd "$workdir" || exit 1
@@ -219,7 +272,7 @@ for row in "${matrix[@]}"; do
             --define description="smoke test $name" \
             --define repo-owner=example \
             --define toolchain="$toolchain" \
-            --define license=MIT \
+            --define license="$license" \
             --define ci="$ci" \
             --define docker="$docker" \
             --define async_runtime="$async" \
@@ -255,23 +308,31 @@ for row in "${matrix[@]}"; do
     if [ -f src/lib.rs ] && ! cargo test --doc --all-features >"$workdir/$proj.doc.log" 2>&1; then
         echo "  ✗ doctest 不通过（$workdir/$proj.doc.log）"; ok=0
     fi
-    # 5. 依赖审计：某个开关引入的新依赖可能带着不在 deny.toml allow 列表里的协议，
+    # 5. 文档警告。`just lint` 和两套 CI 都跑这条（RUSTDOCFLAGS="-D warnings"），
+    #    但编译、clippy、测试统统看不见它：模板注释里写错一个 intra-doc 链接、
+    #    留一个裸 URL，要等使用者第一次跑 CI 才会红在一个跟他毫无关系的地方。
+    if ! RUSTDOCFLAGS="-D warnings" \
+        cargo doc --no-deps --all-features --document-private-items \
+        >"$workdir/$proj.rustdoc.log" 2>&1; then
+        echo "  ✗ 文档警告（$workdir/$proj.rustdoc.log）"; ok=0
+    fi
+    # 6. 依赖审计：某个开关引入的新依赖可能带着不在 deny.toml allow 列表里的协议，
     #    那会让使用者第一次跑 CI 就失败，而且报错信息离「你选了哪个开关」很远。
     if command -v cargo-deny >/dev/null 2>&1 \
         && ! cargo deny check >"$workdir/$proj.deny.log" 2>&1; then
         echo "  ✗ cargo deny 不通过（$workdir/$proj.deny.log）"; ok=0
     fi
-    # 6. 留下来的 Cargo.lock 必须和 Cargo.toml 对得上。模板自带的 lock 只锁了根 crate，
+    # 7. 留下来的 Cargo.lock 必须和 Cargo.toml 对得上。模板自带的 lock 只锁了根 crate，
     #    某个开关加了依赖却没在 post-script 里删掉它的话，使用者第一次跑 CI（--locked）
     #    就会挂，而本地不带 --locked 的构建完全看不出来。
     if [ -f Cargo.lock ] && ! cargo metadata --locked --format-version 1 >"$workdir/$proj.lock.log" 2>&1; then
         echo "  ✗ Cargo.lock 与 Cargo.toml 不一致（$workdir/$proj.lock.log）"; ok=0
     fi
-    # 7. justfile 至少要能被 just 解析
+    # 8. justfile 至少要能被 just 解析
     if command -v just >/dev/null 2>&1 && ! just --list >"$workdir/$proj.just.log" 2>&1; then
         echo "  ✗ justfile 解析失败（$workdir/$proj.just.log）"; ok=0
     fi
-    # 8. Markdown 表格中间不能出现空行——那会让表格直接断掉。
+    # 9. Markdown 表格中间不能出现空行——那会让表格直接断掉。
     #    这是 liquid 条件块最容易踩的坑：标签一旦独占一行，被裁掉的分支就会留下空行。
     if command -v python3 >/dev/null 2>&1; then
         if ! python3 - README.md >"$workdir/$proj.md.log" 2>&1 <<'PY'
@@ -289,7 +350,7 @@ PY
             echo "  ✗ README 的 Markdown 表格被空行截断（$workdir/$proj.md.log）"; ok=0
         fi
     fi
-    # 9. 生成项目里的 TOML 必须是合法 TOML（模板里的 liquid 标签有没有漏掉锚定）
+    # 10. 生成项目里的 TOML 必须是合法 TOML（模板里的 liquid 标签有没有漏掉锚定）
     if command -v python3 >/dev/null 2>&1; then
         if ! python3 - <<'PY' >"$workdir/$proj.toml.log" 2>&1
 import glob, sys, tomllib
@@ -310,13 +371,13 @@ PY
             echo "  ✗ 生成项目里有非法 TOML（$workdir/$proj.toml.log）"; ok=0
         fi
     fi
-    # 10. TOML 排版：生成项目的 CI 里有 `taplo fmt --check`，模板里的 TOML 一旦
+    # 11. TOML 排版：生成项目的 CI 里有 `taplo fmt --check`，模板里的 TOML 一旦
     #     排版不合规，使用者第一次跑 CI 就会红在一个跟他毫无关系的地方。
     if command -v taplo >/dev/null 2>&1 \
         && ! taplo fmt --check >"$workdir/$proj.taplo.log" 2>&1; then
         echo "  ✗ taplo fmt --check 不通过（$workdir/$proj.taplo.log）"; ok=0
     fi
-    # 11. 生成项目里不该残留没被渲染的 liquid 占位符。
+    # 12. 生成项目里不该残留没被渲染的 liquid 占位符。
     #     这是最廉价也最有效的一条：变量改名漏了一处、`{% raw %}` 忘了配对，
     #     症状都是文件里明晃晃留着 `{{ ... }}`——而编译 / clippy / 测试统统发现不了，
     #     因为它们多半藏在注释和文档里。
@@ -331,14 +392,14 @@ PY
         >"$workdir/$proj.liquid.log" 2>&1; then
         echo "  ✗ 生成项目里残留未渲染的 liquid 占位符（$workdir/$proj.liquid.log）"; ok=0
     fi
-    # 12. 按开关断言「该有的文件在、不该有的文件不在」。
+    # 13. 按开关断言「该有的文件在、不该有的文件不在」。
     #     前面所有检查都只看「编不编得过」，而 conditional / ignore 写错的典型症状是
     #     **少了一个文件**：代码照样编过，问题要等使用者去用那个功能时才暴露。
-    if ! assert_layout "$kind" "$ci" "$docker" "$err" "$cli" "$logging" "$open_source" \
+    if ! assert_layout "$kind" "$ci" "$docker" "$err" "$cli" "$logging" "$open_source" "$license" \
         >"$workdir/$proj.layout.log" 2>&1; then
         echo "  ✗ 生成的文件清单和开关对不上（$workdir/$proj.layout.log）"; ok=0
     fi
-    # 13. 真正构建一次容器镜像。默认**关闭**（SMOKE_DOCKER=1 打开）：容器里是从零编译，
+    # 14. 真正构建一次容器镜像。默认**关闭**（SMOKE_DOCKER=1 打开）：容器里是从零编译，
     #     一组就要好几分钟，挂在每次 PR 上不划算。模板 CI 里只有每周的完整矩阵会打开它。
     #     不测的话，Dockerfile 坏掉要等到某个使用者生成完项目、推上去跑 CI 才发现。
     if [ "${SMOKE_DOCKER:-0}" = "1" ] && [ -f Dockerfile ] && command -v docker >/dev/null 2>&1; then

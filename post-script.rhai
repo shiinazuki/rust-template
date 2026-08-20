@@ -51,6 +51,13 @@ let docker_ignored_for_lib = docker && !is_bin;
 // CODEOWNERS 与三份 md 放在仓库根目录，三种情况下都会生成。
 let oss_partial = open_source && ci == "none";
 
+// repo-owner 里带 `/` 是 GitLab 的 group/subgroup 写法，占位符的 regex 特意放行了它。
+// 但域名是按 ci 推导的：ci 不是 gitlab 时会拼成 https://github.com/组/子组/项目，
+// 而 GitHub 没有子组这个概念——那是一个必然 404 的地址，还会跟着 cargo publish
+// 进 crates.io。regex 拦不住这一点（它看不到 ci 选了什么），只能在这里说一声。
+let owner = variable::get("repo-owner");
+let owner_path_on_github = owner.contains("/") && ci != "gitlab";
+
 // --- 1. 按用户选择的 License 收拾 LICENSE 文件 -----------------------------
 //
 // 模板里同时放着 LICENSE-MIT 和 LICENSE-APACHE：
@@ -118,6 +125,15 @@ if docker_ignored_for_lib {
     print("说明：Docker 只对 bin 项目生效——库没有可执行入口，装进容器里也没东西可跑。");
     print("      Dockerfile / .dockerignore / docker.just 本次已跳过。");
     print("      要给库做个演示容器的话，先加一个 examples/ 或 bin target 再自己写 Dockerfile。");
+    print("");
+}
+
+if owner_path_on_github {
+    print("注意：仓库所有者填的是 `" + owner + "`（含 /），而 CI 平台不是 gitlab，");
+    print("      于是 Cargo.toml 的 repository 被拼成了");
+    print("        https://github.com/" + owner + "/" + name);
+    print("      GitHub 没有子组，这个地址是 404，而该字段会随 cargo publish 进 crates.io。");
+    print("      托管在 GitLab 的话把 ci 选成 gitlab 重新生成；否则请手工改掉 repository。");
     print("");
 }
 

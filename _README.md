@@ -5,7 +5,7 @@
 {% elsif ci == "gitlab" %}
 [![pipeline](https://gitlab.com/{{ repo-owner }}/{{ project-name }}/badges/main/pipeline.svg)](https://gitlab.com/{{ repo-owner }}/{{ project-name }}/-/pipelines)
 [![coverage](https://gitlab.com/{{ repo-owner }}/{{ project-name }}/badges/main/coverage.svg)](https://gitlab.com/{{ repo-owner }}/{{ project-name }}/-/pipelines)
-{% endif %}![license](https://img.shields.io/badge/license-{{ license | replace: " ", "%20" }}-blue)
+{% endif %}![license](https://img.shields.io/badge/license-{{ license | replace: "-", "--" | replace: " ", "%20" }}-blue)
 {% if crate_type == "lib" %}
 <!-- 发布到 crates.io 之后把下面两行的注释去掉 -->
 <!-- [![crates.io](https://img.shields.io/crates/v/{{ project-name }}.svg)](https://crates.io/crates/{{ project-name }}) -->
@@ -150,7 +150,7 @@ VS Code 的 Dev Containers 插件或 GitHub Codespaces 可以直接用，
 just                    # 列出所有命令
 just doctor             # 环境体检
 just check              # 快速检查编译
-just run -- --help      # 运行程序，-- 后的参数透传给程序
+just run -- --help      # 运行程序（仅 bin 项目），-- 后的参数透传给程序
 just fmt                # 格式化 .rs（nightly rustfmt）与 .toml（taplo）
 just fix                # clippy --fix 自动修复 + 格式化
 just dev                # bacon 实时监控
@@ -196,9 +196,13 @@ just docker-clean       # 删除本地镜像
 推上去才会在 CI 的 `RUSTDOCFLAGS="-D warnings"` 上挂掉。
 
 `unused`、`semver`、`hack`、`msrv` 刻意留在外面手动跑：第一个对宏里用到的依赖会误报，
-第二个需要和已发布版本联网比对，第三个在 feature 多起来之后会比较慢，
-第四个会往你机器上装一整条工具链——都不适合塞进「随手跑一下」的命令里。
-CI 上这四项该跑的照常跑。
+第二个需要和已发布版本联网比对，第三个要额外装 cargo-hack、feature 多起来还会变慢，
+第四个会 `rustup toolchain install` 往你机器上装一整条工具链——
+都不适合塞进「随手跑一下」的命令里。
+
+其中 `hack` / `msrv` 在两套 CI 里都有对应的 job，`semver` 只有 GitHub 那套有
+（它只对纯库项目生效）。`unused` 刻意**没有**进任何 CI：误报率高的检查一旦当上门禁，
+结果只会是所有人都学会忽略它。需要时手动跑 `just unused`。
 
 ## 工程结构
 
@@ -224,11 +228,19 @@ CI 上这四项该跑的照常跑。
 {% if async_runtime %}
 ### 异步运行时
 
-项目已引入 [tokio](https://tokio.rs/)（`rt-multi-thread` + `macros`），入口是 `#[tokio::main]`。
+项目已引入 [tokio](https://tokio.rs/)（`rt-multi-thread` + `macros`）。{% if crate_type == "lib" %}
+它在 `[dev-dependencies]` 里：库这一侧只有 `#[tokio::test]` 用得到它，
+放进 `[dependencies]` 等于让每个使用者都白拉一份 tokio。真要在库里跑异步逻辑时再挪过去
+——但**不要**在库里装 runtime，起不起 runtime 是应用的决定。{% else %}
+入口是 `#[tokio::main]`。{% endif %}
 
 同时 [`clippy.toml`](clippy.toml) 里启用了 `disallowed-types` / `disallowed-methods`：
-在 async 上下文里误用 `std::fs` / `std::process` 这类**阻塞** API 会直接报错——
-一次同步 `read` 就足以把 runtime 的一个 worker 线程钉死。请改用 `tokio::fs` 对应项。
+用到 `std::fs` / `std::process` 这类**阻塞** API 会被拦下（CI 是 `-D warnings`，
+直接构建失败）——一次同步 `read` 就足以把 runtime 的一个 worker 线程钉死，
+请改用 `tokio::fs` 对应项。
+
+⚠️ 这条禁令**不区分 async 上下文**：clippy 看不出一处调用是不是在 `async fn` 里，
+所以同步代码、测试、`build.rs` 里的 `std::fs` 一样会被拦。
 确有必要时在那一处写 `#[allow(clippy::disallowed_types)]` 并说明原因。
 {% endif %}{% if error_handling %}
 ### 错误处理
@@ -268,8 +280,12 @@ CI 上这四项该跑的照常跑。
 `tracing-subscriber` 初始化全局 subscriber：
 
 - 过滤规则运行时可调：`RUST_LOG=warn,{{ crate_name }}=debug`，不必重新编译；
-- 日志写 **stderr**，stdout 留给程序真正的输出，管道和重定向才不会串味；
-- 过滤表达式写错不会 panic（`parse_lossy`），不至于因为一个环境变量拼错就起不来。
+- 日志写 **stderr**，stdout 留给程序真正的输出，管道和重定向才不会串味——
+  `main.rs` 里的 `println!` 是程序输出，`tracing::info!` 是日志，各走各的，
+  所以把日志级别调到 `warn` 也不会把程序的结果一起吞掉；
+- 过滤表达式写错、或 `RUST_LOG` 被设成空串时，退回 `--log-level` 给的级别，
+  而不是得到一个「进程正常启动、却一条日志都不打」的空 filter；
+- `--log-level` 的取值由 clap 的 `value_parser` 锁死，打错字当场报错并列出合法值。
 
 要输出 JSON 给日志采集系统、或者接 OpenTelemetry，文件末尾的注释里写了怎么改。
 {% endif %}

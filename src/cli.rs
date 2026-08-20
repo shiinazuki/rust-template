@@ -20,7 +20,16 @@ pub(crate) struct Cli {
     ///
     /// 也可以用 `RUST_LOG` 环境变量覆盖，且优先级更高——它支持按模块细分，
     /// 例如 `RUST_LOG=warn,本包名=debug`（包名用下划线形式）。
-    #[arg(long, short, default_value = "info", env = "LOG_LEVEL")]
+    ///
+    /// `value_parser` 把取值锁死：写错一个词时 clap 当场报错并列出合法值，
+    /// 而不是一路传到 `EnvFilter` 那边被静默忽略、最后表现为「日志莫名其妙不见了」。
+    #[arg(
+        long,
+        short,
+        default_value = "info",
+        env = "LOG_LEVEL",
+        value_parser = ["error", "warn", "info", "debug", "trace"]
+    )]
     pub(crate) log_level: String,
 {% endif %}}
 

@@ -126,7 +126,8 @@ test:
     - .rust-setup
   script:
     - install_tools cargo-nextest cargo-llvm-cov
-    - cargo check --locked --all-targets --all-features
+    # 刻意没有 `cargo check --all-targets`：lint job 的 clippy 已经是它的严格超集，
+    # 而 llvm-cov 会带 `-C instrument-coverage` 换个 target 目录重编一遍，用不上它。
     # 分两步：先只跑测试收集数据（--no-report），再从同一份数据出两种报告。
     # 比跑两遍测试省一半时间，也保证 lcov 和终端里看到的百分比是同一次运行的结果。
     - cargo llvm-cov --no-report nextest --locked --profile ci --all-features
@@ -275,6 +276,12 @@ release:
       artifacts: true
     - job: build-binary
       artifacts: true
+  # ⚠️ `:latest` 是可变 tag，和 GitHub 那套「第三方 action 一律用 commit hash 钉死」
+  #    不是同一个标准。这里保留是因为风险来源不同：这个镜像由 GitLab 官方发布在自家
+  #    registry 上，和跑流水线的是同一方；钉 hash 防的是**第三方**作者账号被攻破
+  #    （2025 年 tj-actions 事件）。想把标准拉齐，用 `docker manifest inspect` 取到
+  #    digest，把下面这行换成 registry.gitlab.com/gitlab-org/release-cli@sha256:<digest>，
+  #    并自己安排定期更新（GitLab 这边没有 dependabot 那样的现成机制）。
   image: registry.gitlab.com/gitlab-org/release-cli:latest
   script:
     - echo "creating release for $CI_COMMIT_TAG"

@@ -56,10 +56,17 @@ jobs:
       - name: Install tools
         uses: taiki-e/install-action@5b4d68e2e660441203ab128a23676f1e4faf1532 # v2.86.3
         with:
-          tool: cargo-generate,cargo-nextest,just,taplo-cli
-      # PR / push 上跑默认矩阵（10 组，够覆盖每个开关的开与关）；
-      # 定时任务与手动触发跑完整矩阵（bin 的 4 个源码开关全排列 + lib），
-      # 并顺带真正构建一次容器镜像（SMOKE_DOCKER=1，见 scripts/smoke.sh 的第 13 项检查）。
+          # cargo-deny 不能漏：smoke.sh 的依赖审计那一步是 `command -v cargo-deny`
+          # 守卫的，装不上就静默跳过——CI 绿着，但那项检查其实一次都没跑过。
+          tool: cargo-generate,cargo-nextest,cargo-deny,just,taplo-cli
+      # PR / push 上跑默认矩阵（12 组，够覆盖每个开关的开与关）；
+      # 定时任务与手动触发跑完整矩阵（28 组：bin 的 4 个源码开关全排列 + lib +
+      # nightly + 社区文件 + 协议），并顺带真正构建一次容器镜像
+      # （SMOKE_DOCKER=1，见 scripts/smoke.sh 的第 14 项检查）。
+      #
+      # ⚠️ `$MODE` 不加引号是有意的：MODE 为空时它展开成**零个**参数。
+      #    加上引号会传进去一个空串参数——smoke.sh 已经能容忍它了（见那边的 case 分支），
+      #    但保持不加引号仍然是更直白的写法。
       - name: Run smoke matrix
         env:
           MODE: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '--full' || '' }}

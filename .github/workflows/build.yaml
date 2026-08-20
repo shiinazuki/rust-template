@@ -146,12 +146,15 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       # - name: Install Protoc
       #   uses: arduino/setup-protoc@v3
-      # 刻意只 check debug：release 模式再编一遍要多花好几分钟，而 release-only
-      # 的编译错误（`#[cfg(not(debug_assertions))]` 之类）很少见，且发版时
-      # release.yaml 里从零构建那一步一定会撞上。真需要提前拦住就在这里补一条
-      # `cargo check --locked --release --all-targets --all-features`。
-      - name: Check the package for errors
-        run: cargo check --locked --all-targets --all-features
+      # ⚠️ 这里刻意**没有**一条 `cargo check --all-targets`：
+      #    lint job 的 `cargo clippy --locked --all-targets --all-features` 已经是它的
+      #    严格超集（examples / benches 也覆盖到），而下面的 llvm-cov 会带着
+      #    `-C instrument-coverage` 在 target/llvm-cov-target 里从头编一遍，
+      #    check 留下的产物它一点都用不上——加回去就是每次 CI 白烧一次全量编译。
+      #
+      #    另外只测 debug：release-only 的编译错误（`#[cfg(not(debug_assertions))]`
+      #    之类）很少见，且发版时 release.yaml 从零构建那一步一定会撞上。真要提前拦住，
+      #    补 `cargo check --locked --release --all-targets --all-features`。
       # 用 .config/nextest.toml 里的 ci profile：不 fail-fast、失败重试 2 次、输出 JUnit
       - name: Execute rust tests with coverage
         run: cargo llvm-cov nextest --locked --profile ci --all-features --lcov --output-path lcov.info

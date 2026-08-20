@@ -30,9 +30,17 @@ default:
 check:
     cargo check --all-targets --all-features
 
+# 纯库项目没有可执行文件，`cargo run` 会直接报 "a bin target must be available"。
+# 判断依据和下面的 flamegraph / semver 一致：有没有 src/main.rs。
 [group('dev')]
-[doc('运行程序，额外参数原样透传：just run -- --help')]
+[doc('运行程序，额外参数原样透传：just run -- --help（仅 bin 项目）')]
 run *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ ! -f src/main.rs ]; then
+        echo "没有 bin target，跳过（库项目请写一个 examples/ 再用 cargo run --example <名字>）"
+        exit 0
+    fi
     cargo run --all-features {{ args }}
 
 # rustfmt 只管 .rs，项目里十来个 .toml 归 taplo 管（配置见 .taplo.toml）。
@@ -142,8 +150,10 @@ audit:
 hack:
     cargo hack --feature-powerset --depth 2 --no-dev-deps check
 
-# 刻意不放进 `just ci`：cargo-machete 靠扫源码里的符号判断，只在宏里用到的依赖会被
-# 误报。误报时在 Cargo.toml 里加 [package.metadata.cargo-machete] ignored = [...] 放行。
+# 刻意不放进 `just ci`，两套 CI 里也**没有**对应的 job：cargo-machete 靠扫源码里的
+# 符号判断，只在宏里用到的依赖会被误报——误报率高的检查一旦当上门禁，结果只会是
+# 所有人都学会忽略它。误报时在 Cargo.toml 里加
+# [package.metadata.cargo-machete] ignored = [...] 放行。
 [group('check')]
 [doc('找出声明了却没被用到的依赖（需要 cargo-machete）')]
 unused:

@@ -8,12 +8,12 @@
 #    smoke.sh 内部会先 cd 到临时目录再动手。
 
 [group('template')]
-[doc('自测：按矩阵生成项目并逐个跑检查（9 组，含 2 组 nightly）')]
+[doc('自测：按矩阵生成项目并逐个跑检查（12 组，含 2 组 nightly、3 种协议）')]
 smoke:
     bash scripts/smoke.sh
 
 [group('template')]
-[doc('自测完整矩阵：bin 的 4 个源码开关全排列 + lib + nightly（23 组，较慢）')]
+[doc('自测完整矩阵：bin 全排列 + lib + nightly + 社区文件 + 协议（28 组，较慢）')]
 smoke-full:
     bash scripts/smoke.sh --full
 
