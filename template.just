@@ -8,12 +8,12 @@
 #    smoke.sh 内部会先 cd 到临时目录再动手。
 
 [group('template')]
-[doc('自测：按矩阵生成项目并逐个跑检查（12 组，含 2 组 nightly、3 种协议）')]
+[doc('自测：按矩阵生成项目并逐个跑检查（10 组，含 2 组 nightly、3 种协议）')]
 smoke:
     bash scripts/smoke.sh
 
 [group('template')]
-[doc('自测完整矩阵：bin 全排列 + lib + nightly + 社区文件 + 协议（28 组，较慢）')]
+[doc('自测完整矩阵：bin 全排列 + lib + nightly + CI 平台 + 协议（19 组，较慢）')]
 smoke-full:
     bash scripts/smoke.sh --full
 
@@ -40,7 +40,9 @@ template-lint:
     if command -v actionlint >/dev/null 2>&1; then
         actionlint -color || fail=1
     else
-        echo "  - 未安装 actionlint，跳过（cargo binstall actionlint）"
+        # actionlint 是 Go 写的，crates.io 上没有同名包——`cargo binstall actionlint`
+        # 会以「not found」失败，别照着 zizmor 那行的样子写。
+        echo "  - 未安装 actionlint，跳过（brew install actionlint，或去 releases 页下二进制）"
     fi
     echo "== shellcheck =="
     if command -v shellcheck >/dev/null 2>&1; then

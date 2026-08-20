@@ -2,9 +2,9 @@
 #
 # 模板自测：按矩阵生成若干种组合的项目，逐个跑格式化 / clippy / 测试。
 #
-#   bash scripts/smoke.sh            # 默认矩阵（12 组，覆盖各开关的开与关）
-#   bash scripts/smoke.sh --full     # 完整矩阵（28 组：bin 的 4 个源码开关全排列
-#                                    #   + lib + nightly + 社区文件 + 协议）
+#   bash scripts/smoke.sh            # 默认矩阵（10 组，覆盖各开关的开与关）
+#   bash scripts/smoke.sh --full     # 完整矩阵（19 组：bin 的 3 个源码开关全排列
+#                                    #   + lib + nightly + CI 平台 + 协议）
 #   bash scripts/smoke.sh --keep     # 跑完保留生成的项目，方便进去手工看
 #
 #   SMOKE_DOCKER=1 bash scripts/smoke.sh   # 顺便真的构建一次容器镜像（慢，默认关闭）
@@ -50,7 +50,7 @@ export CARGO_TERM_COLOR=always
 # 那样 toolchain=nightly 的组合就等于没测。这里显式解开。
 unset RUSTUP_TOOLCHAIN
 
-# 每行一个组合：名字 kind toolchain ci docker async error cli logging open_source license
+# 每行一个组合：名字 kind toolchain ci docker async error logging license
 #
 # ⚠️ license 列写 `dual` 而不是 `MIT OR Apache-2.0`：行是靠 `set -- $row` 按空格拆的，
 #    带空格的值会被拆成三列。下面读取时再把 `dual` 翻译回完整的 SPDX 表达式。
@@ -59,59 +59,56 @@ unset RUSTUP_TOOLCHAIN
 #    而且 CI 里的 miri job 只在 nightly 下才跑。全测 stable 等于默认路径没人验过——
 #    nightly 的 clippy/rustfmt 比 stable 严，生成的代码在它上面挂掉是很常见的事。
 matrix=(
-    "minimal            bin stable  none   false false false false false false MIT"
+    "minimal            bin stable  none   false false false false MIT"
     # 全开组顺带把双协议也测了：post-script 的 LICENSE 分支与 Dockerfile 的
     # image.licenses 标签都跟着它走
-    "full               bin stable  github true  true  true  true  true  true  dual"
-    "cli-only           bin stable  github false false false true  false false MIT"
-    "logging-only       bin stable  github false false false false true  false MIT"
-    "async-error        bin stable  gitlab false true  true  false false false MIT"
-    # gitlab + 社区文件：这一组专门盯 .gitlab/ 的 issue / MR 模板与根目录 CODEOWNERS
-    # 有没有生成。曾经这里是个真 bug——社区文件挂在 .github/ 下，选 gitlab 时被整个删掉。
-    "gitlab-oss        bin stable  gitlab false false true  false false true  MIT"
-    "lib-full           lib stable  github false false true  false false true  Apache-2.0"
-    "lib-minimal        lib stable  none   false false false false false false MIT"
+    "full               bin stable  github true  true  true  true  dual"
+    "logging-only       bin stable  github false false false true  MIT"
+    # gitlab 平台这一组顺带把 async + error 一起开着：.gitlab-ci.yml 生成了没有、
+    # .github/ 有没有被整个裁掉，都靠它盯着
+    "async-error        bin stable  gitlab false true  true  false MIT"
+    "lib-full           lib stable  github false false true  false Apache-2.0"
+    "lib-minimal        lib stable  none   false false false false MIT"
     # lib + async：tokio 在库项目里只被 #[tokio::test] 用到，该落在 [dev-dependencies]
     # 而不是 [dependencies]（否则每个使用者都白拉一份）。这组盯的就是那个分支。
-    "lib-async          lib stable  github false true  true  false false false MIT"
+    "lib-async          lib stable  github false true  true  false MIT"
     # 长名字专测组。rustfmt 的 fn_call_width 默认是 60（不是 max_width 的 100），
     # 源码里凡是把 `{{ crate_name }}` 写进宏参数的地方，包名一长就会被 rustfmt 折行，
     # 于是生成出来的项目开箱就过不了 fmt --check。短名字的组合永远测不到这一点。
     # 写模板时的对策：先 `let x = <crate>::foo(...)`，再让断言只碰短变量名。
-    "a-deliberately-long-package-name-for-rustfmt bin stable github false true true true true false MIT"
+    "a-deliberately-long-package-name-for-rustfmt bin stable github false true true true MIT"
     # 下面两组走 nightly：第一组就是「一路回车」的默认生成结果
-    "nightly-default    bin nightly github false false true  false false false MIT"
-    "nightly-lib        lib nightly github false false true  false false false MIT"
+    "nightly-default    bin nightly github false false true  false MIT"
+    "nightly-lib        lib nightly github false false true  false MIT"
 )
 if [ "$full" -eq 1 ]; then
     matrix=()
-    for a in false true; do for e in false true; do for c in false true; do for l in false true; do
-        matrix+=("bin-a$a-e$e-c$c-l$l bin stable github false $a $e $c $l false MIT")
-    done; done; done; done
+    for a in false true; do for e in false true; do for l in false true; do
+        matrix+=("bin-a$a-e$e-l$l bin stable github false $a $e $l MIT")
+    done; done; done
     # lib 这边也要把 async 排进去：tokio 在库项目里走的是 [dev-dependencies] 那条分支
     for a in false true; do for e in false true; do
-        matrix+=("lib-a$a-e$e lib stable github false $a $e false false false MIT")
+        matrix+=("lib-a$a-e$e lib stable github false $a $e false MIT")
     done; done
     # nightly 的全开 / 全关两端，覆盖 stable 上测不到的 lint 差异
-    matrix+=("nightly-min  bin nightly github false false false false false false MIT")
-    matrix+=("nightly-full bin nightly github true  true  true  true  true  true  MIT")
-    matrix+=("nightly-lib  lib nightly github false false true  false false false MIT")
-    # 社区文件开关只影响生成哪些 md 文件，不影响能不能编译，开着的三种平台各测一次。
-    # open_source=false 不再单列：上面 20 组全排列每一组都是 false，已经覆盖到了。
-    matrix+=("oss-on     bin stable github false false true false false true MIT")
-    matrix+=("oss-gitlab bin stable gitlab false false true false false true MIT")
-    matrix+=("oss-none   bin stable none   false false true false false true MIT")
+    matrix+=("nightly-min  bin nightly github false false false false MIT")
+    matrix+=("nightly-full bin nightly github true  true  true  true  MIT")
+    matrix+=("nightly-lib  lib nightly github false false true  false MIT")
+    # CI 平台：上面的全排列清一色是 github，另外两种取值各补一组，
+    # 盯的是 .github/ 与 .gitlab-ci.yml 的裁剪有没有互相连坐。
+    matrix+=("ci-gitlab  bin stable gitlab false false true true MIT")
+    matrix+=("ci-none    bin stable none   false false true true MIT")
     # 协议：post-script 的 LICENSE 处理和 README 徽章的转义都跟着它走。
     # 只测 MIT 是不够的——协议名里带 `-` 的那两个才会踩到徽章的转义规则；
     # 反过来 MIT 也不必单列，上面每一组用的都是 MIT。
-    matrix+=("lic-apache bin stable github false false true false false false Apache-2.0")
-    matrix+=("lic-dual   bin stable github false false true false false false dual")
+    matrix+=("lic-apache bin stable github false false true false Apache-2.0")
+    matrix+=("lic-dual   bin stable github false false true false dual")
 fi
 
 # 按生成时的开关断言文件布局。在生成项目的目录里调用。
 # 每条不符的都打印出来（不提前 return），一次把问题看全。
 assert_layout() {
-    local kind=$1 ci=$2 docker=$3 err=$4 cli=$5 logging=$6 open_source=$7 license=$8
+    local kind=$1 ci=$2 docker=$3 err=$4 logging=$5 license=$6
     local bad=0
 
     have() {
@@ -170,43 +167,37 @@ assert_layout() {
         gone docker.just "docker=false 或库项目"
     fi
 
+    # --- dependabot 的 docker ecosystem 必须跟着 Dockerfile 走 ---------------
+    # 没有 Dockerfile 却留着那一段的话，dependabot 每周都会报一次
+    # dependency_file_not_found——代码没问题，Actions 页面上却一直挂着红叉。
+    # 这条检查是那个 bug 的回归防线（它属于「文件内容」而不是「文件在不在」，
+    # 前面 12 项检查一条都盯不到）。
+    if [ "$ci" = github ]; then
+        if grep -q 'package-ecosystem: docker' .github/dependabot.yml; then
+            if [ "$docker" != true ] || [ "$kind" != bin ]; then
+                echo "多出：.github/dependabot.yml 里的 docker ecosystem（这个项目没有 Dockerfile）"
+                bad=1
+            fi
+        elif [ "$docker" = true ] && [ "$kind" = bin ]; then
+            echo "缺少：.github/dependabot.yml 里的 docker ecosystem（docker=true）"
+            bad=1
+        fi
+    fi
+
     # --- 源码骨架开关 ------------------------------------------------------
     if [ "$err" = true ]; then have src/error.rs "error_handling=true"
     else gone src/error.rs "error_handling=false"; fi
 
-    if [ "$cli" = true ] && [ "$kind" = bin ]; then have src/cli.rs "cli=true"
-    else gone src/cli.rs "cli=false 或库项目"; fi
-
     if [ "$logging" = true ] && [ "$kind" = bin ]; then have src/telemetry.rs "logging=true"
     else gone src/telemetry.rs "logging=false 或库项目"; fi
 
-    # --- 开源社区文件 ------------------------------------------------------
-    # 这里是曾经出过 bug 的地方：CODEOWNERS 一度放在 .github/ 下，
-    # 选 gitlab 时被 [conditional.'ci != "github"'] 连坐删掉。
-    if [ "$open_source" = true ]; then
-        have SECURITY.md "open_source=true"
-        have CODE_OF_CONDUCT.md "open_source=true"
-        have CONTRIBUTING.md "open_source=true"
-        have CODEOWNERS "open_source=true；放根目录才能被 GitHub 和 GitLab 同时读到"
-        case "$ci" in
-            github)
-                have .github/PULL_REQUEST_TEMPLATE.md "open_source=true + ci=github"
-                have .github/ISSUE_TEMPLATE/bug_report.yml "open_source=true + ci=github"
-                ;;
-            gitlab)
-                have .gitlab/issue_templates/Bug.md "open_source=true + ci=gitlab"
-                have .gitlab/merge_request_templates/Default.md "open_source=true + ci=gitlab"
-                ;;
-        esac
-    else
-        gone SECURITY.md "open_source=false"
-        gone CODE_OF_CONDUCT.md "open_source=false"
-        gone CONTRIBUTING.md "open_source=false"
-        gone CODEOWNERS "open_source=false"
-        gone .gitlab "open_source=false"
-        gone .github/PULL_REQUEST_TEMPLATE.md "open_source=false"
-        gone .github/ISSUE_TEMPLATE "open_source=false"
-    fi
+    # --- 开源社区文件：模板不再生成，任何组合下都不该冒出来 ----------------
+    # 留着这几条是为了防回退——哪天有人把 SECURITY.md 之类又加回模板根目录，
+    # 它会悄悄进到**每一个**生成项目里（没有开关管着它了）。
+    for f in SECURITY.md CODE_OF_CONDUCT.md CONTRIBUTING.md CODEOWNERS \
+             .github/PULL_REQUEST_TEMPLATE.md .github/ISSUE_TEMPLATE .gitlab; do
+        gone "$f" "社区文件已从模板移除"
+    done
 
     # --- License：单协议时改名成 LICENSE，双协议时两个都留着 --------------
     if [ "$license" = "MIT OR Apache-2.0" ]; then
@@ -254,17 +245,15 @@ failed_names=()
 for row in "${matrix[@]}"; do
     # shellcheck disable=SC2086
     set -- $row
-    name=$1 kind=$2 toolchain=$3 ci=$4 docker=$5 async=$6 err=$7 cli=$8 logging=$9
-    shift 9
-    open_source=$1 license=$2
+    name=$1 kind=$2 toolchain=$3 ci=$4 docker=$5 async=$6 err=$7 logging=$8 license=$9
     # 矩阵里用 `dual` 这个不含空格的别名，这里翻译回真正的 SPDX 表达式
     case "$license" in
         dual) license="MIT OR Apache-2.0" ;;
     esac
     proj="smoke-$name"
 
-    printf '\n\033[1m== %s ==\033[0m (%s / %s / ci=%s docker=%s async=%s error=%s cli=%s logging=%s oss=%s license=%s)\n' \
-        "$name" "$kind" "$toolchain" "$ci" "$docker" "$async" "$err" "$cli" "$logging" "$open_source" "$license"
+    printf '\n\033[1m== %s ==\033[0m (%s / %s / ci=%s docker=%s async=%s error=%s logging=%s license=%s)\n' \
+        "$name" "$kind" "$toolchain" "$ci" "$docker" "$async" "$err" "$logging" "$license"
 
     (
         cd "$workdir" || exit 1
@@ -277,9 +266,7 @@ for row in "${matrix[@]}"; do
             --define docker="$docker" \
             --define async_runtime="$async" \
             --define error_handling="$err" \
-            --define cli="$cli" \
             --define logging="$logging" \
-            --define open_source="$open_source" \
             >"$workdir/$proj.gen.log" 2>&1
     ) || { echo "  ✗ 生成失败，日志见 $workdir/$proj.gen.log"; fail=$((fail + 1)); failed_names+=("$name(generate)"); continue; }
 
@@ -395,7 +382,7 @@ PY
     # 13. 按开关断言「该有的文件在、不该有的文件不在」。
     #     前面所有检查都只看「编不编得过」，而 conditional / ignore 写错的典型症状是
     #     **少了一个文件**：代码照样编过，问题要等使用者去用那个功能时才暴露。
-    if ! assert_layout "$kind" "$ci" "$docker" "$err" "$cli" "$logging" "$open_source" "$license" \
+    if ! assert_layout "$kind" "$ci" "$docker" "$err" "$logging" "$license" \
         >"$workdir/$proj.layout.log" 2>&1; then
         echo "  ✗ 生成的文件清单和开关对不上（$workdir/$proj.layout.log）"; ok=0
     fi

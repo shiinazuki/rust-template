@@ -38,9 +38,7 @@ authors = ["{{ authors }}"]
 [workspace.dependencies]
 # 这里是版本目录：成员写 `foo = { workspace = true }` 引用后才真正生效{% if async_runtime %}
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
-# tokio 的 feature 在此统一收口，子 crate 不要各自再开{% endif %}{% if cli and crate_type == "bin" %}
-clap = { version = "4", features = ["derive", "env"] }
-# derive = 用结构体声明参数；env = 允许 #[arg(env = "...")] 回落到环境变量（容器里的常规做法）{% endif %}{% if logging and crate_type == "bin" %}
+# tokio 的 feature 在此统一收口，子 crate 不要各自再开{% endif %}{% if logging and crate_type == "bin" %}
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # env-filter 提供 RUST_LOG 那套运行时可调的过滤语法，不用重新编译就能改日志级别{% endif %}{% if error_handling %}
@@ -66,7 +64,6 @@ authors.workspace = true
 # 打包发布时排除掉只对开发有意义的文件，减小 .crate 体积
 exclude = [
   ".github/",
-  ".gitlab/",
   ".gitlab-ci.yml",
   ".vscode/",
   ".config/",
@@ -85,10 +82,6 @@ exclude = [
   ".taplo.toml",
   ".typos.toml",
   "rust-toolchain.toml",
-  "CONTRIBUTING.md",
-  "CODE_OF_CONDUCT.md",
-  "SECURITY.md",
-  "CODEOWNERS",
 ]
 
 # docs.rs 元数据只有库项目才生成——bin 不会发布到 docs.rs。{% if crate_type == "lib" %}
@@ -119,9 +112,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 [dependencies]
 # 版本继承自上面的 [workspace.dependencies]，这里只声明「本 crate 要用」{% if async_runtime and crate_type == "bin" %}
 tokio = { workspace = true }
-# 入口是 #[tokio::main]，见 src/main.rs{% endif %}{% if cli and crate_type == "bin" %}
-clap = { workspace = true }
-# 参数定义见 src/cli.rs{% endif %}{% if logging and crate_type == "bin" %}
+# 入口是 #[tokio::main]，见 src/main.rs{% endif %}{% if logging and crate_type == "bin" %}
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 # 初始化见 src/telemetry.rs{% endif %}{% if error_handling %}

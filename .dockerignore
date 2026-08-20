@@ -2,9 +2,7 @@
 target/
 .git/
 .github/
-.gitlab/
 .gitlab-ci.yml
-CODEOWNERS
 .vscode/
 .idea/
 .devcontainer/

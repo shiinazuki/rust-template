@@ -39,8 +39,12 @@ updates:
         patterns:
           - "*"
 
-  # 容器基础镜像（rust:1-slim-bookworm / distroless）。
-  # 没这条的话，Debian 出了 CVE 你也不会收到任何提醒。
+  # 容器基础镜像（rust:1-slim-bookworm / distroless）那一段，只有生成了 Dockerfile
+  # 的项目才有：仓库里没有 Dockerfile 却留着 docker ecosystem 的话，dependabot 每周
+  # 都会报一次 `dependency_file_not_found: No Dockerfiles nor Kubernetes YAML found
+  # in /`——代码一点问题没有，Actions 页面上却一直挂着一条失败记录。{% if docker and crate_type == "bin" %}
+  #
+  # 有了下面这段，Debian 出了 CVE 才会有人提醒你。
   - package-ecosystem: docker
     directory: "/"
     schedule:
@@ -48,4 +52,4 @@ updates:
       day: monday
     commit-message:
       prefix: "build"
-      include: scope
+      include: scope{% endif %}

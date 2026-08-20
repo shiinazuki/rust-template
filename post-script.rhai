@@ -27,15 +27,13 @@ let ci = variable::get("ci");
 let docker = variable::get("docker");
 let async_runtime = variable::get("async_runtime");
 let error_handling = variable::get("error_handling");
-let cli = variable::get("cli");
 let logging = variable::get("logging");
-let open_source = variable::get("open_source");
 let crate_type = variable::get("crate_type");
 let is_bin = crate_type == "bin";
 
-// cli / logging 是应用层的事：解析命令行、安装全局 subscriber 都不该由库来做。
-// 库项目选了这两项也不会生成对应文件，这里明说一声，免得用户以为是 bug。
-let ignored_for_lib = !is_bin && (cli || logging);
+// logging 是应用层的事：安装全局 subscriber 不该由库来做。
+// 库项目选了它也不会生成 telemetry.rs，这里明说一声，免得用户以为是 bug。
+let ignored_for_lib = !is_bin && logging;
 
 // docker 同理：库没有可执行入口，Dockerfile / .dockerignore / docker.just 由
 // cargo-generate.toml 的 [conditional.'crate_type == "lib"'] 一并 ignore 掉了。
@@ -43,13 +41,6 @@ let ignored_for_lib = !is_bin && (cli || logging);
 // 否则会出现「提示你去跑 just docker-build，但那个配方根本不存在」。
 let docker_generated = docker && is_bin;
 let docker_ignored_for_lib = docker && !is_bin;
-
-// 协作模板（PR / MR 模板、issue 模板）是平台专有的：
-//   ci = github  ->  .github/PULL_REQUEST_TEMPLATE.md + .github/ISSUE_TEMPLATE/
-//   ci = gitlab  ->  .gitlab/merge_request_templates/ + .gitlab/issue_templates/
-//   ci = none    ->  两边都没有，因为不知道该按谁的约定放
-// CODEOWNERS 与三份 md 放在仓库根目录，三种情况下都会生成。
-let oss_partial = open_source && ci == "none";
 
 // repo-owner 里带 `/` 是 GitLab 的 group/subgroup 写法，占位符的 regex 特意放行了它。
 // 但域名是按 ci 推导的：ci 不是 gitlab 时会拼成 https://github.com/组/子组/项目，
@@ -85,10 +76,7 @@ file::rename("_README.md", "README.md");
 // 模板里的 Cargo.lock 只锁了根 crate 一个包。一旦某个开关往 Cargo.toml 里加了依赖，
 // 这份 lock 就对不上了——而 CI 全程用 `--locked`，会直接失败。
 // 与其留一个必然过期的文件，不如删掉，让 cargo 首次构建时重新解析。
-let adds_dependencies = async_runtime
-    || error_handling
-    || (is_bin && cli)
-    || (is_bin && logging);
+let adds_dependencies = async_runtime || error_handling || (is_bin && logging);
 
 let lock_regenerated = false;
 if adds_dependencies {
@@ -108,15 +96,13 @@ print("  Docker  " + if docker_generated { "是" } else { "否" });
 print("  异步    " + if async_runtime { "tokio" } else { "无" });
 print("  错误    " + if error_handling { if is_bin { "thiserror + anyhow" } else { "thiserror" } } else { "无" });
 if is_bin {
-    print("  命令行  " + if cli { "clap" } else { "无" });
     print("  日志    " + if logging { "tracing" } else { "无" });
 }
-print("  社区文件 " + if open_source { "已生成" } else { "无（个人 / 私有项目不需要）" });
 print("");
 
 if ignored_for_lib {
-    print("说明：cli / logging 只对 bin 项目生效——解析命令行、安装全局 subscriber");
-    print("      都是应用的职责，库替调用方做这些决定是越界。本次已跳过。");
+    print("说明：logging 只对 bin 项目生效——安装全局 subscriber 是应用的职责，");
+    print("      库替调用方决定日志往哪儿写、按什么格式写是越界。本次已跳过。");
     print("      库里想发日志的话，只加 tracing 依赖、用它的宏即可，不要装 subscriber。");
     print("");
 }
@@ -134,14 +120,6 @@ if owner_path_on_github {
     print("        https://github.com/" + owner + "/" + name);
     print("      GitHub 没有子组，这个地址是 404，而该字段会随 cargo publish 进 crates.io。");
     print("      托管在 GitLab 的话把 ci 选成 gitlab 重新生成；否则请手工改掉 repository。");
-    print("");
-}
-
-if oss_partial {
-    print("说明：CI 平台选的是 none，PR / issue 模板是平台专有的（GitHub 放 .github/，");
-    print("      GitLab 放 .gitlab/），不知道该按谁的约定放，本次已跳过。");
-    print("      SECURITY.md / CODE_OF_CONDUCT.md / CONTRIBUTING.md / CODEOWNERS 都已生成。");
-    print("      日后确定了平台，把 open_source 与对应的 ci 一起打开重新生成一份拷过来即可。");
     print("");
 }
 

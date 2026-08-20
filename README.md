@@ -4,7 +4,7 @@
 
 生成出来的项目自带：统一的格式化 / Clippy 规则、测试与覆盖率、依赖安全与 License 审计、
 拼写检查、Git 钩子、CHANGELOG 自动生成、发版与跨平台二进制分发流程，以及一套完整的 CI；
-按需还能生成命令行、日志、错误处理的代码骨架。
+按需还能生成日志、错误处理的代码骨架。
 
 > 这份 README 是**模板仓库自己的说明**，不会进入生成的项目。
 > 生成项目里的 README 来自 [`_README.md`](_README.md)。
@@ -58,9 +58,7 @@ just ci
 | `docker` | 是否生成 Dockerfile 与容器命令 | `false`（默认）/ `true` |
 | `async_runtime` | 是否引入 tokio 并开启阻塞 API 禁令 | `false`（默认）/ `true` |
 | `error_handling` | 是否生成错误处理骨架 | `true`（默认）/ `false` |
-| `cli` | 是否生成命令行骨架（clap），**仅 bin** | `false`（默认）/ `true` |
 | `logging` | 是否生成日志骨架（tracing），**仅 bin** | `false`（默认）/ `true` |
-| `open_source` | 是否生成开源社区文件（见下） | `false`（默认）/ `true` |
 
 > 没有单独的「托管平台」变量：`repository` 的域名由 `ci` 推导（`gitlab` → `gitlab.com`，
 > 其余 → `github.com`）。`ci = none` 又托管在 GitLab 时，生成完手工改一下 `Cargo.toml`
@@ -90,9 +88,7 @@ cargo generate --git https://github.com/shiinazuki/rust-template \
   --define docker=true \
   --define async_runtime=true \
   --define error_handling=true \
-  --define cli=true \
-  --define logging=true \
-  --define open_source=false
+  --define logging=true
 ```
 
 > `--silent` 模式下**所有**占位符都必须给全，漏一个就会直接失败。
@@ -108,7 +104,7 @@ cargo generate --git https://github.com/shiinazuki/rust-template \
 | 集成测试 | `tests/integration.rs` | `tests/integration.rs` |
 | `missing_docs` lint | `allow` | `warn`（强制公开 API 写文档） |
 | `error_handling` | thiserror 定义在 lib，`main` 用 anyhow 收口 | 只有 thiserror，公开导出 |
-| `cli` / `logging` | 按开关生成 `src/cli.rs` / `src/telemetry.rs` | **始终不生成**（见下） |
+| `logging` | 按开关生成 `src/telemetry.rs` | **始终不生成**（见下） |
 | Docker 相关文件 | 按 `docker` 开关 | 始终不生成（库没有可执行入口） |
 | docs.rs 元数据 | 无 | `[package.metadata.docs.rs]` + `unexpected_cfgs` 登记 `docsrs` |
 | CI 的 semver job | 跳过 | 以上一个 tag 为基线检查 API 破坏性变更 |
@@ -131,15 +127,16 @@ benchmark、doctest 都只能 `use` 到 lib target 导出的 `pub` 项。逻辑�
 
 项目确实要同时对外发布库和命令行时，把这两处判断里的 `src/main.rs` 条件删掉即可。
 
-`cli` / `logging` 对库不生效是有意的：解析命令行、安装全局 tracing subscriber
-都是**应用**的职责。库替调用方做这些决定属于越界——一个库如果自己装了 subscriber，
-使用它的程序就没法再自己配置日志了。库里想发日志，只加 `tracing` 依赖用它的宏即可。
-选了这两项去生成库时，post-script 会打印一行说明，不会静默忽略。
+`logging` 对库不生效是有意的：安装全局 tracing subscriber 是**应用**的职责。
+库替调用方做这个决定属于越界——一个库如果自己装了 subscriber，使用它的程序
+就没法再自己配置日志了。库里想发日志，只加 `tracing` 依赖用它的宏即可。
+选了它去生成库时，post-script 会打印一行说明，不会静默忽略。
 
-### 为什么社区文件默认不生成
+### 模板刻意不提供的两样东西
 
-`SECURITY.md`、`CODE_OF_CONDUCT.md`、`CONTRIBUTING.md`、issue / PR（MR）模板、`CODEOWNERS`
-这几份文件，只有在「项目公开 + 期待外部贡献者」时才产生价值：
+**开源社区文件**（`SECURITY.md`、`CODE_OF_CONDUCT.md`、`CONTRIBUTING.md`、
+issue / PR（MR）模板、`CODEOWNERS`）——这几份文件只有在「项目公开 + 期待外部
+贡献者」时才产生价值：
 
 - `SECURITY.md` 是告诉陌生人「发现漏洞别开公开 issue」——没有陌生人就没有意义；
 - issue 模板是给外部报障者用的表单；
@@ -147,37 +144,30 @@ benchmark、doctest 都只能 `use` 到 lib target 导出的 `pub` 项。逻辑�
 - `CONTRIBUTING.md` 的内容和生成项目的 README 重了一大半。
 
 私有仓库或个人项目里，它们是你永远不会打开、但每次 `ls` 都会看见的一堆文件。
-所以默认关闭，需要时把 `open_source` 打开即可——能力没删，只是移出了默认路径。
+真要开源时，从别的项目拷一份过来比留一个常年关着的开关划算。
 
-协作模板按平台分发，两边是对等的：
+**命令行参数骨架（clap）**——clap 的用法随项目差别太大（子命令、配置文件合并、
+shell 补全、环境变量回落……），模板给的那点 derive 样板留下来只会被推倒重写。
+要用的时候：
 
-| | `ci = github` | `ci = gitlab` | `ci = none` |
-| --- | --- | --- | --- |
-| issue 模板 | `.github/ISSUE_TEMPLATE/`（YAML 表单） | `.gitlab/issue_templates/`（Markdown） | 无 |
-| PR / MR 模板 | `.github/PULL_REQUEST_TEMPLATE.md` | `.gitlab/merge_request_templates/Default.md` | 无 |
-| `CODEOWNERS` | 仓库根目录 | 仓库根目录 | 仓库根目录 |
-| 三份 md | 都有 | 都有 | 都有 |
+```bash
+cargo add clap --features derive,env
+```
 
-`CODEOWNERS` 刻意放在**仓库根目录**而不是 `.github/` 下：根目录是 GitHub 与 GitLab
-唯一都认的位置（GitHub 认根 / `.github/` / `docs/`，GitLab 认根 / `.gitlab/` / `docs/`）。
-放进 `.github/` 的话，`ci != github` 时它会被那条 ignore 规则连坐删掉，
-而且就算留下来 GitLab 也读不到。
-
-`ci = none` 时没有 issue / MR 模板，因为不知道该按哪个平台的约定放——
-post-script 会打印一行说明，不会静默少给。
+参数定义单独放进 `src/cli.rs`（derive 一个 `Cli` 结构体，测试里可以直接构造，
+不必真起一个进程传参数），`main.rs` 里只留 `let args = Cli::parse();` 一行——
+`src/main.rs` 的文档注释里也写着这句提示。
 
 ### 功能开关的实际效果
 
 | 开关 | `true` / 选中时 | `false` / 未选时 |
 | --- | --- | --- |
-| `ci = github` | 保留 `.github/`（workflows + dependabot + issue / PR 模板） | 其余取值下整个 `.github/` 被 ignore |
-| `ci = gitlab` | 保留 `.gitlab-ci.yml` 与 `.gitlab/`（issue / MR 模板） | 其余取值下两者都被 ignore |
+| `ci = github` | 保留 `.github/`（workflows + dependabot） | 其余取值下整个 `.github/` 被 ignore |
+| `ci = gitlab` | 保留 `.gitlab-ci.yml` | 其余取值下它被 ignore |
 | `docker` | 生成 `Dockerfile`、`.dockerignore`、`docker.just` | 三者都不生成 |
 | `async_runtime` | 加 tokio、入口变 `#[tokio::main]`、`clippy.toml` 启用阻塞 API 禁令 | 保持同步骨架，禁令以注释形式留在 `clippy.toml` |
 | `error_handling` | 生成 `src/error.rs`，加 thiserror（bin 再加 anyhow） | 不生成，`main` 返回 `()` |
-| `cli` | 生成 `src/cli.rs`，加 clap，`main` 里解析参数 | 不生成 |
 | `logging` | 生成 `src/telemetry.rs`，加 tracing，`main` 里初始化 | 不生成，输出走 `println!` |
-| `open_source` | 生成 `SECURITY.md` / `CODE_OF_CONDUCT.md` / `CONTRIBUTING.md` / `CODEOWNERS`，外加当前 CI 平台对应的 issue 与 PR/MR 模板（见上表） | 一个都不生成 |
 
 任何一个会加依赖的开关被打开时，post-script 都会删掉模板自带的 `Cargo.lock`
 ——那份 lock 只锁了根 crate 一个包，留着必然过期，而 CI 全程用 `--locked`。
@@ -214,14 +204,11 @@ post-script 会打印一行说明，不会静默少给。
 | `.devcontainer/` | Dev Container / Codespaces 配置 |
 | `.editorconfig` / `.gitattributes` / `.gitignore` | 编辑器与 git 的基础约定 |
 | `.vscode/` | rust-analyzer 配置与推荐插件 |
-| `CONTRIBUTING.md` / `SECURITY.md` / `CODE_OF_CONDUCT.md` / `CODEOWNERS` | 社区文件，`open_source` 开关控制 |
 | `.github/workflows/build.yaml` | CI：lint / test / deny / workflows / msrv / hack / semver / miri |
 | `.github/workflows/release.yaml` | tag 触发：验证 → Release → 跨平台二进制 → crates.io |
 | `.github/workflows/audit.yaml` | 每日定时依赖安全审计 |
-| `.github/dependabot.yml` | cargo / actions / docker 三类依赖的自动升级 |
-| `.github/ISSUE_TEMPLATE/` `PULL_REQUEST_TEMPLATE.md` | GitHub 协作模板，`open_source` 开关控制 |
+| `.github/dependabot.yml` | cargo / actions 依赖的自动升级（选了 Docker 时再加 docker 一类） |
 | `.gitlab-ci.yml` | GitLab CI 的等价流水线，可选生成 |
-| `.gitlab/issue_templates/` `.gitlab/merge_request_templates/` | GitLab 协作模板，`open_source` 开关控制 |
 
 只属于模板仓库、**不会**进入生成项目的文件（在 `cargo-generate.toml` 的 `ignore` 里）：
 
@@ -262,9 +249,9 @@ error: custom toolchain '{{ toolchain }}' specified in override file ... is not 
 **这是唯一可靠的验证方式**，而且已经脚本化了：
 
 ```bash
-just smoke          # 12 组：覆盖每个开关的开与关，含 2 组 nightly、3 种协议
-just smoke-full     # 28 组：bin 的 4 个源码开关全排列 + lib + nightly
-                    #        + 社区文件组合 + 协议
+just smoke          # 10 组：覆盖每个开关的开与关，含 2 组 nightly、3 种协议
+just smoke-full     # 19 组：bin 的 3 个源码开关全排列 + lib + nightly
+                    #        + 三种 CI 平台 + 协议
 just smoke-keep     # 跑完保留生成的项目，方便进去手工看
 just template-lint  # 检查模板仓库自身：pre-commit + zizmor + actionlint + shellcheck + lychee
 ```
@@ -343,7 +330,9 @@ assert_eq!(msg, "Hello, world!");
 参数——那条检查靠排除这些文件来判断「还有没有该渲染却没渲染的占位符」。
 
 ⚠️ 注意 exclude 的是 `.github/workflows/**` 而**不是** `.github/**`：
-`CODEOWNERS` 和 issue 模板里的 `{{ repo-owner }}` 是**需要**被替换的。
+`.github/dependabot.yml` 里的 docker 那一段是按 `docker` 开关条件生成的，
+**需要**被渲染；整个目录一刀切的话，没生成 Dockerfile 的项目会被 dependabot
+每周报一次 `No Dockerfiles nor Kubernetes YAML found in /`。
 
 `exclude` 与 `ignore` 是两回事，别弄混：
 
@@ -356,7 +345,7 @@ assert_eq!(msg, "Hello, world!");
 不用 `.liquid` 后缀，而是把生成项目的 README 命名为 `_README.md`，
 由 `post-script.rhai` 在生成后改名顶替。
 
-### TOML 文件里的 liquid 标签必须锚在注释行
+### TOML / YAML 文件里的 liquid 标签必须锚在注释行
 
 `Cargo.toml` / `clippy.toml` 里的条件块一律写成这样——标签挂在 TOML **注释行的行尾**：
 
@@ -371,6 +360,18 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
 反例是单独占一行的裸 `{%- if ... %}`，或者把标签挂在**值**的行尾
 （`rustdoc-args = [...]{% endif %}`）——两者都会让文件变成非法 TOML。
+
+`.github/dependabot.yml` 同理（它是 `.github/` 下唯一需要渲染的文件，docker 那段
+按 `docker` 开关条件生成）：`{% if %}` 挂在 `#` 注释行的行尾，`{% endif %}` 挂在
+一个**不带引号**的标量后面（`include: scope{% endif %}` 仍是合法的 plain scalar）。
+挂到 `- "*"` 这种带引号的值后面就会让 `check-yaml` 钩子当场失败：
+
+```
+found character '%' that cannot start any token
+```
+
+条件为假时留下的那几行注释要能**独立读通**——它们会原样留在生成的项目里，
+正好用来解释「这里为什么没有 docker 那一段」。
 
 ### 二进制文件必须显式 exclude
 

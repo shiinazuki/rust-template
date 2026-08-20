@@ -16,9 +16,8 @@ use tracing_subscriber::{EnvFilter, filter::LevelFilter};
 pub(crate) fn init(default_level: &str) {
     // 兜底：解析不了就退回 info——日志初始化不该因为一个字符串把进程弄哑。
     //
-    // 当前两条调用路径其实都保证了它不会失败（选了命令行骨架时由 clap 的
-    // `value_parser` 锁死取值，否则 `main.rs` 传的是字面量），所以这里是给
-    // 「以后改成从配置文件 / 远端配置读级别」留的余地。
+    // 当前 `main.rs` 传进来的是字面量，走不到这条分支；它是给「以后改成从
+    // 命令行参数 / 配置文件 / 远端配置读级别」留的余地。
     let default = default_level.parse().unwrap_or_else(|_| {
         eprintln!("无法解析日志级别 `{default_level}`，退回 info");
         tracing::Level::INFO.into()

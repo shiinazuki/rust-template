@@ -5,7 +5,7 @@
 #   cargo generate --git ... --name my-lib --lib      # 生成库项目
 #
 # 交互式会依次询问：项目简介 / GitHub 用户名 / 工具链 / 协议 / CI / Docker /
-# async / 错误处理 / 命令行 / 日志 / 开源社区文件。
+# async / 错误处理 / 日志。
 # 非交互可以全部用 --define 指定，例如 --define toolchain=stable；
 # --silent 模式下**所有**占位符都必须给全，漏一个就会直接失败。
 #
@@ -27,8 +27,8 @@ exclude = [
   # --- 花括号属于别的模板语言，必须躲开 liquid ---------------------------
   "cliff.toml", # git-cliff 的 Tera 模板
   # 只排除 workflows：Actions 的 ${{ ... }} 会被 liquid 当成占位符吃掉。
-  # .github 下的其它文件（issue 模板的 config.yml）反而**需要**替换 {{ repo-owner }}，
-  # 所以不能像以前那样整个目录一刀切。
+  # .github 下的另一个文件 dependabot.yml 反而**需要**渲染（docker 那段是按开关
+  # 生成的），所以不能整个目录一刀切。
   ".github/workflows/**",
   ".gitlab-ci.yml", # GitLab CI 的 $VARIABLE / 规则表达式
   "justfile", # just 自己的 {{ 变量 }} 插值
@@ -127,8 +127,7 @@ default = "your-username"
 regex = "^[A-Za-z0-9][A-Za-z0-9._/-]{0,98}$"
 
 # ⚠️ 没有单独问「托管在哪个平台」：域名由下面的 ci 选项推导（gitlab -> gitlab.com，
-#    其余 -> github.com），见 Cargo.toml / Dockerfile / SECURITY.md / CODE_OF_CONDUCT.md
-#    里按 ci 分支的那几处。多问一个占位符不值得——CI 平台和代码托管平台在现实里
+#    其余 -> github.com），见 Cargo.toml / Dockerfile / _README.md 里按 ci 分支的那几处。多问一个占位符不值得——CI 平台和代码托管平台在现实里
 #    几乎总是同一个。例外是 ci = none 又托管在 GitLab：生成完手工改一下 repository 即可。
 
 [placeholders.toolchain]
@@ -160,33 +159,21 @@ prompt = "引入 tokio 异步运行时？（同时开启 clippy 的阻塞 API �
 default = false
 
 # --- 应用骨架开关 -----------------------------------------------------------
-# 这三个开关决定生成哪些源码模块。它们各自独立，可以任意组合；
+# 这两个开关决定生成哪些源码模块。它们各自独立，可以任意组合；
 # 关掉时对应的文件根本不会出现，不会留下一堆注释掉的死代码。
+#
+# ⚠️ 这里刻意没有「命令行参数骨架」：clap 的用法随项目差别太大（子命令、
+#    配置文件合并、shell 补全……），模板给的那点 derive 样板留下来只会被推倒重写。
+#    真要命令行时 `cargo add clap --features derive,env` 现写更快。
 
 [placeholders.error_handling]
 type = "bool"
 prompt = "生成错误处理骨架（库用 thiserror；应用再叠一层 anyhow）？"
 default = true
 
-[placeholders.cli]
-type = "bool"
-prompt = "生成命令行参数骨架（clap derive）？【仅 bin 项目生效】"
-default = false
-
 [placeholders.logging]
 type = "bool"
 prompt = "生成日志 / 追踪骨架（tracing + RUST_LOG 过滤）？【仅 bin 项目生效】"
-default = false
-
-# --- 开源社区文件 -----------------------------------------------------------
-# SECURITY / CODE_OF_CONDUCT / CONTRIBUTING / issue 与 PR 模板 / CODEOWNERS。
-#
-# 默认关闭是有意的：这几份文件只有在「项目公开 + 期待外部贡献者」时才产生价值。
-# 私有仓库或个人项目里，它们是你永远不会打开、但每次 ls 都会看见的六个文件。
-# 哪天真开源了，把这个开关打开重新生成一份、把文件拷过去即可。
-[placeholders.open_source]
-type = "bool"
-prompt = "生成开源社区文件（SECURITY / CODE_OF_CONDUCT / CONTRIBUTING / issue 与 PR 模板 / CODEOWNERS）？"
 default = false
 
 # ---------------------------------------------------------------------------
@@ -196,16 +183,9 @@ default = false
 
 [conditional.'crate_type == "lib"']
 # 库项目没有可执行入口，Dockerfile / 容器编排一并去掉。
-# cli / telemetry 同理：解析命令行和安装全局 subscriber 都是**应用**的职责，
-# 库只管定义错误类型和发出 tracing 事件，不该替调用方决定这些。
-ignore = [
-  "src/main.rs",
-  "src/cli.rs",
-  "src/telemetry.rs",
-  "Dockerfile",
-  ".dockerignore",
-  "docker.just",
-]
+# telemetry 同理：安装全局 subscriber 是**应用**的职责，库只管定义错误类型、
+# 发出 tracing 事件，不该替调用方决定日志往哪儿写、按什么格式写。
+ignore = ["src/main.rs", "src/telemetry.rs", "Dockerfile", ".dockerignore", "docker.just"]
 
 # bin 项目**同样**生成 src/lib.rs 与 tests/：这是 Rust 里的主流布局
 # （`main.rs` 薄薄一层负责解析参数与收口错误，逻辑全在 lib 那侧），
@@ -217,16 +197,11 @@ ignore = [
 # ---------------------------------------------------------------------------
 
 [conditional.'ci != "github"']
-# .github/ 下现在只剩 GitHub 专有的东西（workflows / dependabot / PR 与 issue 模板），
-# 整个目录跟着走。
-#
-# ⚠️ CODEOWNERS 已经挪到仓库根目录了，不在这个目录里——它是 GitHub 与 GitLab
-#    唯一都认的位置，放在 .github/ 下会被这条规则连坐删掉，GitLab 项目里也读不到。
+# .github/ 下只剩 GitHub 专有的东西（workflows + dependabot 配置），整个目录跟着走。
 ignore = [".github"]
 
 [conditional.'ci != "gitlab"']
-# .gitlab/ 是 GitLab 版的 issue / MR 模板，和 .github/ 下的那两份等价
-ignore = [".gitlab-ci.yml", ".gitlab/"]
+ignore = [".gitlab-ci.yml"]
 
 # ---------------------------------------------------------------------------
 # 按功能开关裁剪
@@ -235,22 +210,8 @@ ignore = [".gitlab-ci.yml", ".gitlab/"]
 [conditional.'docker == false']
 ignore = ["Dockerfile", ".dockerignore", "docker.just"]
 
-[conditional.'cli == false']
-ignore = ["src/cli.rs"]
-
 [conditional.'logging == false']
 ignore = ["src/telemetry.rs"]
 
 [conditional.'error_handling == false']
 ignore = ["src/error.rs"]
-
-[conditional.'open_source == false']
-ignore = [
-  "SECURITY.md",
-  "CODE_OF_CONDUCT.md",
-  "CONTRIBUTING.md",
-  "CODEOWNERS",
-  ".github/PULL_REQUEST_TEMPLATE.md",
-  ".github/ISSUE_TEMPLATE",
-  ".gitlab/",
-]

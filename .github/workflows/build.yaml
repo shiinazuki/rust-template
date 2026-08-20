@@ -220,10 +220,36 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install linters
+      - name: Install zizmor
         uses: taiki-e/install-action@5b4d68e2e660441203ab128a23676f1e4faf1532 # v2.86.3
         with:
-          tool: zizmor,actionlint
+          tool: zizmor
+      # actionlint 不在 install-action 的支持列表里（它是 Go 写的，crates.io 上也没有
+      # 同名包）。install-action 碰到不认识的工具会退回 cargo-binstall，这一步于是会以
+      # `For crate actionlint: actionlint is not found` 失败——不是网络抖动，重试没用。
+      # 官方发布的就是预编译二进制，这里自己取回来、核对 sha256 再装。
+      #
+      # ⚠️ 版本得手工升：dependabot 只认 `uses:` 里的 action，管不到 run: 里的版本号。
+      #    升级时把版本与下面的 sha256 一起换掉，校验和取自 release 页的
+      #    actionlint_<版本>_checksums.txt。
+      - name: Install actionlint
+        env:
+          ACTIONLINT_VERSION: "1.7.12"
+        run: |
+          set -euo pipefail
+          case "$(uname -m)" in
+            x86_64) arch=amd64 sha=8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8 ;;
+            aarch64) arch=arm64 sha=325e971b6ba9bfa504672e29be93c24981eeb1c07576d730e9f7c8805afff0c6 ;;
+            *) echo "actionlint 没有 $(uname -m) 的预编译包"; exit 1 ;;
+          esac
+          tarball="actionlint_${ACTIONLINT_VERSION}_linux_${arch}.tar.gz"
+          curl --proto '=https' --tlsv1.2 -fsSL -o "$tarball" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${tarball}"
+          echo "$sha  $tarball" | sha256sum --check --strict -
+          tar -xzf "$tarball" actionlint
+          sudo install -m 0755 actionlint /usr/local/bin/actionlint
+          rm -f "$tarball" actionlint
+          actionlint --version
       # --min-severity medium：低危项多是风格建议，卡 CI 性价比不高。
       # 想更严可以去掉这个参数，或加 --persona=pedantic。
       - name: Audit GitHub Actions workflows

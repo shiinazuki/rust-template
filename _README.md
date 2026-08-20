@@ -40,8 +40,7 @@ tests/
 src/
   lib.rs           业务逻辑都写在这一侧{% if error_handling %}
   error.rs         领域错误类型（thiserror）{% endif %}
-  main.rs          可执行入口：解析参数、初始化日志、错误收口{% if cli %}
-  cli.rs           命令行参数定义（clap derive）{% endif %}{% if logging %}
+  main.rs          可执行入口：初始化日志、错误收口{% if logging %}
   telemetry.rs     日志 / 追踪初始化（tracing）{% endif %}
 tests/
   integration.rs   集成测试：以外部使用者的视角调用 lib 的公开 API
@@ -263,17 +262,7 @@ just docker-clean       # 删除本地镜像
 
 只有 anyhow 的项目，在需要「按错误类型决定要不要重试」时会非常难受；
 全都手写 enum 又太啰嗦。两者搭配是应用层的常见解法。
-{% endif %}{% endif %}{% if cli and crate_type == "bin" %}
-### 命令行
-
-[`src/cli.rs`](src/cli.rs) 用 [clap](https://docs.rs/clap) 的 derive 宏定义参数，
-只负责解析与校验，不掺业务逻辑——这样 `Cli` 在测试里可以直接构造，
-不必真的起进程传参数。里面还带了 clap 官方推荐的 `debug_assert()` 自检测试，
-「两个参数用了同一个 short」这类问题会在测试期就暴露。
-
-打开了 `env` feature：`#[arg(env = "LOG_LEVEL")]` 声明的参数会自动回落到环境变量，
-容器里不用改启动命令也能调整行为。
-{% endif %}{% if logging and crate_type == "bin" %}
+{% endif %}{% endif %}{% if logging and crate_type == "bin" %}
 ### 日志
 
 [`src/telemetry.rs`](src/telemetry.rs) 用 [tracing](https://docs.rs/tracing) +
@@ -283,9 +272,12 @@ just docker-clean       # 删除本地镜像
 - 日志写 **stderr**，stdout 留给程序真正的输出，管道和重定向才不会串味——
   `main.rs` 里的 `println!` 是程序输出，`tracing::info!` 是日志，各走各的，
   所以把日志级别调到 `warn` 也不会把程序的结果一起吞掉；
-- 过滤表达式写错、或 `RUST_LOG` 被设成空串时，退回 `--log-level` 给的级别，
-  而不是得到一个「进程正常启动、却一条日志都不打」的空 filter；
-- `--log-level` 的取值由 clap 的 `value_parser` 锁死，打错字当场报错并列出合法值。
+- 过滤表达式写错、或 `RUST_LOG` 被设成空串时，退回 `main.rs` 里
+  `telemetry::init("info")` 给的默认级别，而不是得到一个「进程正常启动、
+  却一条日志都不打」的空 filter；
+- `RUST_LOG` 写成一个裸词（`RUST_LOG=inof`）时会提示一句——按 `EnvFilter` 的语法
+  裸词是**目标名**不是级别，它解析得**成功**，于是默认指令失效、日志一条都不打，
+  这一类 `EnvFilter` 自己不会出声。
 
 要输出 JSON 给日志采集系统、或者接 OpenTelemetry，文件末尾的注释里写了怎么改。
 {% endif %}
@@ -310,16 +302,10 @@ just docker-clean       # 删除本地镜像
 | [`.editorconfig`](.editorconfig) | 跨编辑器的基础排版约定 |
 | [`.gitattributes`](.gitattributes) | 入库换行统一、二进制标记、`Cargo.lock` 折叠 |
 | [`.devcontainer/`](.devcontainer/) | Dev Container / Codespaces 配置 |
-| [`.vscode/`](.vscode/) | rust-analyzer 配置与推荐插件 |{% if open_source %}
-| [`CONTRIBUTING.md`](CONTRIBUTING.md) | 参与开发的流程与约定 |
-| [`SECURITY.md`](SECURITY.md) | 漏洞报告流程与已有防线 |
-| [`CODEOWNERS`](CODEOWNERS) | 默认审阅人；放根目录是因为 GitHub 与 GitLab 都只认这一个共同位置 |{% endif %}{% if ci == "github" %}
+| [`.vscode/`](.vscode/) | rust-analyzer 配置与推荐插件 |{% if ci == "github" %}
 | [`.github/workflows/`](.github/workflows/) | CI（build / release / audit） |
-| [`.github/dependabot.yml`](.github/dependabot.yml) | cargo / actions / docker 三类依赖的自动升级 |{% if open_source %}
-| [`.github/ISSUE_TEMPLATE/`](.github/ISSUE_TEMPLATE/) | issue 模板 |{% endif %}{% endif %}{% if ci == "gitlab" %}
-| [`.gitlab-ci.yml`](.gitlab-ci.yml) | GitLab CI：lint / test / deny / hack / msrv + tag 触发 release |{% if open_source %}
-| [`.gitlab/issue_templates/`](.gitlab/issue_templates/) | issue 模板 |
-| [`.gitlab/merge_request_templates/`](.gitlab/merge_request_templates/) | MR 模板 |{% endif %}{% endif %}
+| [`.github/dependabot.yml`](.github/dependabot.yml) | 依赖自动升级：cargo / actions{% if docker and crate_type == "bin" %} / docker 基础镜像{% endif %} |{% endif %}{% if ci == "gitlab" %}
+| [`.gitlab-ci.yml`](.gitlab-ci.yml) | GitLab CI：lint / test / deny / hack / msrv + tag 触发 release |{% endif %}
 {% if ci == "github" %}
 ## CI
 
@@ -401,8 +387,7 @@ fix: 修正边界条件下的 panic
 docs: 补充 README
 ```
 
-commit message 由 pre-commit 的 `conventional-pre-commit` 钩子强制校验。{% if open_source %}
-更多约定见 [CONTRIBUTING.md](CONTRIBUTING.md)。{% endif %}
+commit message 由 pre-commit 的 `conventional-pre-commit` 钩子强制校验。
 
 ## VSCode
 
