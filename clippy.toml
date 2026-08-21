@@ -34,7 +34,8 @@ doc-valid-idents = [
 # （一次同步 read 就能把整个 runtime 的一个 worker 线程钉死）。
 #
 # ⚠️ CI 使用 `-D warnings`：启用后任何一处同步文件操作都会让构建失败，
-#    包括测试和 build.rs 里的。确有需要时在那一处写 #[allow(clippy::disallowed_types)]。
+#    包括测试和 build.rs 里的。确有需要时在那一处写
+#    #[expect(clippy::disallowed_types, reason = "说明为什么这里必须同步")]。
 #
 # ⚠️ 这里的 liquid 标签一律挂在注释行行尾（「注释锚定」写法），好处是本文件在模板
 #    仓库里同时也是合法 TOML，编辑器与 check-toml 钩子都不会误报。
@@ -71,7 +72,7 @@ disallowed-methods = [
   { path = "std::fs::symlink_metadata", replacement = "tokio::fs::symlink_metadata" },
   { path = "std::fs::write", replacement = "tokio::fs::write" },
 ]
-# 确有必要时在那一处写 #[allow(clippy::disallowed_types)] 并说明原因{% else %}
+# 确有必要时在那一处写 #[expect(clippy::disallowed_types, reason = "...")]{% else %}
 # 本项目没有引入 async runtime，禁令默认关闭。
 # 以后接入 tokio 时，把下面两行的注释去掉并按需补全路径即可：
 #

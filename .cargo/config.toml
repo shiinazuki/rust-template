@@ -1,0 +1,102 @@
+# cargo 的**项目级**配置：https://doc.rust-lang.org/cargo/reference/config.html
+#
+# 这个文件入库，因此只放「团队里每个人都该生效」的设置。纯个人偏好（自己机器上的
+# mold 路径、公司代理、镜像源）请写进 ~/.cargo/config.toml —— 那份是用户级的，
+# 优先级更低，但不会污染仓库、也不会跟着 CI 跑。
+#
+# 生效优先级（高 → 低）：
+#   环境变量（RUSTFLAGS / CARGO_*） > 本文件 > ~/.cargo/config.toml > cargo 内置默认值
+#
+# ⚠️ 本文件最容易踩的坑：环境变量里的 `RUSTFLAGS` 会**整体替换**下面
+#    `[build] rustflags` / `[target.*] rustflags` 的全部内容，而不是追加。
+#    项目里有两处显式设了 RUSTFLAGS：
+#      - justfile 的 `nll` 配方
+#      - CI 的 msrv job（nll 分支，GitHub 与 GitLab 两套里各一处）
+#    所以一旦在这里启用了 rustflags，务必同步到那几处，否则那次 check 用的是另一套
+#    编译参数，而它不会有任何提示。
+#
+# ⚠️ 下面绝大多数条目默认注释着，这是有意的：编译参数一改就是一次全量重编，
+#    而「快多少」和机器、项目规模强相关。这个文件的价值在于把「该在哪儿改什么」
+#    收口到一处，而不是替你做主。
+
+[net]
+# 默认是 3。crates.io / GitHub 的偶发超时在 CI runner 和国内网络下都很常见，
+# 多试两次的代价远小于整条流水线红掉重跑。
+retry = 5
+
+# 走系统 git 而不是 cargo 内置的 libgit2。私有 git 依赖需要 SSH 凭据、
+# 或公司网络要求走特定代理时，几乎必开——libgit2 读不到 ~/.ssh/config 和
+# git 的 credential helper。代价是略慢一点。
+# git-fetch-with-cli = true
+
+# ---------------------------------------------------------------------------
+# 链接器
+#
+# 链接是增量编译里最大的一块时间，换个链接器往往比任何编译参数都管用。
+# 各平台现状（截至 2026 年）：
+#
+#   x86_64-unknown-linux-gnu   rustc 1.90 起**默认**就是 rust-lld，无需配置。
+#                              想退回系统链接器：-Clinker-features=-lld
+#   aarch64-unknown-linux-gnu  还不是默认，装 mold 或显式开 lld 有明显收益
+#   macOS                      Xcode 15 起 Apple 自家的 ld 已经重写过，本身就快；
+#                              lld / zld 在这里通常不再是提升，别照抄 Linux 的配方
+#   windows-msvc               默认 link.exe，换 rust-lld（lld-link）一般更快
+#
+# ⚠️ 一旦取消下面任何一段的注释，就等于给这个项目设了 rustflags，
+#    请回到文件开头看那条关于 RUSTFLAGS 覆盖的说明。
+# ---------------------------------------------------------------------------
+
+# [target.aarch64-unknown-linux-gnu]
+# # 需要先装 mold（apt install mold / brew install mold），CI 镜像里也得装
+# rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+
+# [target.x86_64-pc-windows-msvc]
+# rustflags = ["-C", "linker-features=+lld"]
+
+# ---------------------------------------------------------------------------
+# 并行前端（仅 nightly）
+#
+# rustc 的前端（解析、类型检查、借用检查）长期是单线程的，`-Zthreads=N` 把它并行化，
+# 干净构建通常能省 20%~30%。官方 2026 年的目标之一就是把它推进 stable。
+#
+# 默认不开的两个原因：
+#   1. 它仍是 nightly 实验特性，偶尔会碰上 ICE；
+#   2. 它必须以 rustflags 的形式存在，于是就落进了上面那条「RUSTFLAGS 会整体覆盖」
+#      的陷阱里——`just nll` 跑的时候它会被静默丢掉。
+# 想开的话取消注释，并把同样的参数补进 justfile 的 nll 配方与 CI 的 msrv job。
+# 线程数超过 8 基本没有额外收益。
+# ---------------------------------------------------------------------------
+
+# [build]
+# rustflags = ["-Z", "threads=8"]
+
+# ---------------------------------------------------------------------------
+# 其它按需打开的条目
+# ---------------------------------------------------------------------------
+
+# 用本机 CPU 的全部指令集编译。跑 benchmark / 做性能对比时很有用，
+# ⚠️ 但产物**只能在同型号 CPU 上运行**，绝不要用它构建要分发的二进制。
+# [build]
+# rustflags = ["-C", "target-cpu=native"]
+
+# 国内网络下 crates.io 的稀疏索引经常慢到超时，可以换成镜像。
+# ⚠️ 三点注意：
+#   1. 只影响下载来源，不影响校验和，Cargo.lock 与 `--locked` 照常工作；
+#   2. 凡是要直接连 registry 的命令（`cargo publish` / `cargo owner` / `cargo yank`）
+#      都得显式加 `--registry crates-io`，否则 cargo 分不清该连哪一个而拒绝执行；
+#   3. deny.toml 的 [sources] allow-registry 仍写 crates.io 官方地址即可 ——
+#      cargo-deny 看的是 Cargo.lock 里记录的原始 registry。
+# [source.crates-io]
+# replace-with = "mirror"
+#
+# [source.mirror]
+# registry = "sparse+https://mirrors.tuna.tsinghua.edu.cn/crates.io-index/"
+
+# 给所有 cargo 子命令注入环境变量。比在 shell 里 export 稳：换台机器、换个终端
+# 都不会丢，跑 `cargo test` 的 CI 也一样能拿到。
+# [env]
+# # 只在这个项目里默认打开 backtrace，不影响系统其它 Rust 程序
+# RUST_BACKTRACE = "1"
+# # relative = true 时按「相对于本文件所在目录」解析成绝对路径，
+# # 适合指向仓库里的测试夹具
+# FIXTURES_DIR = { value = "tests/fixtures", relative = true }

@@ -120,6 +120,11 @@ jobs:
     if: needs.verify.outputs.is_bin == 'true'
     permissions:
       contents: write # 往 Release 里传附件
+      # 下面两项只有开了 provenance 签名（见本 job 末尾那一步）才用得上。
+      # 权限是 job 级的，没法按 step 条件申请；多给的这两项本身不额外暴露什么：
+      # id-token 换到的是一次性 OIDC 凭据，attestations 只能往本仓库写证明。
+      id-token: write
+      attestations: write
     strategy:
       fail-fast: false
       matrix:
@@ -156,6 +161,7 @@ jobs:
         shell: bash
         run: echo "name=$(grep -m1 '^name' Cargo.toml | sed -E 's/.*"(.*)".*/\1/')" >> "$GITHUB_OUTPUT"
       - name: Build and upload
+        id: upload
         uses: taiki-e/upload-rust-binary-action@f0d45ae91ee7b8ee928de7a9d04d893a08bcbec6 # v1.30.2
         with:
           bin: ${{ steps.pkg.outputs.name }}
@@ -166,6 +172,24 @@ jobs:
           checksum: sha256
           locked: true
           token: ${{ secrets.GITHUB_TOKEN }}
+      # 构建来源证明（SLSA provenance）：由 GitHub 用一次性 OIDC 凭据在 Sigstore 上
+      # 签一份「这个文件是本仓库的哪个 workflow、哪个 commit 构建出来的」，公开可验：
+      #     gh attestation verify <下载到的压缩包> --repo <owner>/<repo>
+      # 校验和只能回答「文件有没有被改过」，证明回答的是「它是谁造的」——
+      # 攻击者能替换 Release 附件的话，把 .sha256 一起换掉是顺手的事。
+      #
+      # 默认**不启用**：仓库 Settings → Secrets and variables → Actions → Variables
+      # 里加 ATTEST_BUILD_PROVENANCE=true 打开。要开关而不是直接开着，是因为
+      # artifact attestation 对公开仓库随便用，私有 / internal 仓库则要 GitHub
+      # Enterprise —— 直接开着会让一部分人的发版流程莫名其妙地红掉。
+      #
+      # tar 与 zip 只会有一个非空（Unix 出 .tar.gz，Windows 出 .zip），
+      # `||` 取第一个非空值。
+      - name: Attest build provenance
+        if: vars.ATTEST_BUILD_PROVENANCE == 'true'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ steps.upload.outputs.tar || steps.upload.outputs.zip }}
 
   # 发布到 crates.io。默认**不启用**——要开的话在仓库
   # Settings → Secrets and variables → Actions → Variables 里加 PUBLISH_TO_CRATES_IO=true。
@@ -184,6 +208,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
+      # ⚠️ job 级 permissions 是**整体替换**，不是在顶层那份上追加：只要写了这一段，
+      #    没列出来的 scope 一律变成 none。所以 contents: read 必须显式补上，
+      #    否则 actions/checkout 在私有仓库上会直接 403。
+      contents: read
       id-token: write # 换取 crates.io 临时 token 所必需
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

@@ -70,6 +70,7 @@ exclude = [
   ".github/",
   ".gitlab-ci.yml",
   ".config/",
+  ".cargo/",
   ".pre-commit-config.yaml",
   ".gitattributes",
   ".dockerignore",
@@ -211,10 +212,18 @@ opt-level = 1
 # ---------------------------------------------------------------------------
 
 [workspace.lints.rust]
-unsafe_code = "forbid" # 默认禁止 unsafe（确实需要时改成 "deny" 并按处 allow）
+unsafe_code = "forbid" # 默认禁止 unsafe（确实需要时改成 "deny"，再按处 expect 并写明理由）
 missing_debug_implementations = "warn"
+# 和上面成对：小而无内部可变性的类型该实现 Copy，否则调用方到处写 .clone()，
+# 而且一旦发布出去，事后再加 Copy 是破坏性变更（它会改变移动语义）。
+missing_copy_implementations = "warn"
 unreachable_pub = "warn" # 只在 crate 内部用的类型不要暴露成 pub
 unused_qualifications = "warn"
+# `x as u64` 而 x 本来就是 u64。重构改过类型之后最容易留下这种空转的 cast，
+# 而它会把「以后类型再变一次」的编译错误一并吃掉。
+trivial_numeric_casts = "warn"
+# 声明了却完全可以省掉的生命周期参数（1.83 起有这条 lint）
+redundant_lifetimes = "warn"
 rust_2018_idioms = { level = "warn", priority = -1 }
 # 未来版本里会变成硬错误的用法，趁现在还只是 warning 就改掉
 future_incompatible = { level = "warn", priority = -1 }
@@ -233,6 +242,9 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(docsrs)'] }
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
+# cargo 组管的是 Cargo.toml 本身：通配符依赖、名字带 no- 前缀的 feature、
+# 发布到 crates.io 时缺元数据。它不看源码，几乎不增加 clippy 的耗时。
+cargo = { level = "warn", priority = -1 }
 
 # 手动加严：这几条 clippy 默认不开，但线上事故多半出在这里
 enum_glob_use = "deny"
@@ -246,12 +258,29 @@ self_named_module_files = "warn"
 str_to_string = "warn"
 # 只是想读一个文件却手写 File::open + read_to_string 的绕远路写法
 verbose_file_reads = "warn"
+# 和上面的 todo 成对，unimplemented!() 同样不该进主干
+unimplemented = "warn"
+# 优先用 #[expect(...)] 而不是 #[allow(...)]。区别是 expect 在「这条 lint 已经不再
+# 触发」时会反过来提醒你把它删掉，于是压制项不会随着代码演进悄悄沉淀成一堆死配置。
+# （需要 Rust 1.81+，本模板的 MSRV 高于它。）
+# 确实只能用 allow 的场合（比如压制的是条件编译下才出现的 lint），
+# 在那一处写 #[allow(clippy::allow_attributes)] 并说明原因。
+allow_attributes = "warn"
 
 # 降噪：pedantic 里在业务代码中收益不高的几条。按需删掉即可恢复检查。
 module_name_repetitions = "allow"
 must_use_candidate = "allow"
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
+
+# 降噪：cargo 组里这两条在本模板的默认状态下必然误伤，各有对应的替代手段。
+#
+# 这条要求 keywords / categories 齐全，而模板里这两项默认是注释着的（见 [package]）。
+# 真要发布到 crates.io 时，把那两行填好，再把这里改成 "warn"。
+cargo_common_metadata = "allow"
+# 同一个 crate 出现多个版本。依赖一多几乎必然发生，而且多半不由你决定；
+# 这件事交给 deny.toml 的 [bans] multiple-versions 管，那边能逐个豁免并写明原因。
+multiple_crate_versions = "allow"
 
 # 测试里用 unwrap/expect/panic 是常态，由 clippy.toml 的 allow-*-in-tests 统一放行，
 # 不需要再在源码里写 #![cfg_attr(test, allow(clippy::unwrap_used))]。
@@ -261,6 +290,8 @@ missing_panics_doc = "allow"
 # 和编辑器里同样生效。
 [workspace.lints.rustdoc]
 broken_intra_doc_links = "deny"
+# 没有 //! 头注释的 crate，在 docs.rs 上打开就是一片空白
+missing_crate_level_docs = "warn"
 private_intra_doc_links = "warn"
 invalid_html_tags = "warn"
 bare_urls = "warn"

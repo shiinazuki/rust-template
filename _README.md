@@ -20,7 +20,7 @@ git add -A && git commit -m "chore: 从模板初始化项目"   # 生成器只�
 
 just doctor          # 体检：工具链组件与配套工具是否齐全（会告诉你缺什么、怎么装）
 just install-tools   # 安装配套 cargo 工具（首次）
-just hooks           # 安装 git 钩子（首次，需要先装 pre-commit）
+just bootstrap       # 生成 Cargo.lock + 安装 git 钩子（首次）
 just ci              # 跑一遍完整检查，确认环境就绪
 just dev             # 开始写代码：bacon 盯着文件变化实时重跑 clippy
 ```
@@ -179,6 +179,7 @@ VS Code 的 Dev Containers 插件或 GitHub Codespaces 可以直接用，
 ```bash
 just                    # 列出所有命令
 just doctor             # 环境体检
+just bootstrap          # 首次拉起：生成 Cargo.lock + 安装 git 钩子
 just check              # 快速检查编译
 just run -- --help      # 运行程序（仅 bin 项目），-- 后的参数透传给程序
 just fmt                # 格式化 .rs（nightly rustfmt）与 .toml（taplo）
@@ -197,6 +198,7 @@ just audit              # cargo deny check
 just hack               # feature 幂集检查
 just msrv               # 验证 MSRV 能编译（nightly 项目自动转去跑 nll）
 just nll                # 用 stable 的借用检查器编一遍（仅 nightly 项目有意义）
+just miri               # 在解释器里跑测试检测未定义行为（仅 nightly，有 tokio 时自动跳过）
 just ci                 # 本地跑一遍 CI 的主要检查（lint / test / audit）
 
 just unused             # 找出没用到的依赖（cargo-machete）
@@ -220,19 +222,26 @@ just docker-inspect     # 用 dive 看分层体积
 just docker-scan        # 用 trivy 扫已知漏洞
 just docker-clean       # 删除本地镜像
 ```
+
+镜像里的二进制是用 [cargo-auditable](https://github.com/rust-secure-code/cargo-auditable)
+构建的：依赖清单（名字 + 版本）被编进二进制的一个专用 section，于是
+`just docker-scan` 的 trivy、以及 `cargo audit bin <二进制>` 都能直接对着**产物**查 CVE。
+没有它，trivy 扫这个镜像只看得到 distroless 基础层，你自己那一整棵 Rust 依赖树对它完全隐形。
+体积代价约 1%，运行时零开销；不需要就把 `Dockerfile` 里那一层删掉。
 {% endif %}
 `just ci` 包含 `lint` / `test` / `audit` 三项。其中 `lint` 和 CI 的 lint job 严格对齐，
 **含 `cargo doc` 的文档警告检查**——`[workspace.lints.rustdoc]` 里 `bare_urls`、
 `invalid_html_tags` 这些都只是 `warn`，本地不跑 `cargo doc` 就看不见，
 推上去才会在 CI 的 `RUSTDOCFLAGS="-D warnings"` 上挂掉。
 
-`unused`、`semver`、`hack`、`msrv`、`nll` 刻意留在外面手动跑：第一个对宏里用到的依赖会误报，
+`unused`、`semver`、`hack`、`msrv`、`nll`、`miri` 刻意留在外面手动跑：第一个对宏里用到的依赖会误报，
 第二个需要和已发布版本联网比对，第三个要额外装 cargo-hack、feature 多起来还会变慢，
 第四个会 `rustup toolchain install` 往你机器上装一整条工具链，
-第五个换了 `RUSTFLAGS` 等于一次全量重编——都不适合塞进「随手跑一下」的命令里。
+第五个换了 `RUSTFLAGS` 等于一次全量重编，第六个比原生慢一到两个数量级——
+都不适合塞进「随手跑一下」的命令里。
 
-其中 `hack` / `msrv`（nightly 项目上即 `nll`）在两套 CI 里都有对应的 job，`semver` 只有 GitHub 那套有
-（它只对纯库项目生效）。`unused` 刻意**没有**进任何 CI：误报率高的检查一旦当上门禁，
+除 `unused` 外，它们在两套 CI 里都有对应的 job（`semver` 只对纯库项目生效，
+`miri` 只在 nightly 上跑）。`unused` 刻意**没有**进任何 CI：误报率高的检查一旦当上门禁，
 结果只会是所有人都学会忽略它。需要时手动跑 `just unused`。
 
 ## 工程结构
@@ -272,7 +281,9 @@ just docker-clean       # 删除本地镜像
 
 ⚠️ 这条禁令**不区分 async 上下文**：clippy 看不出一处调用是不是在 `async fn` 里，
 所以同步代码、测试、`build.rs` 里的 `std::fs` 一样会被拦。
-确有必要时在那一处写 `#[allow(clippy::disallowed_types)]` 并说明原因。
+确有必要时在那一处写 `#[expect(clippy::disallowed_types, reason = "...")]` 说明原因——
+用 `expect` 而不是 `allow` 是本模板的约定（`clippy::allow_attributes` 在盯着）：
+等哪天那处代码改掉、lint 不再触发时，`expect` 会反过来提醒你把压制项删掉。
 {% endif %}{% if error_handling %}
 ### 错误处理
 {% if crate_type == "lib" %}
@@ -330,13 +341,14 @@ just docker-clean       # 删除本地镜像
 | [`docker.just`](docker.just) | 容器相关命令（被 justfile 可选 import） |
 | [`Dockerfile`](Dockerfile) | 多阶段构建 + distroless 运行镜像 |{% endif %}
 | [`.config/nextest.toml`](.config/nextest.toml) | 测试运行器配置（含 CI 专用 profile 与测试分组示例） |
+| [`.cargo/config.toml`](.cargo/config.toml) | cargo 项目级配置：网络重试、链接器 / 并行前端 / 镜像源的开关都收在这里 |
 | [`.pre-commit-config.yaml`](.pre-commit-config.yaml) | Git 钩子（pre-commit / commit-msg / pre-push） |
 | [`.editorconfig`](.editorconfig) | 跨编辑器的基础排版约定 |
 | [`.gitattributes`](.gitattributes) | 入库换行统一、二进制标记、`Cargo.lock` 折叠 |
 | [`.devcontainer/`](.devcontainer/) | Dev Container / Codespaces 配置 |{% if ci == "github" %}
 | [`.github/workflows/`](.github/workflows/) | CI（build / release / audit） |
 | [`.github/dependabot.yml`](.github/dependabot.yml) | 依赖自动升级：cargo / actions{% if docker and crate_type == "bin" %} / docker 基础镜像{% endif %} |{% endif %}{% if ci == "gitlab" %}
-| [`.gitlab-ci.yml`](.gitlab-ci.yml) | GitLab CI：lint / test / deny / hack / msrv + tag 触发 release |{% endif %}
+| [`.gitlab-ci.yml`](.gitlab-ci.yml) | GitLab CI：lint / test / deny / hack / msrv / semver / miri + tag 触发 release |{% endif %}
 {% if ci == "github" %}
 ## CI
 
@@ -362,7 +374,10 @@ just docker-clean       # 删除本地镜像
 - **verify** —— 把 tag 指向的 commit 从零验证一遍，并核对 tag 与 `Cargo.toml` 版本一致
 - **github-release** —— git-cliff 生成变更说明并创建 Release
 - **binaries** —— 五个目标平台（Linux musl x64/arm64、macOS x64/arm64、Windows x64）
-  交叉编译、打包、生成 sha256 并挂到 Release 上（仅 bin 项目）
+  交叉编译、打包、生成 sha256 并挂到 Release 上（仅 bin 项目）。
+  再往上一层是**构建来源证明**（SLSA provenance，Sigstore 签名，`gh attestation verify` 可验）：
+  校验和只能证明「文件没被改过」，证明回答的是「它是谁造的」——**默认关闭**，
+  需要在仓库 Variables 里加 `ATTEST_BUILD_PROVENANCE=true`（私有仓库需要 GitHub Enterprise）
 - **crates-io** —— 用 crates.io 的 Trusted Publishing（OIDC，无需长期 token）发布，
   **默认关闭**，需要在仓库 Variables 里加 `PUBLISH_TO_CRATES_IO=true`
 
@@ -393,6 +408,8 @@ just docker-clean       # 删除本地镜像
 - **hack** —— feature 幂集检查
 - **msrv** —— 用声明的最低版本编译一遍；nightly 项目改成用 `-Zpolonius=off` 编一遍，
   拦下只有新借用检查器才编得过的代码
+- **semver** —— 以上一个 tag 为基线检查公开 API 破坏性变更（仅**纯库**项目，没有 tag 时跳过）
+- **miri** —— 在解释器里跑测试检测未定义行为（**仅 nightly**，检测到 tokio 时自动跳过）
 
 打 `v*` tag 时额外跑 **verify-tag**（从零验证 + 核对版本号）、**changelog**、
 **build-binary**、**release**。

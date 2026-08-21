@@ -226,6 +226,34 @@ nll:
     CARGO_TARGET_DIR=target/nll RUSTFLAGS=-Zpolonius=off \
         cargo check --locked --all-targets --all-features
 
+# CI 的 miri job 在本地的等价物：在解释器里跑测试，检测未定义行为（越界、悬垂指针、
+# 数据竞争、对齐错误）。本模板默认 `unsafe_code = "forbid"`，你自己的代码里跑不出 UB，
+# 它的价值在于**依赖里的 unsafe** 也会被一并检查到。
+#
+# 判断条件和 CI 完全一致：只在 nightly 上可用；检测到 tokio 就跳过（起 runtime 要 epoll，
+# miri 不支持这类系统调用，留着只会得到一个永远红着的检查）。
+# 刻意不放进 `just ci`：miri 比原生慢一到两个数量级，不适合塞进随手跑的命令。
+[group('check')]
+[doc('在 miri 解释器里跑测试检测未定义行为（仅 nightly；有 tokio 时自动跳过）')]
+miri:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    channel=$(grep -m1 '^channel' rust-toolchain.toml | sed -E 's/.*"([^"]+)".*/\1/')
+    if [ "${channel#nightly}" = "$channel" ]; then
+        echo "工具链是 ${channel}：miri 仅 nightly 可用，跳过"
+        exit 0
+    fi
+    if grep -qE '^[[:space:]]*tokio[[:space:]]*=' Cargo.toml; then
+        echo "检测到 tokio：miri 不支持 epoll 等系统调用，跳过"
+        exit 0
+    fi
+    # --allow-downgrade：miri 组件偶尔会在某天的 nightly 里缺席，有了它 rustup 会
+    # 自动退回到最近一个带 miri 的 nightly，而不是直接失败。
+    rustup toolchain install nightly --allow-downgrade --profile minimal --component miri,rust-src
+    cargo +nightly miri setup
+    # -Zmiri-disable-isolation：允许测试读时钟 / 环境变量，否则很多测试直接报错
+    MIRIFLAGS=-Zmiri-disable-isolation cargo +nightly miri test --locked --all-features
+
 # 覆盖 CI 里的 lint / test / deny 三个 job。
 # 刻意不含 hack / msrv / nll：第一个要装 cargo-hack，第二个会 `rustup toolchain install`
 # 往你机器上装一整条工具链，第三个换了 RUSTFLAGS 等于一次全量重编，
@@ -314,6 +342,28 @@ release-execute level="patch":
 # ---------------------------------------------------------------------------
 # 初始化
 # ---------------------------------------------------------------------------
+
+# 刚 `cargo generate` 出来之后跑的第一条命令。
+#
+# 为什么要单独有它：模板自带的 Cargo.lock 只锁了根 crate 一个包，一旦生成时选了
+# 带依赖的开关（tokio / tracing / thiserror / anyhow），那份 lock 就对不上，
+# post-script 会主动删掉它。而 CI 与 Dockerfile 全程用 `--locked`——
+# 没有 lock 就会在第一次推送时失败，报错信息离「你选了哪个开关」很远。
+[group('setup')]
+[doc('首次拉起项目：生成 Cargo.lock、安装 pre-commit 钩子')]
+bootstrap:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # cargo fetch 只解析依赖树并下载，不编译，是生成 Cargo.lock 最快的方式
+    cargo fetch
+    echo "✓ Cargo.lock 已就绪"
+    if command -v pre-commit >/dev/null 2>&1; then
+        pre-commit install --install-hooks
+    else
+        echo "- 未装 pre-commit，跳过钩子（pipx install pre-commit 之后跑 just hooks 补上）"
+    fi
+    echo ""
+    echo "接下来：just doctor 体检工具链，just ci 走一遍完整检查。"
 
 [group('setup')]
 [doc('体检：检查工具链组件与配套 cargo 工具是否齐全，并给出补装命令')]

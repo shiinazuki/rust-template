@@ -6,7 +6,10 @@
 //! 2. **日志走 stderr**，stdout 留给程序真正的输出，管道和重定向才不会串味；
 //! 3. **`RUST_LOG` 没设、设成空串、或写成非法指令时退回 `default_level`**，
 //!    而不是得到一个「进程正常启动、却一条日志都不打」的空 filter；
-//! 4. **`RUST_LOG` 把级别名拼错时会给一句提示**——这一类 `EnvFilter` 拦不住，见下面。
+//! 4. **`RUST_LOG` 把级别名拼错时会给一句提示**——这一类 `EnvFilter` 拦不住，见下面；
+//! 5. **颜色只在 stderr 真的是终端时才开**，见 [`ansi_enabled`]。
+
+use std::io::IsTerminal as _;
 
 use tracing_subscriber::{EnvFilter, filter::LevelFilter};
 
@@ -37,8 +40,24 @@ pub(crate) fn init(default_level: &str) {
     tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_writer(std::io::stderr)
+        .with_ansi(ansi_enabled())
         .with_target(true)
         .init();
+}
+
+/// 该不该给日志上色。
+///
+/// `tracing_subscriber::fmt` 默认**恒开** ANSI，它不看 stderr 是不是终端。于是
+/// `prog 2> app.log`、systemd / docker 收走的日志、CI 的构建日志里都会混进一堆
+/// `\x1b[2m` 转义序列——肉眼读着别扭，grep 和日志采集还得先清洗一遍。
+///
+/// 两个条件都满足才上色：
+///
+/// - stderr 是终端；
+/// - 没有设 `NO_COLOR`（<https://no-color.org> 那个跨语言约定，设成任何非空值即生效）。
+fn ansi_enabled() -> bool {
+    let disabled_by_env = std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty());
+    !disabled_by_env && std::io::stderr().is_terminal()
 }
 
 /// 提醒一种上面那层默认指令**兜不住**的写法：把级别名拼错。

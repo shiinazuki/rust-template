@@ -24,16 +24,28 @@ WORKDIR /build
 COPY rust-toolchain.toml ./
 RUN rustup show active-toolchain || rustup toolchain install
 
+# cargo-auditable 把「用了哪些依赖、各是什么版本」编进二进制的一个专用 section，
+# 之后可以直接对着**产物**查 CVE，不必回头找当时的源码和 Cargo.lock：
+#     cargo audit bin /app/{{ project-name }}
+# `just docker-scan` 用的 trivy 也认这份数据——没有它，trivy 扫这个镜像只能看到
+# distroless 基础层，你自己那一整棵 Rust 依赖树对它是完全隐形的。
+# 体积代价约 1%，运行时零开销。
+#
+# 这一层放在 COPY . . 之前：只要基础镜像不变，改代码不会重装它。
+# 不需要的话把这一层删掉，并把下面的 `cargo auditable build` 改回 `cargo build`。
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    cargo install --locked cargo-auditable
+
 COPY . .
 
 # --locked 要求仓库里有一份最新的 Cargo.lock。刚生成完项目还没跑过 cargo 时它可能
-# 不存在（选了依赖开关的话模板会主动删掉过期的那份），先在宿主机 `cargo check` 一次。
+# 不存在（选了依赖开关的话模板会主动删掉过期的那份），先在宿主机跑一次 `just bootstrap`。
 #
 # cp 必须和 cargo build 在同一个 RUN 里：cache mount 挂载的 /build/target
 # 在这条 RUN 结束后就消失了，下一条指令是看不到它的。
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/build/target,sharing=locked \
-    cargo build --release --locked \
+    cargo auditable build --release --locked \
     && cp target/release/{{ project-name }} /build/app
 
 # ---------------------------------------------------------------------------

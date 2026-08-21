@@ -1,7 +1,7 @@
 # GitLab CI —— 与 .github/workflows/ 等价的一套流水线。
 # 生成项目时选 `ci = gitlab` 才会保留本文件（选 github 则保留 .github/）。
 #
-# 结构：lint / test / deny / hack 四个 job 并行，msrv 视工具链走 MSRV / NLL 两条路之一，
+# 结构：lint / test / deny / hack / semver / miri 并行，msrv 视工具链走 MSRV / NLL 两条路之一，
 #       打 v* tag 时额外跑 release（先从零验证一遍，再建 Release）。
 
 stages:
@@ -210,6 +210,67 @@ msrv:
       echo "MSRV = $version"
       rustup toolchain install "$version" --profile minimal
       cargo "+$version" check --locked --all-targets --all-features
+
+# ---------------------------------------------------------------------------
+# 公开 API 的破坏性变更检查（只对**纯库**项目有意义，与 GitHub 那套的 semver job 对齐）。
+# 以「上一个 v* tag」为基线：加了 pub 字段、改了函数签名、删了导出项都会被指出来，
+# 并告诉你这次该抬 minor 还是 major。仓库还没打过 tag 时自动跳过。
+#
+# ⚠️ 判断条件是「有 src/lib.rs 且**没有** src/main.rs」：bin 项目同样有 lib target，
+#    但那是给自己的 main.rs 和集成测试用的内部库，不对外承诺 API，
+#    改签名不该被判成破坏性变更。要同时对外发布库和命令行时，把 main.rs 那半条删掉。
+# ---------------------------------------------------------------------------
+semver:
+  stage: check
+  extends:
+    - .cargo-cache
+    - .rust-setup
+  variables:
+    GIT_DEPTH: 0 # 需要完整历史才能找到上一个 tag
+  script:
+    - |
+      if [ ! -f src/lib.rs ] || [ -f src/main.rs ]; then
+        echo "不是纯库项目，跳过 semver 检查"; exit 0
+      fi
+      if ! tag=$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null); then
+        echo "仓库还没有 v* tag，跳过 semver 检查"; exit 0
+      fi
+      echo "基线版本：$tag"
+      install_tools cargo-semver-checks
+      cargo semver-checks --baseline-rev "$tag"
+
+# ---------------------------------------------------------------------------
+# Miri：在解释器里跑测试，检测未定义行为（越界、悬垂指针、数据竞争、对齐错误）。
+#
+# 本模板默认 `unsafe_code = "forbid"`，你自己的代码里跑不出 UB；它的价值在于
+# **依赖里的 unsafe** 也会被一并检查到。
+#
+# ⚠️ 仅 nightly 可用，工具链是 stable 时整个 job 自动跳过。
+#    检测到 tokio 也跳过：起 runtime 就要 epoll，而 miri 不支持这类系统调用，
+#    留着只会得到一个永远红着、谁也不看的 job。
+#    项目一旦引入 C 依赖或做真实 IO，这个 job 会失败——那时直接删掉它即可。
+#    本地等价命令：`just miri`。
+# ---------------------------------------------------------------------------
+miri:
+  stage: check
+  extends:
+    - .cargo-cache
+    - .rust-setup
+  script:
+    - |
+      channel=$(grep -m1 '^channel' rust-toolchain.toml | sed -E 's/.*"([^"]+)".*/\1/')
+      if [ "${channel#nightly}" = "$channel" ]; then
+        echo "工具链是 ${channel}：miri 仅 nightly 可用，跳过"; exit 0
+      fi
+      if grep -qE '^[[:space:]]*tokio[[:space:]]*=' Cargo.toml; then
+        echo "检测到 tokio：miri 不支持 epoll 等系统调用，跳过"; exit 0
+      fi
+      # --allow-downgrade：miri 组件偶尔会在某天的 nightly 里缺席，
+      # 有了它 rustup 会自动退回到最近一个带 miri 的 nightly，而不是直接失败。
+      rustup toolchain install nightly --allow-downgrade --profile minimal --component miri,rust-src
+      cargo +nightly miri setup
+      # -Zmiri-disable-isolation：允许测试读时钟 / 环境变量，否则很多测试直接报错
+      MIRIFLAGS=-Zmiri-disable-isolation cargo +nightly miri test --locked --all-features
 
 # ---------------------------------------------------------------------------
 # 以下只在 v* tag 上跑

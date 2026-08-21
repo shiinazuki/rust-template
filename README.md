@@ -200,14 +200,15 @@ cargo add clap --features derive,env
 | `docker.just` | 容器命令，可选生成 |
 | `Dockerfile` / `.dockerignore` | 多阶段构建 + distroless 运行镜像，可选生成 |
 | `.config/nextest.toml` | 测试运行器配置（CI profile + 测试分组示例） |
+| `.cargo/config.toml` | cargo 项目级配置：网络重试、链接器 / 并行前端 / 镜像源的开关 |
 | `.pre-commit-config.yaml` | Git 钩子（pre-commit / commit-msg / pre-push） |
 | `.devcontainer/` | Dev Container / Codespaces 配置 |
 | `.editorconfig` / `.gitattributes` / `.gitignore` | 编辑器与 git 的基础约定 |
 | `.github/workflows/build.yaml` | CI：lint / test / deny / workflows / msrv（nightly 项目上改跑 nll）/ hack / semver / miri |
-| `.github/workflows/release.yaml` | tag 触发：验证 → Release → 跨平台二进制 → crates.io |
+| `.github/workflows/release.yaml` | tag 触发：验证 → Release → 跨平台二进制（可选 SLSA provenance）→ crates.io |
 | `.github/workflows/audit.yaml` | 每日定时依赖安全审计 |
 | `.github/dependabot.yml` | cargo / actions 依赖的自动升级（选了 Docker 时再加 docker 一类） |
-| `.gitlab-ci.yml` | GitLab CI 的等价流水线，可选生成 |
+| `.gitlab-ci.yml` | GitLab CI 的等价流水线（lint / test / deny / hack / msrv / semver / miri），可选生成 |
 
 只属于模板仓库、**不会**进入生成项目的文件（在 `cargo-generate.toml` 的 `ignore` 里）：
 

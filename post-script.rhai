@@ -125,7 +125,7 @@ if owner_path_on_github {
 
 if lock_regenerated {
     print("提示：因为加了依赖，模板自带的 Cargo.lock 已删除（它只锁了根 crate 一个包）。");
-    print("      先跑一次 `cargo check` 重新生成，再连同代码一起提交——");
+    print("      先跑一次 `just bootstrap`（等价于 cargo fetch）重新生成，再连同代码一起提交——");
     print("      CI 全程用 --locked，没有 lock 会直接失败。");
     if docker_generated {
         print("      `just docker-build` 同理：容器里的构建也是 --locked。");
@@ -142,7 +142,7 @@ print("    git commit -m \"chore: 从模板初始化项目\"");
 print("");
 print("    just doctor          # 体检：工具链组件与配套 cargo 工具是否齐全");
 print("    just install-tools   # 安装配套 cargo 工具（首次，建议先装 cargo-binstall 提速）");
-print("    just hooks           # 安装 git 钩子（首次，需要先装 pre-commit）");
+print("    just bootstrap       # 生成 Cargo.lock + 安装 git 钩子（首次）");
 print("    just ci              # 跑一遍完整检查，确认环境就绪");
 if docker_generated {
     print("    just docker-build    # 构建容器镜像");
