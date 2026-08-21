@@ -175,18 +175,19 @@ semver:
     fi
     cargo semver-checks
 
-# nightly 项目自动跳过：可能用了 #![feature(...)]，在 stable 上必然编不过，
-# 检查没有意义。判断依据是 rust-toolchain.toml 的 channel，和 CI 里的逻辑一致。
+# nightly 项目上 MSRV 检查不适用（可能用了 #![feature(...)]，在 stable 上必然编不过），
+# 自动转去跑 `just nll`——那才是 nightly 项目真正需要的那道兜底。
+# 判断依据是 rust-toolchain.toml 的 channel，和 CI 里的逻辑一致。
 [group('check')]
-[doc('验证 Cargo.toml 里声明的 MSRV 真的能编译（nightly 项目自动跳过）')]
+[doc('验证 Cargo.toml 里声明的 MSRV 真的能编译（nightly 项目改跑 nll）')]
 msrv:
     #!/usr/bin/env bash
     set -euo pipefail
     channel=$(grep -m1 '^channel' rust-toolchain.toml | sed -E 's/.*"([^"]+)".*/\1/')
     version=$(grep -m1 '^rust-version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/' || true)
     if [ "${channel#nightly}" != "$channel" ]; then
-        echo "工具链是 ${channel}，跳过 MSRV 检查"
-        exit 0
+        echo "工具链是 ${channel}：MSRV 检查不适用，改跑 NLL 兜底检查"
+        exec just nll
     fi
     if [ -z "$version" ]; then
         echo "Cargo.toml 里没有 rust-version，跳过 MSRV 检查"
@@ -196,10 +197,40 @@ msrv:
     rustup toolchain install "$version" --profile minimal
     cargo "+$version" check --locked --all-targets --all-features
 
+# 2026-08-04 起 nightly 默认启用了新一代借用检查器 Polonius，它比 stable 的 NLL
+# 接受更多合法程序（最典型的是「条件返回一个借用，之后再可变借用同一个值」这类写法）。
+#
+# ⚠️ 麻烦在于这个差异**没有任何显式标记**：不像 #![feature(...)] 那样一眼可见，
+#    没有属性、没有 lint、连 warning 都没有。于是在 nightly 上很容易写出一段
+#    stable 编不过的代码而毫无察觉，Cargo.toml 里的 rust-version 却还写着老版本——
+#    发库的话是下游用户先撞上，不发的话就是哪天想切回 stable 时才发现欠了一堆债。
+#
+# 这条配方用同一条 nightly 编译，只把借用检查器换回 stable 那套，把这类代码就地拦下。
+# 刻意不放进 `just ci`：RUSTFLAGS 一变就是一次全量重编，不适合塞进随手跑的命令；
+# CI 的 msrv job 每次都会跑它，本地在动了生命周期相关的代码之后手动跑一次就够。
+# 等 Polonius 进了 stable（官方计划 2026 年底），这条配方连同注释一起删掉即可。
+[group('check')]
+[doc('用 stable 的借用检查器（NLL）编一遍，拦下只有 nightly 编得过的代码')]
+nll:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    channel=$(grep -m1 '^channel' rust-toolchain.toml | sed -E 's/.*"([^"]+)".*/\1/')
+    if [ "${channel#nightly}" = "$channel" ]; then
+        echo "工具链是 ${channel}，本来用的就是 NLL，无需检查"
+        exit 0
+    fi
+    # 换个 target 目录：RUSTFLAGS 一变，产物就和平时 `just check` 的 target/ 互不通用，
+    # 混在一起会让两边反复全量重编。
+    # ⚠️ RUSTFLAGS 是整体**覆盖** .cargo/config.toml 里的 rustflags，不是追加；
+    #    以后在那边加了编译参数，记得同步到这一行。
+    CARGO_TARGET_DIR=target/nll RUSTFLAGS=-Zpolonius=off \
+        cargo check --locked --all-targets --all-features
+
 # 覆盖 CI 里的 lint / test / deny 三个 job。
-# 刻意不含 hack 与 msrv：前者要装 cargo-hack，后者会 `rustup toolchain install`
-# 往你机器上装一整条工具链，都不适合塞进「随手跑一下」的命令里。
-# 它们各自是独立配方（just hack / just msrv），CI 上照常会跑。
+# 刻意不含 hack / msrv / nll：第一个要装 cargo-hack，第二个会 `rustup toolchain install`
+# 往你机器上装一整条工具链，第三个换了 RUSTFLAGS 等于一次全量重编，
+# 都不适合塞进「随手跑一下」的命令里。
+# 它们各自是独立配方（just hack / just msrv / just nll），CI 上照常会跑。
 [group('check')]
 [doc('本地跑一遍 CI 的主要检查（lint / test / audit）')]
 ci: lint test audit

@@ -257,50 +257,79 @@ jobs:
       - name: Lint GitHub Actions workflows
         run: actionlint -color
 
-  # 验证 Cargo.toml 里声明的 MSRV 确实能编译，避免用了新版本才有的 API 却没改 rust-version。
+  # 「这份代码在比当前工具链更保守的环境里也编得过吗」——按 rust-toolchain.toml 的
+  # channel 分两条路走，判断依据在 job 内部读文件，以后换工具链不用改这里。
   #
-  # 项目跑在 nightly 上时自动跳过：nightly 项目可能用 #![feature(...)]，
-  # 这类代码在任何 stable 上都编不过（E0554），MSRV 检查没有意义。
-  # 判断依据是 rust-toolchain.toml 里的 channel，所以以后换工具链不用再改这里。
+  #   stable  → 装上 Cargo.toml 里 rust-version 声明的那个版本原样 check 一遍，
+  #             避免用了新版本才有的 API 却忘了抬 rust-version。
+  #   nightly → MSRV 检查没有意义（nightly 项目可能用 #![feature(...)]，那类代码在
+  #             任何 stable 上都编不过，E0554），改跑一次「借用检查器兜底」：
+  #             还是同一条 nightly，只把借用检查器换回 stable 那套。
+  #
+  # ⚠️ nightly 为什么非补这一步不可：2026-08-04 起 nightly 默认启用了新一代借用检查器
+  #    Polonius，它比 stable 的 NLL 接受更多合法程序（最典型的是「条件返回一个借用，
+  #    之后再可变借用同一个值」这类写法）。和 #![feature(...)] 不同的是，这个差异
+  #    **没有任何显式标记**——没有属性、没有 lint、连 warning 都没有。于是很容易写出
+  #    一段 nightly 编得过、stable 编不过的代码，而 Cargo.toml 里的 rust-version 依旧
+  #    写着一个早期版本：发到 crates.io 是下游用户先撞上，不发布的话就是哪天想切回
+  #    stable 时才发现欠了一堆还不清的债。`-Zpolonius=off` 让 nightly 用回 NLL，
+  #    把这类代码在 CI 上就地拦下。
+  #    等 Polonius 进了 stable（官方计划 2026 年底），这一步连同注释一起删掉即可。
   msrv:
-    name: msrv
+    name: msrv / nll
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Resolve MSRV
+      - name: Decide what to check
         id: msrv
         run: |
           channel=$(grep -m1 '^channel' rust-toolchain.toml | sed -E 's/.*"([^"]+)".*/\1/')
           version=$(grep -m1 '^rust-version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')
           if [ "${channel#nightly}" != "$channel" ]; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "工具链是 ${channel}，跳过 MSRV 检查"
+            mode=nll
+            echo "工具链是 ${channel}：MSRV 检查不适用，改跑 NLL 兜底检查"
           elif [ -z "$version" ]; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
+            mode=skip
             echo "Cargo.toml 里没有 rust-version，跳过 MSRV 检查"
           else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
+            mode=msrv
             echo "version=$version" >> "$GITHUB_OUTPUT"
             echo "MSRV = $version"
           fi
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
       # ⚠️ 这里用 env 把 step 输出接进来，而不是直接在 run: 里写 ${{ ... }}。
       #    后者会被 Actions 在执行前做字符串替换，等于把外部内容拼进 shell 脚本
       #    （脚本注入）。哪怕这里的值来自自家文件，也保持同一套写法更省心。
       - name: Install Rust toolchain
-        if: steps.msrv.outputs.skip == 'false'
+        if: steps.msrv.outputs.mode == 'msrv'
         env:
           MSRV: ${{ steps.msrv.outputs.version }}
         run: rustup toolchain install "$MSRV" --profile minimal
+      - name: Install Rust (版本由 rust-toolchain.toml 固定)
+        if: steps.msrv.outputs.mode == 'nll'
+        run: rustup show active-toolchain || rustup toolchain install
+      # key 带上 mode：两条路的工具链与 RUSTFLAGS 都不同，编译产物互不通用，
+      # 共用一个 cache key 只会让两边反复把对方的缓存挤掉。
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        if: steps.msrv.outputs.skip == 'false'
+        if: steps.msrv.outputs.mode != 'skip'
+        with:
+          key: ${{ steps.msrv.outputs.mode }}
       - name: Check with MSRV toolchain
-        if: steps.msrv.outputs.skip == 'false'
+        if: steps.msrv.outputs.mode == 'msrv'
         env:
           MSRV: ${{ steps.msrv.outputs.version }}
         run: cargo "+$MSRV" check --locked --all-targets --all-features
+      # 本地等价命令：`just nll`
+      - name: Check with the stable borrow checker (NLL)
+        if: steps.msrv.outputs.mode == 'nll'
+        env:
+          # ⚠️ RUSTFLAGS 是整体**覆盖** .cargo/config.toml 里的 rustflags，不是追加。
+          #    以后在那边加了编译参数，记得同步到这一行，否则这次 check 用的是另一套配置。
+          RUSTFLAGS: -Zpolonius=off
+        run: cargo check --locked --all-targets --all-features
 
   # 特性组合检查：只跑 `--all-features` 会漏掉「单独开启某个 feature 编不过」这类问题，
   # 而使用者恰恰可能只开其中一个。cargo-hack 把 [features] 的幂集逐个 check 一遍。

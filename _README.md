@@ -84,11 +84,42 @@ lint 让 CI 的 `-D warnings` 突然挂掉。前者用 `rustup toolchain install
 
 `Cargo.toml` 里的 `rust-version` 声明了最低支持版本。它**只是下限，不限制上限**，
 用更新的 stable 或 nightly 编译都没问题。
+{% if toolchain == "stable" %}
+`just msrv` 和 CI 的 msrv job 会真的用那个版本编译一遍来验证声明属实。
+{% else %}
+`just msrv` 和 CI 的 msrv job 本来会用那个版本编译一遍验证声明属实，但 nightly 项目上
+这项检查不适用——代码里可能有 `#![feature(...)]`，那种写法在任何 stable 上都编不过。
+它们会自动转去跑 `just nll`，那才是 nightly 项目真正需要的那道兜底。
 
-`just msrv` 和 CI 的 msrv job 会真的用那个版本编译一遍来验证声明属实；
-但如果 `rust-toolchain.toml` 的 channel 是 nightly，这项检查会**自动跳过**——
-nightly 项目可能用了 `#![feature(...)]`，那种代码在任何 stable 上都编不过，检查没有意义。
+### nightly 的借用检查器比 stable 宽
 
+2026-08-04 起，nightly 默认启用了新一代借用检查器 **Polonius**，它比 stable 的 NLL
+接受更多合法程序。最典型的是「条件返回一个借用，之后再可变借用同一个值」：
+
+```rust
+fn get_or_insert(map: &mut HashMap<u32, String>) -> &String {
+    if let Some(v) = map.get(&22) {
+        return v; // stable 认为这个借用一直活到函数结束
+    }
+    map.insert(22, String::from("hi")); // 于是这里报 E0502
+    &map[&22]
+}
+```
+
+这段代码在 nightly 上编得过，在 stable 上编不过。
+
+麻烦的地方在于**这个差异没有任何显式标记**：不像 `#![feature(...)]` 那样一眼可见，
+它没有属性、没有 lint、连 warning 都没有。于是完全可能在 nightly 上写出一段 stable
+编不过的代码而毫无察觉，而 `Cargo.toml` 里的 `rust-version` 依旧写着一个早期版本——
+发布成库的话是下游用户先撞上，不发布的话就是哪天想切回 stable 时才发现欠了一堆债。
+
+`just nll` 用同一条 nightly 编译，只把借用检查器换回 NLL（`-Zpolonius=off`），
+就地拦下这类代码。CI 的 msrv job 每次都会跑它；本地则在动过生命周期相关的代码之后
+手动跑一次就够——它换了 `RUSTFLAGS`，等于一次全量重编，所以刻意没进 `just ci`。
+
+官方计划 2026 年底把 Polonius 推进 stable。到那时：确实有代码靠它才编得过的话，
+把 `rust-version` 抬到那一版；随后 `just nll`、CI 里对应的 step 和这一节都可以删掉。
+{% endif %}
 ### 配套工具
 
 先装 [just](https://github.com/casey/just)（命令入口，见 [`justfile`](justfile)），
@@ -164,7 +195,8 @@ just coverage           # 生成覆盖率报告 lcov.info
 just coverage-html      # HTML 覆盖率报告并打开
 just audit              # cargo deny check
 just hack               # feature 幂集检查
-just msrv               # 验证 MSRV 能编译
+just msrv               # 验证 MSRV 能编译（nightly 项目自动转去跑 nll）
+just nll                # 用 stable 的借用检查器编一遍（仅 nightly 项目有意义）
 just ci                 # 本地跑一遍 CI 的主要检查（lint / test / audit）
 
 just unused             # 找出没用到的依赖（cargo-machete）
@@ -194,12 +226,12 @@ just docker-clean       # 删除本地镜像
 `invalid_html_tags` 这些都只是 `warn`，本地不跑 `cargo doc` 就看不见，
 推上去才会在 CI 的 `RUSTDOCFLAGS="-D warnings"` 上挂掉。
 
-`unused`、`semver`、`hack`、`msrv` 刻意留在外面手动跑：第一个对宏里用到的依赖会误报，
+`unused`、`semver`、`hack`、`msrv`、`nll` 刻意留在外面手动跑：第一个对宏里用到的依赖会误报，
 第二个需要和已发布版本联网比对，第三个要额外装 cargo-hack、feature 多起来还会变慢，
-第四个会 `rustup toolchain install` 往你机器上装一整条工具链——
-都不适合塞进「随手跑一下」的命令里。
+第四个会 `rustup toolchain install` 往你机器上装一整条工具链，
+第五个换了 `RUSTFLAGS` 等于一次全量重编——都不适合塞进「随手跑一下」的命令里。
 
-其中 `hack` / `msrv` 在两套 CI 里都有对应的 job，`semver` 只有 GitHub 那套有
+其中 `hack` / `msrv`（nightly 项目上即 `nll`）在两套 CI 里都有对应的 job，`semver` 只有 GitHub 那套有
 （它只对纯库项目生效）。`unused` 刻意**没有**进任何 CI：误报率高的检查一旦当上门禁，
 结果只会是所有人都学会忽略它。需要时手动跑 `just unused`。
 
@@ -317,7 +349,8 @@ just docker-clean       # 删除本地镜像
 - **workflows** —— 用 [zizmor](https://docs.zizmor.sh/) 审计 workflow 的**安全性**（脚本注入、
   过宽权限、缓存投毒），再用 [actionlint](https://github.com/rhysd/actionlint) 查**正确性**
   （表达式写错、不存在的 job 依赖、`run:` 里的 shell 语法）——两者不重叠
-- **msrv** —— 用 `Cargo.toml` 里声明的最低版本编译一遍（nightly 项目自动跳过）
+- **msrv / nll** —— stable 项目：用 `Cargo.toml` 里声明的最低版本编译一遍；
+  nightly 项目：改用 `-Zpolonius=off` 编一遍，拦下只有新借用检查器才编得过的代码
 - **hack** —— 遍历 feature 幂集，防止「单独开某个 feature 编不过」
 - **semver** —— 以上一个 tag 为基线检查公开 API 破坏性变更（仅**纯库**项目，没有 tag 时跳过；
   二进制项目的 `src/lib.rs` 是自用的内部库，不对外承诺 API）
@@ -358,7 +391,8 @@ just docker-clean       # 删除本地镜像
 - **test** —— `cargo check` + nextest + 覆盖率（MR 页面直接显示百分比）+ JUnit 报告
 - **deny** —— 依赖的安全公告 / License / 重复版本 / 来源
 - **hack** —— feature 幂集检查
-- **msrv** —— 用声明的最低版本编译一遍（nightly 项目自动跳过）
+- **msrv** —— 用声明的最低版本编译一遍；nightly 项目改成用 `-Zpolonius=off` 编一遍，
+  拦下只有新借用检查器才编得过的代码
 
 打 `v*` tag 时额外跑 **verify-tag**（从零验证 + 核对版本号）、**changelog**、
 **build-binary**、**release**。

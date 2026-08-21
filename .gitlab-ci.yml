@@ -1,7 +1,7 @@
 # GitLab CI —— 与 .github/workflows/ 等价的一套流水线。
 # 生成项目时选 `ci = gitlab` 才会保留本文件（选 github 则保留 .github/）。
 #
-# 结构：lint / test / deny / hack 四个 job 并行，msrv 视工具链自动跳过，
+# 结构：lint / test / deny / hack 四个 job 并行，msrv 视工具链走 MSRV / NLL 两条路之一，
 #       打 v* tag 时额外跑 release（先从零验证一遍，再建 Release）。
 
 stages:
@@ -170,9 +170,20 @@ hack:
     - cargo hack --locked --feature-powerset --depth 2 --no-dev-deps check
 
 # ---------------------------------------------------------------------------
-# MSRV：验证 Cargo.toml 里声明的最低版本真的能编译。
-# 工具链是 nightly 时自动跳过（nightly 项目可能用 #![feature(...)]，
-# 那种代码在任何 stable 上都编不过，检查没有意义）。
+# 「这份代码在比当前工具链更保守的环境里也编得过吗」——按 rust-toolchain.toml 的
+# channel 分两条路走（与 GitHub 那套 build.yaml 的 msrv job 一致）：
+#
+#   stable  → 验证 Cargo.toml 里声明的最低版本真的能编译。
+#   nightly → MSRV 检查不适用（nightly 项目可能用 #![feature(...)]，那种代码在任何
+#             stable 上都编不过），改跑一次「借用检查器兜底」：还是同一条 nightly，
+#             只把借用检查器换回 stable 那套。
+#
+# ⚠️ nightly 为什么非补这一步不可：2026-08-04 起 nightly 默认启用了新一代借用检查器
+#    Polonius，它比 stable 的 NLL 接受更多合法程序。和 #![feature(...)] 不同的是，
+#    这个差异**没有任何显式标记**——没有属性、没有 lint、连 warning 都没有，很容易
+#    写出一段只有 nightly 编得过的代码而毫无察觉。`-Zpolonius=off` 让 nightly 用回
+#    NLL，把这类代码就地拦下。等 Polonius 进了 stable（官方计划 2026 年底），
+#    这一步连同注释一起删掉即可。
 # ---------------------------------------------------------------------------
 msrv:
   stage: check
@@ -184,7 +195,14 @@ msrv:
       channel=$(grep -m1 '^channel' rust-toolchain.toml | sed -E 's/.*"([^"]+)".*/\1/')
       version=$(grep -m1 '^rust-version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/' || true)
       if [ "${channel#nightly}" != "$channel" ]; then
-        echo "工具链是 ${channel}，跳过 MSRV 检查"; exit 0
+        echo "工具链是 ${channel}：MSRV 检查不适用，改跑 NLL 兜底检查"
+        # 换个 target 目录：RUSTFLAGS 一变，产物就和其它 job 共用的 target/ 互不通用，
+        # 混在一起只会让两边反复全量重编。放在 target/ 之下仍然被 .cargo-cache 收着。
+        # ⚠️ RUSTFLAGS 是整体**覆盖** .cargo/config.toml 里的 rustflags，不是追加；
+        #    以后在那边加了编译参数，记得同步到这一行。
+        export CARGO_TARGET_DIR=target/nll
+        RUSTFLAGS=-Zpolonius=off cargo check --locked --all-targets --all-features
+        exit 0
       fi
       if [ -z "$version" ]; then
         echo "Cargo.toml 里没有 rust-version，跳过 MSRV 检查"; exit 0

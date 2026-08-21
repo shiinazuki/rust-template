@@ -12,6 +12,18 @@
 #                        某个 nightly 缺少 rustfmt/clippy 组件时也靠它绕过。
 #   "stable"             跟随最新 stable
 #   "1.85.0"             完全锁死到某个具体版本
+#
+# ⚠️ 选 nightly 的话，有一条差异值得先知道：从 2026-08-04 起，nightly 默认启用了
+#    新一代借用检查器 Polonius，它比 stable 的 NLL 接受更多合法程序（最典型的是
+#    「条件返回一个借用，之后再可变借用同一个值」这类写法）。
+#
+#    麻烦的地方在于这个差异没有任何显式标记——不像 #![feature(...)] 一眼可见，
+#    它没有属性、没有 lint、连 warning 都没有。所以在 nightly 上完全可能写出一段
+#    stable 编不过的代码而毫无察觉。本模板的应对是 `just nll` / CI 的 msrv job：
+#    用同一条 nightly 编译但把借用检查器换回 NLL（`-Zpolonius=off`），就地拦下。
+#
+#    钉日期版本时也要留意：nightly-2026-08-03 及更早用的还是 NLL，之后才是 Polonius。
+#    官方计划 2026 年底把 Polonius 推进 stable，到那时上面这套兜底就可以删掉了。
 [toolchain]
 channel = "{{ toolchain }}"
 # profile = "minimal" 只装 rustc / cargo / rust-std，其余按需在这里点名：

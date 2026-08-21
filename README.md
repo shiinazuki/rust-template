@@ -203,7 +203,7 @@ cargo add clap --features derive,env
 | `.pre-commit-config.yaml` | Git 钩子（pre-commit / commit-msg / pre-push） |
 | `.devcontainer/` | Dev Container / Codespaces 配置 |
 | `.editorconfig` / `.gitattributes` / `.gitignore` | 编辑器与 git 的基础约定 |
-| `.github/workflows/build.yaml` | CI：lint / test / deny / workflows / msrv / hack / semver / miri |
+| `.github/workflows/build.yaml` | CI：lint / test / deny / workflows / msrv（nightly 项目上改跑 nll）/ hack / semver / miri |
 | `.github/workflows/release.yaml` | tag 触发：验证 → Release → 跨平台二进制 → crates.io |
 | `.github/workflows/audit.yaml` | 每日定时依赖安全审计 |
 | `.github/dependabot.yml` | cargo / actions 依赖的自动升级（选了 Docker 时再加 docker 一类） |

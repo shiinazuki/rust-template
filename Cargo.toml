@@ -16,7 +16,11 @@ edition = "2024"
 # MSRV（最低支持版本）。它只是下限，不限制上限——用更新的 stable 或 nightly 编译都没问题。
 # 作用：低于它时 cargo 直接报错；resolver 选依赖版本时会避开要求更高 rustc 的版本；
 # clippy 也会读它，不建议你用比 MSRV 更新的 API。
-# `just msrv` 和 CI 的 msrv job 会验证它属实；nightly 项目会自动跳过该检查。
+# `just msrv` 和 CI 的 msrv job 会验证它属实；nightly 项目上改由 `just nll` 兜底
+# （见 rust-toolchain.toml 里关于 Polonius 的说明）。
+#
+# ⚠️ Polonius 进 stable 之后（官方计划 2026 年底），如果有代码是靠新借用检查器才编得过的，
+#    这里的版本号必须跟着抬到那一版——否则声明的 MSRV 就是一句空话。
 rust-version = "1.85"
 license = "{{ license }}"
 # 域名按 ci 选项推导，不要写死 github.com——这个字段会跟着 `cargo publish` 进 crates.io，
