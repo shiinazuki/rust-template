@@ -49,12 +49,29 @@ ignore = [
 #   none       - 关闭检查
 unmaintained = "workspace"
 
+# 依赖被标记为「不健全」（unsound）时的处理级别。取值与 unmaintained 完全同构，
+# 默认就是 workspace——写出来是为了和上面成对，别只配一半。
+unsound = "workspace"
+
 # 用到已被 yank 的版本直接判失败——通常意味着 Cargo.lock 该更新了
 yanked = "deny"
 
-# 公告数据库超过这个时间没更新就报错，防止 CI 拿着几个月前的缓存"检查通过"。
-# 离线构建环境请注释掉。
+# 上面 ignore 列表里的某条公告已经不在依赖图里时给个提醒，免得豁免项越积越多、
+# 谁也不敢删。
+unused-ignored-advisory = "warn"
+
+# ⚠️ 这个字段**只在关闭了公告库拉取时才生效**（--offline / --frozen），
+#    上游文档原话："Only checked when advisory database fetching has been disabled"。
+#    正常 CI 每次都会现拉，走不到这里。它防的是「离线环境拿着一份老 DB 检查通过」，
+#    不是「CI 缓存太旧」——后者该由缓存 key 管。
 maximum-db-staleness = "P7D"
+
+# cargo-deny 0.19.1 起移除了内置的 gix，改成 shell out 调系统 `git` 拉公告库。
+# ⚠️ 也就是说跑 `cargo deny check` 的环境里**必须有 git**。本模板两套 CI 都满足
+#    （GitHub runner 自带；GitLab 的 .rust-setup 里显式 apt-get install git），
+#    精简 CI 镜像时别把它删掉，否则这里会以「拉不到 advisory-db」失败。
+#    设成 true 可以强制走系统 git（私有代理 / 自签证书环境下有用）。
+# git-fetch-with-cli = false
 
 # ---------------------------------------------------------------------------
 # License 合规
@@ -90,6 +107,12 @@ confidence-threshold = 0.8
 # allow 里列了却没有任何依赖用到的 License 不再报 warning。
 # 上面这份清单是"预置"的，项目早期绝大多数都用不上，否则满屏都是噪音。
 unused-allowed-license = "allow"
+# 同上，但针对下面的 exceptions 列表
+unused-license-exception = "allow"
+
+# build-dependencies 是否纳入 License 检查。默认 true，写出来是因为这件事常被误解：
+# build script 会影响最终产物，它的 License 一样算数，不该因为"只在编译期用"就放过。
+include-build = true
 
 # 只对单个 crate 放行的 License（比 allow 更克制）
 exceptions = [
@@ -120,9 +143,16 @@ wildcards = "deny"
 # 但 path / git 依赖用 "*" 是正常写法，放行
 allow-wildcard-paths = true
 
-highlight = "all"
+# 只在用 `cargo deny check bans -g <dir>` 导出 dotgraph 时才有意义：决定重复版本的
+# 依赖路径怎么上色。simplest-path 直接指出最短的那条引入路径，比 "all" 好读。
+highlight = "simplest-path"
 workspace-default-features = "allow"
 external-default-features = "allow"
+
+# 重复版本检查是否把 dev-dependencies 也算进来。默认 false——测试工具链拉进来的
+# 重复版本不会进最终产物，管它没有收益，反而会让 skip / skip-tree 长出一堆
+# 只为测试服务的豁免项。
+multiple-versions-include-dev = false
 
 # 白名单：一旦非空，**只有**列出的 crate 被允许出现在依赖图里。慎用。
 allow = []
@@ -145,6 +175,79 @@ skip-tree = [
   # { crate = "some-crate@1.0", depth = 20 },
 ]
 
+# 给 Cargo.toml 顶部那条约定（版本统一在 [workspace.dependencies] 定，成员只写
+# `foo = { workspace = true }`）上一道闸。现在只有根 crate 一个成员，等于空跑；
+# 等真的拆出 crates/core、crates/cli 之后它才开始发挥作用，不必再改配置。
+[bans.workspace-dependencies]
+# 同一个直接依赖被多个成员各自声明版本（而不是 workspace = true）时报错
+duplicates = "deny"
+# path 依赖不参与上面的重复检查
+include-path-dependencies = false
+# [workspace.dependencies] 里声明了却没人用。上游默认是 deny，这里放宽成 warn：
+# 本模板的 [workspace.dependencies] 是按生成开关裁剪的，拆分子 crate 的过程中
+# 也常有「先在版本目录里登记、下一个提交才用上」的中间态。布局稳定后改成 deny。
+unused = "warn"
+
+# 编译期执行的代码（build script 与 proc-macro）里夹带的可执行文件 / 脚本。
+#
+# ⚠️ 先说清楚它**不能**做什么：cargo-deny 不做恶意代码分析。build.rs 里用纯 Rust
+#    把你的 SSH key 传出去、或者用 include!() 在某个版本悄悄换掉内容，这里一概查不出。
+#    它能回答的只有一个问题：「这个 crate 的源码包里，有没有本不该出现的二进制或脚本」
+#    ——预编译 blob 和作者忘了清理的 CI 脚本，正是供应链事故最常见的载体。
+#
+# 整个 [bans.build] 段不写的话，这项检查完全不跑。
+[bans.build]
+# 依赖里夹带的原生可执行文件（ELF / PE / Mach-O）。按文件头判断，不看可执行位，
+# 所以 Windows 上一样有效。deny 本来就是默认值，写出来表明这是有意选择。
+executables = "deny"
+# 带 shebang 的解释型脚本。上游默认是 allow，这里收紧成 deny——同样按文件头判断，
+# 不是按扩展名瞎猜，误报率低。
+interpreted = "deny"
+# 按**扩展名**扫 *.sh / *.py / *.ps1 等（不看内容）。默认关：它主要会翻出上游
+# 留在包里的 CI 脚本，噪音大于收益。真要收紧再打开，或用 script-extensions 点名。
+enable-builtin-globs = false
+# script-extensions = ["cs"]
+# 只扫「编译期执行的那个 crate 本身」。设 true 会连它的整棵依赖树一起扫，
+# 上游文档明说那基本只能翻出别人留在包里的 CI 脚本。
+include-dependencies = false
+# 自己 workspace 里的代码不扫——你对自己的代码总该有点信任
+include-workspace = false
+# .lib / .a / .o 这类归档是否算作原生代码。默认 false：windows-sys 那一坨几乎必然
+# 命中，而它们要链接之后才起作用，噪音远大于信号。
+include-archives = false
+
+# 真撞上误报时在这里逐个放行（先打开那个文件看一眼，再决定要不要写进来）：
+# [[bans.build.bypass]]
+# name = "some-crate"
+# build-script = "<build.rs 的 sha256>"   # 内容一变校验和就对不上，会重新报警
+# allow-globs = ["scripts/*.py"]
+# allow = [{ path = "bin/x86_64-linux", checksum = "<sha256>" }]
+
+# 找出「已经被 std / core 吸收掉」的 crates.io 依赖：lazy_static -> LazyLock、
+# once_cell 的一部分、等等。少一个依赖就少一份供应链暴露面，而且这类替换通常
+# 就是删几行代码的事。
+#
+# 整段不写的话这项检查完全跳过（这是上游默认）。
+[bans.std-replacements]
+# 只看**你的 workspace 直接依赖**的那些——间接依赖你换不掉，报了也只是噪音
+scope = "workspace"
+level = "deny"
+# 判断「某个 std API 在你的 MSRV 上是否已经存在」时，给没声明 rust-version 的 crate
+# 用的兜底版本。不写的话这类 crate 直接不参与匹配。
+# ⚠️ 打开的话要和 Cargo.toml 里的 rust-version 保持一致，改一处漏一处会得到
+#    「建议你用一个 MSRV 上还不存在的 API」这种坏建议。
+# rust-version = "1.85"
+
+# 按 crate 禁用具体 feature（比 deny 整个 crate 精细得多）。
+# 典型场景：允许用某个库，但不许它把 openssl 那条后端拉进来。
+# [[bans.features]]
+# name = "some-crate"
+# version = "1.0"
+# deny = ["openssl"]
+# allow = ["rustls"]
+# exact = false
+# reason = "统一走 rustls，不引入 C 依赖"
+
 # ---------------------------------------------------------------------------
 # 依赖来源
 # ---------------------------------------------------------------------------
@@ -159,6 +262,10 @@ allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 allow-git = [
   # "https://github.com/some-org/some-crate",
 ]
+
+# 下面 allow-org 里列了却没有任何依赖用到的组织不再报 warning。
+# 三个列表默认都是空的，预置项不该制造噪音。
+unused-allowed-org = "allow"
 
 [sources.allow-org]
 # 整个组织下的 git 依赖都放行

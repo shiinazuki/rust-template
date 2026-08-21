@@ -54,7 +54,7 @@ jobs:
           rustup toolchain install nightly --allow-downgrade --profile minimal \
             --component rustfmt,clippy,rust-src,llvm-tools
       - name: Install tools
-        uses: taiki-e/install-action@5b4d68e2e660441203ab128a23676f1e4faf1532 # v2.86.3
+        uses: taiki-e/install-action@ba47c86ac325773530516bb756137ac718732518 # v2.86.5
         with:
           # cargo-deny 不能漏：smoke.sh 的依赖审计那一步是 `command -v cargo-deny`
           # 守卫的，装不上就静默跳过——CI 绿着，但那项检查其实一次都没跑过。
@@ -92,6 +92,11 @@ jobs:
           python-version: "3.x"
       # 模板仓库里的 cargo 类钩子会因为 Cargo.toml 里还是占位符而自动跳过，
       # 剩下的（空白、行尾、TOML/JSON 语法、拼写、conventional commits）照常检查。
+      #
+      # ⚠️ pre-commit/action 上游已进入 maintenance-only（README 第一句就写着不再接受
+      #    新功能，推荐改用 pre-commit.ci）。它照常能跑，只是不会再有新特性；
+      #    真要换的话有两条路：接 pre-commit.ci（第三方服务，要授权仓库），
+      #    或者退回三行 run：`pip install pre-commit` + `pre-commit run --all-files`。
       - name: Run pre-commit
         uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1
 
@@ -104,7 +109,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install zizmor
-        uses: taiki-e/install-action@5b4d68e2e660441203ab128a23676f1e4faf1532 # v2.86.3
+        uses: taiki-e/install-action@ba47c86ac325773530516bb756137ac718732518 # v2.86.5
         with:
           tool: zizmor
       # actionlint 不在 install-action 的支持列表里（它是 Go 写的，crates.io 上也没有
@@ -148,7 +153,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install shellcheck
-        uses: taiki-e/install-action@5b4d68e2e660441203ab128a23676f1e4faf1532 # v2.86.3
+        uses: taiki-e/install-action@ba47c86ac325773530516bb756137ac718732518 # v2.86.5
         with:
           tool: shellcheck
       - name: Check shell scripts

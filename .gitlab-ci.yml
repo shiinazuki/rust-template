@@ -11,7 +11,8 @@ stages:
 default:
   # 用官方 rust 镜像作底；真正的版本由仓库里的 rust-toolchain.toml 决定，
   # 下面每个 job 起手都会 `rustup toolchain install` 按声明装好。
-  image: rust:1-slim-bookworm
+  # trixie = Debian 13。bookworm（Debian 12）常规支持已于 2026-07-11 结束。
+  image: rust:1-slim-trixie
   interruptible: true
   retry:
     max: 1
@@ -29,6 +30,11 @@ variables:
   # ⚠️ 刻意不叫 `.cargo`：那是项目级 cargo 配置目录的名字（config.toml 要入库），
   #    哪天你加了这个目录，缓存会把它覆盖掉。
   CARGO_HOME: $CI_PROJECT_DIR/.cargo-home
+  # ⚠️ 和上面这行配套：cargo 1.88 起会自动 GC 全局缓存（.crate 3 个月、解压出来的
+  #    源码 1 个月没访问就删）。CARGO_HOME 一旦挪进工程目录并被 GitLab 缓存收着，
+  #    这个 GC 就可能在刚恢复完缓存之后把内容删掉一部分——下一条流水线于是又要
+  #    重新下载，缓存等于白做。CI 是一次性环境，本来也不需要它清理。
+  CARGO_CACHE_AUTO_CLEAN_FREQUENCY: never
   GIT_SUBMODULE_STRATEGY: recursive
 
 # 两份缓存，key 不同，互不牵连：
@@ -178,7 +184,7 @@ hack:
 #             stable 上都编不过），改跑一次「借用检查器兜底」：还是同一条 nightly，
 #             只把借用检查器换回 stable 那套。
 #
-# ⚠️ nightly 为什么非补这一步不可：2026-08-04 起 nightly 默认启用了新一代借用检查器
+# ⚠️ nightly 为什么非补这一步不可：2026-08-06 起 nightly 默认启用了新一代借用检查器
 #    Polonius，它比 stable 的 NLL 接受更多合法程序。和 #![feature(...)] 不同的是，
 #    这个差异**没有任何显式标记**——没有属性、没有 lint、连 warning 都没有，很容易
 #    写出一段只有 nightly 编得过的代码而毫无察觉。`-Zpolonius=off` 让 nightly 用回

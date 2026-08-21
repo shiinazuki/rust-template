@@ -13,9 +13,13 @@
 # ---------------------------------------------------------------------------
 # 阶段 1：编译
 # ---------------------------------------------------------------------------
-# bookworm = Debian 12，必须和下面运行镜像的 distroless 版本对齐，
+# trixie = Debian 13，必须和下面运行镜像的 distroless 版本对齐，
 # 否则 glibc 版本不匹配，容器起来会报 "GLIBC_2.xx not found"。
-FROM rust:1-slim-bookworm AS builder
+#
+# ⚠️ 换 Debian 大版本时这两处要一起改，别只改一边。
+#    上一代的 bookworm（Debian 12）常规支持已于 2026-07-11 结束，只剩 LTS
+#    （到 2028-06-30），新项目不该再从它起步。
+FROM rust:1-slim-trixie AS builder
 
 WORKDIR /build
 
@@ -55,8 +59,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
 # cc 变体带了 glibc 与 libgcc，够跑普通的动态链接 Rust 二进制，也自带 ca-certificates。
 #
 # 想进容器里排查问题，临时把 tag 换成 :debug（带 busybox shell）：
-#   FROM gcr.io/distroless/cc-debian12:debug
-FROM gcr.io/distroless/cc-debian12:nonroot
+#   FROM gcr.io/distroless/cc-debian13:debug
+FROM gcr.io/distroless/cc-debian13:nonroot
 
 # OCI 标准标签。镜像仓库（GHCR、GitLab Container Registry 等）靠 image.source
 # 把镜像关联回代码仓库；出问题时也能从 `docker inspect` 直接看出这个镜像是

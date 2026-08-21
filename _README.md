@@ -60,7 +60,8 @@ crate）、benchmark、doctest 都够不着，逻辑留在那边就只能靠手�
 注意这个文件会**覆盖你 rustup 的全局默认工具链**，在本项目目录内一律以它为准。
 
 同时会装上 `rustfmt`、`clippy`、`rust-src`（rust-analyzer 解析标准库要用，
-缺了它编辑器里对 `std` 没有补全和跳转）和 `llvm-tools-preview`（覆盖率要用）。
+缺了它编辑器里对 `std` 没有补全和跳转）和 `llvm-tools-preview`（覆盖率要用；
+`llvm-tools` 是它现在的规范名，两者装的是同一份东西）。
 `rust-analyzer`、`miri`、交叉编译 target 等可选项在该文件里以注释列出，按需打开。
 
 [`rustfmt.toml`](rustfmt.toml) 用到了 `imports_granularity`、`group_imports`、`wrap_comments`
@@ -93,8 +94,9 @@ lint 让 CI 的 `-D warnings` 突然挂掉。前者用 `rustup toolchain install
 
 ### nightly 的借用检查器比 stable 宽
 
-2026-08-04 起，nightly 默认启用了新一代借用检查器 **Polonius**，它比 stable 的 NLL
-接受更多合法程序。最典型的是「条件返回一个借用，之后再可变借用同一个值」：
+2026-08-06 起（即 `nightly-2026-08-06` 及之后），nightly 默认启用了新一代借用检查器
+**Polonius**，它比 stable 的 NLL 接受更多合法程序。最典型的是「条件返回一个借用，
+之后再可变借用同一个值」：
 
 ```rust
 fn get_or_insert(map: &mut HashMap<u32, String>) -> &String {
@@ -107,6 +109,10 @@ fn get_or_insert(map: &mut HashMap<u32, String>) -> &String {
 ```
 
 这段代码在 nightly 上编得过，在 stable 上编不过。
+
+> 把 `channel` 钉成日期版本时注意分界线：`nightly-2026-08-05` 及更早用的还是 NLL。
+> 官方博客发在 08-04，但对应的 PR（rust-lang/rust#159343）是 08-05 21:37 UTC 才合入的，
+> 那天的 nightly 已经切完了。
 
 麻烦的地方在于**这个差异没有任何显式标记**：不像 `#![feature(...)]` 那样一眼可见，
 它没有属性、没有 lint、连 warning 都没有。于是完全可能在 nightly 上写出一段 stable
@@ -331,7 +337,7 @@ just docker-clean       # 删除本地镜像
 | [`rust-toolchain.toml`](rust-toolchain.toml) | 固定工具链版本与组件 |
 | [`rustfmt.toml`](rustfmt.toml) | 格式化规则（含 unstable 选项，走 nightly） |
 | [`clippy.toml`](clippy.toml) | Clippy 行为配置（lint 开关在 `Cargo.toml` 的 `[workspace.lints]`） |
-| [`deny.toml`](deny.toml) | 依赖的安全公告 / License / 重复版本 / 来源审计 |
+| [`deny.toml`](deny.toml) | 依赖的安全公告 / License / 重复版本 / 来源审计，外加 build script 里夹带的二进制与脚本 |
 | [`.taplo.toml`](.taplo.toml) | TOML 格式化规则（rustfmt 只管 `.rs`，`.toml` 归 taplo） |
 | [`.typos.toml`](.typos.toml) | 拼写检查的词表与排除规则 |
 | [`cliff.toml`](cliff.toml) | git-cliff 生成 CHANGELOG 的模板与分组规则 |
@@ -340,8 +346,8 @@ just docker-clean       # 删除本地镜像
 | [`justfile`](justfile) | 全部日常命令的入口 |{% if docker and crate_type == "bin" %}
 | [`docker.just`](docker.just) | 容器相关命令（被 justfile 可选 import） |
 | [`Dockerfile`](Dockerfile) | 多阶段构建 + distroless 运行镜像 |{% endif %}
-| [`.config/nextest.toml`](.config/nextest.toml) | 测试运行器配置（含 CI 专用 profile 与测试分组示例） |
-| [`.cargo/config.toml`](.cargo/config.toml) | cargo 项目级配置：网络重试、链接器 / 并行前端 / 镜像源的开关都收在这里 |
+| [`.config/nextest.toml`](.config/nextest.toml) | 测试运行器配置（含 CI 专用 profile、JUnit、超时与测试分组示例） |
+| [`.cargo/config.toml`](.cargo/config.toml) | cargo 项目级配置：网络重试、依赖解析策略，以及链接器 / 并行前端 / 镜像源的开关都收在这里 |
 | [`.pre-commit-config.yaml`](.pre-commit-config.yaml) | Git 钩子（pre-commit / commit-msg / pre-push） |
 | [`.editorconfig`](.editorconfig) | 跨编辑器的基础排版约定 |
 | [`.gitattributes`](.gitattributes) | 入库换行统一、二进制标记、`Cargo.lock` 折叠 |

@@ -197,7 +197,7 @@ msrv:
     rustup toolchain install "$version" --profile minimal
     cargo "+$version" check --locked --all-targets --all-features
 
-# 2026-08-04 起 nightly 默认启用了新一代借用检查器 Polonius，它比 stable 的 NLL
+# 2026-08-06 起 nightly 默认启用了新一代借用检查器 Polonius，它比 stable 的 NLL
 # 接受更多合法程序（最典型的是「条件返回一个借用，之后再可变借用同一个值」这类写法）。
 #
 # ⚠️ 麻烦在于这个差异**没有任何显式标记**：不像 #![feature(...)] 那样一眼可见，

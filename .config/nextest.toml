@@ -2,10 +2,27 @@
 #   本地：just test        （default profile）
 #   CI  ：cargo nextest run --profile ci
 
+# 声明本文件需要的最低 nextest 版本（nextest 0.9.55+ 认这个键）。
+#
+# 为什么要写：nextest 碰到不认识的配置键会直接报错退出，而报错信息指向的是
+# 「这个键不存在」，不是「你的 nextest 太旧」——排查方向差得很远。有了这一行，
+# 版本不够时得到的是一句明确的 REQUIRED_VERSION_NOT_MET（退出码 92）。
+#   required    低于它直接失败。取值 = 本文件用到的最新配置项所需的版本
+#               （flaky-result / junit.flaky-fail-status，均为 0.9.131）
+#   recommended 低于它只警告。这里指向带 junit.report-skipped 的那一版
+# 临时绕过：cargo nextest run --override-version-check
+nextest-version = { required = "0.9.131", recommended = "0.9.143" }
+
 [store]
 dir = "target/nextest"
 
 [profile.default]
+# `cargo nextest run` 默认跑哪些测试。"all()" 是上游默认值，写出来是为了标出这个开关：
+# 有了它就不必再靠 #[ignore] 来藏慢测试——那个属性是全局的，过滤表达式则可以按
+# profile 分别设，比如本地跳过跑真实 IO 的那批、CI 上照跑：
+#   default-filter = "not test(/^slow_/)"
+# 语法见 https://nexte.st/docs/filtersets/（nextest 0.9.77+）
+default-filter = "all()"
 # 本地跑测试不重试：失败就是失败，重试只会掩盖问题
 retries = 0
 # 一个失败就停下来，本地迭代更快
@@ -14,22 +31,54 @@ failure-output = "immediate"
 final-status-level = "flaky"
 # 超过 30s 的测试标记为 slow；连续 4 个周期（2 分钟）还没结束就判定卡死并杀掉
 slow-timeout = { period = "30s", terminate-after = 4 }
+# 整轮测试的总闸（nextest 0.9.100+）。默认是 30 年（等于没有），本地留着默认即可——
+# 真卡住 Ctrl-C 就行。CI 那侧见下面 [profile.ci]。
+# global-timeout = "30y"
+
+# benchmark 的超时独立于测试：`cargo nextest bench` 用的是下面这两项而不是上面的
+# slow-timeout / global-timeout。benchmark 天生就慢，共用一套阈值只会互相迁就。
+# 默认都是 30 年，按项目实际情况收紧：
+# bench.slow-timeout = { period = "5m" }
+# bench.global-timeout = "30m"
 
 # CI 专用 profile：`cargo nextest run --profile ci`
+#
+# 自定义 profile **默认就继承 default**，所以这里只写和 default 不一样的项；
+# 和 default 相同的值不必抄一遍（抄了以后改 default 就会漏掉这边）。
+# 想从别的 profile 继承（而不是 default），写 `inherits = "<profile>"`（nextest 0.9.115+）。
 [profile.ci]
 # 允许少量重试来吸收 CI 上的偶发抖动（网络、端口冲突等）；
 # 重试后通过的测试会被标记成 flaky，在汇总里单独列出，不会被悄悄放过
 retries = { backoff = "exponential", count = 2, delay = "1s", jitter = true }
+# 重试后通过的测试算不算通过（nextest 0.9.131+）。"pass"（默认）= 算通过但标记
+# flaky；想让 flaky 直接判失败就改成 "fail"——那样重试就只剩「给你看一眼」的作用了。
+flaky-result = "pass"
 # CI 上要一次性看到所有失败，不要跑一半就停
 fail-fast = false
 failure-output = "immediate-final"
 status-level = "retry"
-final-status-level = "flaky"
 slow-timeout = { period = "60s", terminate-after = 3 }
+# 整轮测试的总闸。CI job 自己也有 timeout-minutes，但那是硬砍进程：日志断在半截，
+# 拿不到 nextest 的汇总，也不知道到底卡在哪个测试上。让 nextest 先超时，
+# 它会正常收尾并把卡住的测试点出来。设得比 job 的 timeout-minutes 小一截。
+global-timeout = "20m"
 
 # 输出 JUnit 报告，GitHub Actions 的测试报告插件可以直接消费
 [profile.ci.junit]
 path = "junit.xml"
+# 报告里带上失败测试的 stdout/stderr——不然点进报告只看到"失败了"，还得回去翻日志
+store-failure-output = true
+# 成功的不带，否则报告体积会随测试数量线性膨胀
+store-success-output = false
+# 跳过的测试要不要写进报告：none（默认）/ ignored（只写 #[ignore] 那批）/ all。
+# 需要 nextest 0.9.143+，所以默认注释着——上面 nextest-version 里它只是 recommended，
+# 打开这一行的话请把 required 一并抬到 0.9.143。
+# ⚠️ 用 --partition 分片跑时不要用 "all"：每个分片都会把"不归自己跑"的测试记成
+#    skipped，合并报告后全是重复条目。
+# report-skipped = "ignored"
+# flaky 但最终仍失败的测试在报告里怎么记（nextest 0.9.131+）：failure（默认，同时
+# 写 <failure> 和 <flakyFailure>）/ success。保持 failure——重试过还是挂了，那就是真挂了。
+flaky-fail-status = "failure"
 
 # ---------------------------------------------------------------------------
 # 测试分组：给「不能并发跑」的测试上闸
@@ -55,3 +104,20 @@ path = "junit.xml"
 # [[profile.default.overrides]]
 # filter = 'test(integration)'
 # slow-timeout = { period = "120s", terminate-after = 2 }
+
+# ---------------------------------------------------------------------------
+# 还有两块能力这里没用上，需要时直接查文档，别自己在测试里造轮子：
+#
+#   [scripts.setup] + [[profile.default.scripts]]
+#       跑测试前先执行一段命令（起数据库容器、跑 migration、生成夹具），
+#       可以按过滤表达式只对部分测试生效，结束后统一清理。
+#       比在测试里写 lazy 初始化 + Mutex 干净得多。
+#       https://nexte.st/docs/configuration/setup-scripts/
+#
+#   [scripts.wrapper]
+#       给测试进程套一层外壳（valgrind、strace、自定义 runner）。
+#       https://nexte.st/docs/configuration/wrapper-scripts/
+#
+# 另外 [profile.*] 下的 archive.include 用来把测试运行时要读的非标准文件
+# （夹具、数据文件）一并打进 `cargo nextest archive`，实现「一处编译、多处跑」。
+# ---------------------------------------------------------------------------

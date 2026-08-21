@@ -5,6 +5,10 @@
 # 现在只有根 crate 一个成员。以后拆分子 crate（比如 crates/core、crates/cli）时
 # 在这里登记，下面 [workspace.package] / [workspace.dependencies] / [workspace.lints]
 # 里的配置它们可以直接继承，不必每个子 crate 抄一遍。
+#
+# 真拆成多个包之后，发布用 `cargo publish --workspace`（或 -p a -p b）：cargo 1.90
+# 起原生支持一次发布多个互相依赖的包，会自己排好顺序，不必再手工按依赖关系一个个发。
+# ⚠️ 它**不是原子操作**，中途失败可能只发出去一半。
 members = []
 resolver = "3"
 
@@ -21,6 +25,11 @@ edition = "2024"
 #
 # ⚠️ Polonius 进 stable 之后（官方计划 2026 年底），如果有代码是靠新借用检查器才编得过的，
 #    这里的版本号必须跟着抬到那一版——否则声明的 MSRV 就是一句空话。
+#
+# 1.85 是 edition 2024 的地板值（低于它根本不认这个 edition），所以它是「能声明的
+# 最低值」而不是随手写的数字。代价要知道：clippy 会按这个版本给建议，也就是说
+# 1.86 之后新增的 std API（`let`-chains、新的 `Option`/`Result` 方法等）它不会提示你用。
+# 不打算支持老版本的话，把这里抬到你实际用的 stable，能拿到更好的建议。
 rust-version = "1.85"
 license = "{{ license }}"
 # 域名按 ci 选项推导，不要写死 github.com——这个字段会跟着 `cargo publish` 进 crates.io，
@@ -172,6 +181,14 @@ codegen-units = 1
 strip = "symbols"
 panic = "unwind" # 改成 "abort" 二进制更小，但会禁用 unwind 并影响 #[should_panic] 测试
 
+# ⚠️ strip = "symbols" 去掉的是符号表，**不包括**源码路径：panic 信息里仍会露出
+#    构建机器的绝对路径（CI 上是 /home/runner/work/...，依赖是 ~/.cargo/registry/...）。
+#    要一并抹掉得用 trim-paths，但它到 2026 年 8 月仍是 unstable（-Ztrim-paths），
+#    只有 nightly 能用：
+#        cargo +nightly -Ztrim-paths build --release
+#    或在这一段里写 `trim-paths = "object"`（同样只有 nightly 认）。
+#    本模板默认工具链常常就是 nightly，值得知道有这个东西；稳定之后把这段注释删掉。
+
 # 做性能分析（flamegraph / samply / instruments）时用：
 #   cargo build --profile profiling
 # 优化级别与 release 一致，但保留符号，火焰图才有可读的函数名。
@@ -213,6 +230,11 @@ opt-level = 1
 
 [workspace.lints.rust]
 unsafe_code = "forbid" # 默认禁止 unsafe（确实需要时改成 "deny"，再按处 expect 并写明理由）
+# 标识符里不许出现非 ASCII 字符。这是一条**安全**lint，不是风格洁癖：
+# 西里尔字母 `а` 和拉丁 `a` 在编辑器里长得一模一样，靠同形字混进一个假的
+# `аuthenticate` 是 Trojan Source 那类攻击的标准手法，代码评审基本看不出来。
+# ⚠️ 只管标识符，注释和字符串字面量不受影响——本模板满篇中文注释照常。
+non_ascii_idents = "deny"
 missing_debug_implementations = "warn"
 # 和上面成对：小而无内部可变性的类型该实现 Copy，否则调用方到处写 .clone()，
 # 而且一旦发布出去，事后再加 Copy 是破坏性变更（它会改变移动语义）。
@@ -224,12 +246,43 @@ unused_qualifications = "warn"
 trivial_numeric_casts = "warn"
 # 声明了却完全可以省掉的生命周期参数（1.83 起有这条 lint）
 redundant_lifetimes = "warn"
+# 「能拿到这个类型的值，却写不出它的名字」——比如 pub fn 返回了一个没导出的类型。
+# 调用方于是没法把它存进结构体、也没法给它写 trait 实现。和上面的 unreachable_pub
+# 是一对：那条管「导出得太多」，这条管「导出得不够」。
+unnameable_types = "warn"
+# `let x = foo();` 而 foo() 返回的是 ()。多半是漏了 `?`、或者把返回值的函数改成了
+# 就地修改的版本却忘了改调用点。
+unit_bindings = "warn"
 rust_2018_idioms = { level = "warn", priority = -1 }
 # 未来版本里会变成硬错误的用法，趁现在还只是 warning 就改掉
 future_incompatible = { level = "warn", priority = -1 }
 # `let _ = mutex.lock()` 这类「守卫当场被丢弃」的坑：编译器不拦，这条拦
 let_underscore_drop = "warn"
 unused_lifetimes = "warn"
+# macro_rules! 里元变量的误用（`$x` 在展开体里出现的次数与重复层级对不上）。
+# 宏展开出来的错误信息一向难读，能在定义处就拦下最好。
+meta_variable_misuse = "warn"
+# 2018 edition 之后 `#[macro_use] extern crate foo` 已经没必要了，
+# 它把宏名整个灌进 crate 根，看代码时根本查不出某个宏是哪来的。
+macro_use_extern_crate = "warn"
+# 返回 async 块的闭包，直接写成 async 闭包更准确（也少一层 Box）。
+# 没用 async 的项目里它永远不触发，留着无害。
+closure_returning_async_block = "warn"
+# 下面两条同类但更吵，按需打开：
+#   trivial_casts        能靠自动 coercion 完成的 cast（`&T as &T`）。
+#                        本模板 unsafe_code = "forbid"，裸指针少，误伤不多，
+#                        但它偶尔会命中泛型代码里为了帮助推断而写的显式 cast。
+#   single_use_lifetimes 只用了一次的生命周期参数。
+#                        ⚠️ 已知会在 derive 宏展开出来的代码上误报，而 CI 是
+#                        -D warnings，那种误报出现在宏里、没地方写 #[expect]。
+# trivial_casts = "warn"
+# single_use_lifetimes = "warn"
+# 仅 nightly（需要 #![feature(unqualified_local_imports)]）：要求本 crate 内部的
+# use 一律写成 self:: / super:: / crate:: 开头。它就是为 rustfmt 的
+# group_imports = "StdExternalCrate" 设计的——那个设置正好是本模板在用的，
+# 有了它「本 crate」那一组才不会漏掉裸路径的 import。
+# 钉死 nightly 的项目可以打开；channel 可能是 stable 的话别开。
+# unqualified_local_imports = "warn"
 # 库项目自动打开：强制公开 API 写文档注释（二进制项目生成为 "allow"）
 missing_docs = "{% if crate_type == 'lib' %}warn{% else %}allow{% endif %}"
 # 下面这条配套上面的 [package.metadata.docs.rs]，只对库项目生成{% if crate_type == "lib" %}

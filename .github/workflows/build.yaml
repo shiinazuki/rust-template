@@ -87,7 +87,7 @@ jobs:
       - name: Install nightly rustfmt
         run: rustup toolchain install nightly --allow-downgrade --profile minimal --component rustfmt
       - name: Install cargo tools
-        uses: taiki-e/install-action@5b4d68e2e660441203ab128a23676f1e4faf1532 # v2.86.3
+        uses: taiki-e/install-action@ba47c86ac325773530516bb756137ac718732518 # v2.86.5
         with:
           tool: typos,taplo-cli
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -140,7 +140,7 @@ jobs:
       - name: Install Rust (版本由 rust-toolchain.toml 固定)
         run: rustup show active-toolchain || rustup toolchain install
       - name: Install cargo tools
-        uses: taiki-e/install-action@5b4d68e2e660441203ab128a23676f1e4faf1532 # v2.86.3
+        uses: taiki-e/install-action@ba47c86ac325773530516bb756137ac718732518 # v2.86.5
         with:
           tool: cargo-nextest,cargo-llvm-cov
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -198,7 +198,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install cargo-deny
-        uses: taiki-e/install-action@5b4d68e2e660441203ab128a23676f1e4faf1532 # v2.86.3
+        uses: taiki-e/install-action@ba47c86ac325773530516bb756137ac718732518 # v2.86.5
         with:
           tool: cargo-deny
       - name: Check dependencies (advisories / licenses / bans / sources)
@@ -221,7 +221,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install zizmor
-        uses: taiki-e/install-action@5b4d68e2e660441203ab128a23676f1e4faf1532 # v2.86.3
+        uses: taiki-e/install-action@ba47c86ac325773530516bb756137ac718732518 # v2.86.5
         with:
           tool: zizmor
       # actionlint 不在 install-action 的支持列表里（它是 Go 写的，crates.io 上也没有
@@ -266,7 +266,7 @@ jobs:
   #             任何 stable 上都编不过，E0554），改跑一次「借用检查器兜底」：
   #             还是同一条 nightly，只把借用检查器换回 stable 那套。
   #
-  # ⚠️ nightly 为什么非补这一步不可：2026-08-04 起 nightly 默认启用了新一代借用检查器
+  # ⚠️ nightly 为什么非补这一步不可：2026-08-06 起 nightly 默认启用了新一代借用检查器
   #    Polonius，它比 stable 的 NLL 接受更多合法程序（最典型的是「条件返回一个借用，
   #    之后再可变借用同一个值」这类写法）。和 #![feature(...)] 不同的是，这个差异
   #    **没有任何显式标记**——没有属性、没有 lint、连 warning 都没有。于是很容易写出
@@ -348,7 +348,7 @@ jobs:
       - name: Install Rust (版本由 rust-toolchain.toml 固定)
         run: rustup show active-toolchain || rustup toolchain install
       - name: Install cargo-hack
-        uses: taiki-e/install-action@5b4d68e2e660441203ab128a23676f1e4faf1532 # v2.86.3
+        uses: taiki-e/install-action@ba47c86ac325773530516bb756137ac718732518 # v2.86.5
         with:
           tool: cargo-hack
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -384,7 +384,7 @@ jobs:
           fi
       - name: Install cargo-semver-checks
         if: steps.baseline.outputs.rev != ''
-        uses: taiki-e/install-action@5b4d68e2e660441203ab128a23676f1e4faf1532 # v2.86.3
+        uses: taiki-e/install-action@ba47c86ac325773530516bb756137ac718732518 # v2.86.5
         with:
           tool: cargo-semver-checks
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2

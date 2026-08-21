@@ -190,7 +190,7 @@ cargo add clap --features derive,env
 | `rust-toolchain.toml` | 固定工具链版本与组件 |
 | `rustfmt.toml` | 格式化规则（含 unstable 选项，走 nightly） |
 | `clippy.toml` | Clippy 行为配置（lint 开关在 `Cargo.toml` 的 `[workspace.lints]`） |
-| `deny.toml` | 依赖的安全公告 / License / 重复版本 / 来源审计 |
+| `deny.toml` | 依赖的安全公告 / License / 重复版本 / 来源审计，外加 build script 里夹带的二进制与脚本 |
 | `.taplo.toml` | TOML 格式化规则（rustfmt 只管 `.rs`，`.toml` 归 taplo） |
 | `.typos.toml` | 拼写检查的词表与排除规则 |
 | `cliff.toml` | git-cliff 生成 CHANGELOG 的模板与分组规则 |
@@ -199,8 +199,8 @@ cargo add clap --features derive,env
 | `justfile` | 全部日常命令的入口（含 `just doctor` 环境体检） |
 | `docker.just` | 容器命令，可选生成 |
 | `Dockerfile` / `.dockerignore` | 多阶段构建 + distroless 运行镜像，可选生成 |
-| `.config/nextest.toml` | 测试运行器配置（CI profile + 测试分组示例） |
-| `.cargo/config.toml` | cargo 项目级配置：网络重试、链接器 / 并行前端 / 镜像源的开关 |
+| `.config/nextest.toml` | 测试运行器配置（CI profile + JUnit + 超时 + 测试分组示例） |
+| `.cargo/config.toml` | cargo 项目级配置：网络重试、依赖解析策略，以及链接器 / 并行前端 / 镜像源的开关 |
 | `.pre-commit-config.yaml` | Git 钩子（pre-commit / commit-msg / pre-push） |
 | `.devcontainer/` | Dev Container / Codespaces 配置 |
 | `.editorconfig` / `.gitattributes` / `.gitignore` | 编辑器与 git 的基础约定 |

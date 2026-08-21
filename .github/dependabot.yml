@@ -26,6 +26,13 @@ updates:
   # 把 v3 指向恶意提交就能直接进你的 CI——2025 年 tj-actions 事件就是这么发生的）。
   # hash 的代价是「不会自动跟进上游修复」，所以这条 dependabot 规则不是可选项：
   # 它每周把 hash 连同后面的 `# vX.Y.Z` 注释一起更新。
+  #
+  # 补充两点（都是 2025-2026 的新情况，但都**不改变**上面的做法）：
+  #   1. GitHub 推出了 immutable actions（发布后不可重打 tag）。它防的是「同一个 tag
+  #      被换掉」，防不了「攻破的账号再发一个新版本」，所以官方文档至今仍写着
+  #      「full-length commit SHA 是唯一能把 action 当成不可变发布来用的方式」。
+  #   2. 自 2025-08 起，SHA 钉死可以在**组织 / 仓库策略**层面强制
+  #      （Settings → Actions → Policies），比靠 review 拦要硬。个人仓库同样可设。
   - package-ecosystem: github-actions
     directory: "/"
     schedule:

@@ -30,6 +30,81 @@ retry = 5
 # git-fetch-with-cli = true
 
 # ---------------------------------------------------------------------------
+# 依赖解析
+# ---------------------------------------------------------------------------
+[resolver]
+# 解析依赖版本时，怎么对待「要求的 rustc 比本项目 rust-version 更新」的版本：
+#   allow     一视同仁（老行为）
+#   fallback  实在没有别的版本可选时才用它
+#
+# Cargo.toml 里的 resolver = "3" 已经给了这个行为，这里再写一次是因为两者作用域
+# 不同：resolver = "3" 绑在 workspace 上，这一行绑在**目录**上，将来在这个目录下
+# 临时开个还没写 resolver 的子项目、或者用老一点的工具链跑，行为也一致。
+# （cargo 1.84+ 认这个键；更老的版本会当成未知键忽略。）
+incompatible-rust-versions = "fallback"
+
+# 想把 Cargo.lock 放到别处（比如源码目录只读）时用，路径必须以 Cargo.lock 结尾。
+# 需要 cargo 1.97+。
+# lockfile-path = "Cargo.lock"
+
+# ---------------------------------------------------------------------------
+# 较新的 cargo 配置项（都已稳定，本模板默认没开，列在这里是为了让你知道它们存在）
+#
+# ⚠️ 下面出现了好几个 `[build]` 段（这里一个、链接器那节后面还有两个）。
+#    TOML 里同一个表只能出现一次——**同时**取消多个 `[build]` 的注释会让 cargo 直接
+#    报 "duplicate key"。要开多项就合并到同一个 [build] 段里。
+# ---------------------------------------------------------------------------
+
+# [build]
+# # cargo 1.97 稳定。把本地包的编译警告统一升级成错误：
+# #   "warn"(默认) / "allow" / "deny"
+# # 它是 CI 里那句 `-D warnings` 的正规替身，而且**不走 RUSTFLAGS**——也就是不会踩
+# # 本文件开头那条「RUSTFLAGS 整体覆盖」的坑，`just nll` 之类换了 RUSTFLAGS 的命令
+# # 照样受它管。
+# #
+# # 默认不开的理由只有一个：本地边写边 `cargo check` 时，一个 unused import 就让
+# # 编译失败，迭代体验很差。本模板的分工是「本地 warn，CI 拦」——CI 已经用
+# # `cargo clippy -- -D warnings` 和 `RUSTDOCFLAGS=-D warnings` 兜住了。
+# # 想在 CI 里额外给 `cargo check` / `cargo test` 也上闸，不要改这里，改成在 CI 的
+# # env 里设 `CARGO_BUILD_WARNINGS: deny`，本地就不受影响。
+# warnings = "deny"
+#
+# # cargo 1.91 稳定。把「中间产物」和「最终产物」分开存放：target/ 下只留最终产物，
+# # 编译中间件挪到别处。支持 {workspace-root} / {cargo-cache-home} / {workspace-path-hash}
+# # 三个模板变量，例如把所有项目的中间产物集中到 CARGO_HOME 下、按项目路径哈希分目录：
+# #   build-dir = "{cargo-cache-home}/build/{workspace-path-hash}"
+# # ⚠️ 改了它，justfile 里 `just clean` 的 rm、以及 CI 里所有写死 target/ 的路径
+# #    （nextest 的 junit、llvm-cov 的输出）都要一起核对。
+# build-dir = "target"
+
+# cargo 1.88 起会自动清理全局缓存：.crate 文件 3 个月没访问、解压出来的源码 1 个月
+# 没访问就删。默认 "1 day" 检查一次，`--offline` / `--frozen` 时不清理。
+#
+# ⚠️ CI 上如果把 CARGO_HOME 放进了自己的缓存目录（本模板的 GitLab 流水线就是这么做的），
+#    这个 GC 可能刚恢复完缓存就把内容删掉一部分。那种场景请设成 "never"，
+#    或者在 CI 的 env 里设 CARGO_CACHE_AUTO_CLEAN_FREQUENCY=never。
+# [cache]
+# auto-clean-frequency = "never"
+
+# cargo 1.94 稳定。把配置拆成多份再合并，路径相对本文件解析，只接受 .toml 结尾。
+# 适合把「团队共享」和「可选的本地覆盖」分开，而不必靠注释约定：
+# include = [{ path = "cargo-local.toml", optional = true }]
+
+# 依赖里有「将来会变成硬错误」的用法时，cargo 会在命令末尾提示一句
+# `cargo report future-incompatibilities`。默认就是 always，写出来是提醒它的存在——
+# 这份报告是唯一能提前发现「某个依赖迟早编不过」的渠道。
+# [future-incompat-report]
+# frequency = "always"
+
+# cargo 1.96 起支持按 target 配 rustdocflags（原来只能走环境变量）：
+# [target.'cfg(all())']
+# rustdocflags = ["-D", "warnings"]
+
+# cargo 1.87 起可以把编译进度报给终端模拟器（显示在任务栏 / 标签页上）。
+# [term]
+# progress.term-integration = true
+
+# ---------------------------------------------------------------------------
 # 链接器
 #
 # 链接是增量编译里最大的一块时间，换个链接器往往比任何编译参数都管用。

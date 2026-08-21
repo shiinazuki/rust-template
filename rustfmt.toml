@@ -8,7 +8,7 @@ style_edition = "2024"
 edition = "2024"
 
 max_width = 100
-comment_width = 100
+comment_width = 100 # unstable：注释的折行宽度，和下面的 wrap_comments 成对
 newline_style = "Unix"
 
 # --- 注释与文档 ---------------------------------------------------------
@@ -19,7 +19,10 @@ normalize_doc_attributes = true # unstable：#[doc = "..."] 归一成 /// 形式
 
 # --- 字符串与字面量 -----------------------------------------------------
 format_strings = true # unstable：超长字符串自动折行
-hex_literal_case = "Upper" # unstable：0xFF 而不是 0xff
+hex_literal_case = "Upper" # stable：0xFF 而不是 0xff
+# 同一类的字面量归一化，但仍是 unstable（#6471）。取值 Preserve / Always /
+# IfNoPostfix / Never，打开后 `1.` 会被写成 `1.0`。默认 Preserve，按口味启用：
+# float_literal_trailing_zero = "Always"
 
 # --- import 组织 --------------------------------------------------------
 imports_granularity = "Crate" # unstable：同一 crate 的 use 合并成一行
@@ -28,4 +31,4 @@ group_imports = "StdExternalCrate" # unstable：std / 第三方 / 本 crate 分�
 # --- 其它 ---------------------------------------------------------------
 use_field_init_shorthand = true # Foo { x } 而不是 Foo { x: x }
 use_try_shorthand = true # ? 而不是 try!
-reorder_impl_items = true # impl 块内 type / const 排到 fn 前面
+reorder_impl_items = true # unstable：impl 块内 type / const 排到 fn 前面
