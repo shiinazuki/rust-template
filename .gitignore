@@ -3,6 +3,12 @@
 **/*.rs.bk
 *.pdb
 
+# rustc 内部错误（ICE）的转储文件。
+# 两个原因让它必须单独写一行：一是 rustc 把它写在**当前工作目录**而不是 target/ 下，
+# 上面那条 /target 兜不住，它会直接落在仓库根上；二是本项目默认跑 nightly，
+# 撞上编译器 bug 的概率本来就比 stable 高。
+rustc-ice-*.txt
+
 # 覆盖率 / 测试报告产物
 /coverage
 lcov.info

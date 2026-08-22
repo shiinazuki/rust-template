@@ -111,11 +111,28 @@ lint:
     - .cargo-cache
     - .rust-setup
   script:
-    # rustfmt.toml 用了 unstable 选项，stable 的 rustfmt 会静默忽略，必须走 nightly。
-    # --allow-downgrade：某天的 nightly 偶尔缺 rustfmt，让 rustup 自动退回到有的那天。
-    - rustup toolchain install nightly --allow-downgrade --profile minimal --component rustfmt
+    # rustfmt.toml 用了 unstable 选项，stable 的 rustfmt 会静默忽略，必须走 nightly 的 rustfmt。
+    #
+    # ⚠️ 不能写死 `+nightly`：channel 一旦钉成日期版本（nightly-2026-08-18），
+    #    `+nightly` 指的是另一条「最新 nightly」工具链，和本地 `just fmt` 用的不是
+    #    同一个 rustfmt，排版可能不一致——「本地 check 过、CI 挂」就是这么来的。
+    #    规则与 justfile 的 fmt_toolchain 变量一致。
+    - |
+      channel=$(grep -m1 '^channel' rust-toolchain.toml | sed -E 's/.*"([^"]+)".*/\1/')
+      case "$channel" in
+        # channel 本身是 nightly（含日期版本）：components 里已经带了 rustfmt
+        nightly*)
+          FMT_TOOLCHAIN="$channel"
+          ;;
+        # stable / 具体版本号：额外装一份 nightly 的 rustfmt。
+        # --allow-downgrade：某天的 nightly 偶尔缺 rustfmt，让 rustup 自动退回到有的那天。
+        *)
+          FMT_TOOLCHAIN=nightly
+          rustup toolchain install nightly --allow-downgrade --profile minimal --component rustfmt
+          ;;
+      esac
     - install_tools typos-cli taplo-cli
-    - cargo +nightly fmt --all -- --check
+    - cargo "+$FMT_TOOLCHAIN" fmt --all -- --check
     # rustfmt 不管 .toml，项目里十来个 TOML 配置靠 taplo 保持排版一致（规则见 .taplo.toml）
     - taplo fmt --check
     - typos

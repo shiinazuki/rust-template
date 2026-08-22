@@ -216,7 +216,26 @@ include-workspace = false
 # 命中，而它们要链接之后才起作用，噪音远大于信号。
 include-archives = false
 
-# 真撞上误报时在这里逐个放行（先打开那个文件看一眼，再决定要不要写进来）：
+# 预置的放行项。
+#
+# ⚠️ 为什么模板要预置：上面把 interpreted 收紧成了 deny，而 libc 几乎是所有非平凡
+#    项目的间接依赖（std 之外但凡碰到系统调用就绕不开），它自己带 build.rs，
+#    因此**它本身**必被扫（include-dependencies = false 只是不再往它的依赖里下钻，
+#    拦不住这一条）。libc 0.2.189 起源码包里多了一个 etc/libc-util.py，带 shebang，
+#    于是 `just ci` 第一次跑到 audit 就会挂在这里。
+#    不预置的话，每个用这个模板的人都要自己踩一遍、再自己查一遍那个文件。
+#
+# ⚠️ 放行的是**这一个文件**，不是整个 crate：libc 的 build.rs 照常受检，
+#    哪天它夹带了别的脚本或二进制，这条 bypass 也拦不住报警。
+#    etc/ 是 libc 仓库放开发辅助脚本的目录（生成/比对 FFI 声明用），不参与构建。
+[[bans.build.bypass]]
+name = "libc"
+allow-globs = ["etc/*.py"]
+
+# blake3 / curve25519-dalek 之类带预编译汇编或 .py 生成脚本的 crate 同样会命中，
+# 但那属于项目自选依赖，模板不替你决定，真用上了再照下面的写法加。
+#
+# 撞上别的误报时在这里逐个放行（先打开那个文件看一眼，再决定要不要写进来）：
 # [[bans.build.bypass]]
 # name = "some-crate"
 # build-script = "<build.rs 的 sha256>"   # 内容一变校验和就对不上，会重新报警

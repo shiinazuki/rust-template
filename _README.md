@@ -65,26 +65,42 @@ crate）、benchmark、doctest 都够不着，逻辑留在那边就只能靠手�
 `rust-analyzer`、`miri`、交叉编译 target 等可选项在该文件里以注释列出，按需打开。
 
 [`rustfmt.toml`](rustfmt.toml) 用到了 `imports_granularity`、`group_imports`、`wrap_comments`
-等 unstable 选项，只有 nightly 的 rustfmt 才认，所以格式化命令统一写成 `cargo +nightly fmt`。
+等 unstable 选项，只有 nightly 的 rustfmt 才认（stable 会**静默忽略**它们），
+所以格式化请一律走 `just fmt` / `just lint`，不要手写 `cargo fmt`。
 {% if toolchain == "stable" %}
-本项目跑在 stable 上，需要额外装一次 nightly 的 rustfmt：
+本项目跑在 stable 上，需要额外装一次 nightly 的 rustfmt——`just install-tools` 会替你装，
+`just doctor` 会检查它在不在。手工装的话：
 
 ```bash
 rustup toolchain install nightly --allow-downgrade --profile minimal --component rustfmt
 ```
 {% else %}
-本项目本身就跑在 nightly 上，`+nightly` 指向的是同一个工具链，不需要额外安装。
+本项目本身就跑在 nightly 上，格式化用的就是同一条工具链，不需要额外安装。
 
 nightly 是滚动更新的，偶尔会出现某个版本缺 `rustfmt` / `clippy` 组件，或者 clippy 新增的
 lint 让 CI 的 `-D warnings` 突然挂掉。前者用 `rustup toolchain install nightly --allow-downgrade`
 就能绕过（自动退回到组件齐全的那天）；后者真遇上了就把 `channel` 钉成日期版本，例如
-`channel = "nightly-2026-08-01"`——但那之后 `+nightly` 会指向另一个工具链，
-需要单独安装，或把命令里的 `+nightly` 去掉。
+`channel = "nightly-2026-08-18"`。
+
+钉日期版本**不需要**再改任何格式化命令：`just fmt` / `just lint` 与两套 CI 都从
+`rust-toolchain.toml` 的 `channel` 推导该用哪条工具链（见 justfile 顶部的 `fmt_toolchain`）。
+反过来说，也不要在项目里手写 `cargo +nightly fmt`——钉了日期之后 `+nightly` 指的是
+**另一条**工具链，两个 rustfmt 版本的排版可能不同，症状就是「本地 check 过、CI 挂」。
 {% endif %}
 ### MSRV
 
 `Cargo.toml` 里的 `rust-version` 声明了最低支持版本。它**只是下限，不限制上限**，
 用更新的 stable 或 nightly 编译都没问题。
+
+⚠️ 它默认是 `1.85`（edition 2024 的地板值），这个选择有一条**安全代价**值得先知道：
+配上 `resolver = "3"` 与 `.cargo/config.toml` 的 `incompatible-rust-versions = "fallback"`，
+某个依赖的新版本一旦把自己的 `rust-version` 抬到 1.85 以上，resolver 会**一声不吭地
+退回旧版本**——而安全补丁往往就在新版本里。真实例子：`time` 的 RUSTSEC-2026-0009
+补在 0.3.47，但 0.3.47 要求 rustc 1.88，于是 MSRV 写 1.85 的项目拿到的是有洞的 0.3.45，
+`cargo build` 一路绿灯。唯一能发现它的是 `just audit`。
+
+不打算支持老版本的话，把 `rust-version` 抬到你实际用的 stable——既能拿到更好的
+clippy 建议，也少一类「依赖被悄悄降级到有漏洞的版本」的暴露面。
 {% if toolchain == "stable" %}
 `just msrv` 和 CI 的 msrv job 会真的用那个版本编译一遍来验证声明属实。
 {% else %}

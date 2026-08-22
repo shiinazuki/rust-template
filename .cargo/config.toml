@@ -41,6 +41,17 @@ retry = 5
 # 不同：resolver = "3" 绑在 workspace 上，这一行绑在**目录**上，将来在这个目录下
 # 临时开个还没写 resolver 的子项目、或者用老一点的工具链跑，行为也一致。
 # （cargo 1.84+ 认这个键；更老的版本会当成未知键忽略。）
+#
+# ⚠️ fallback 是有安全代价的，而且这个代价完全静默：依赖发新版时如果把自己的
+#    rust-version 抬到了本项目 MSRV 之上，resolver 不会报错、也不会提示，
+#    它会直接退回到一个「还能用」的旧版本——而安全补丁往往就在新版本里。
+#    time 的 RUSTSEC-2026-0009 就是这样：补丁在 0.3.47，它要求 rustc 1.88，
+#    MSRV 写 1.85 的项目于是拿到了有洞的 0.3.45，`cargo build` 一路绿灯。
+#
+#    所以 MSRV 定得越低，这类暴露面越大（详见 Cargo.toml 里 rust-version 那段）。
+#    唯一能发现它的是 `just audit`。改成 "allow" 可以让 resolver 永远取最新版本，
+#    代价是本项目可能编不过声明的 MSRV——那样就该把 rust-version 抬上去，
+#    而不是继续让 fallback 替你掩盖问题。
 incompatible-rust-versions = "fallback"
 
 # 想把 Cargo.lock 放到别处（比如源码目录只读）时用，路径必须以 Cargo.lock 结尾。

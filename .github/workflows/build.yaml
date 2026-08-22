@@ -105,17 +105,37 @@ jobs:
       - name: Install Rust (版本由 rust-toolchain.toml 固定)
         run: rustup show active-toolchain || rustup toolchain install
       # rustfmt.toml 用到了 imports_granularity / group_imports 等 unstable 选项，
-      # stable 的 rustfmt 会静默忽略它们，所以格式检查必须走 nightly。
-      # --allow-downgrade：某天的 nightly 偶尔缺 rustfmt，让 rustup 自动退回到有的那天。
-      - name: Install nightly rustfmt
-        run: rustup toolchain install nightly --allow-downgrade --profile minimal --component rustfmt
+      # stable 的 rustfmt 会静默忽略它们，所以格式检查必须走 nightly 的 rustfmt。
+      #
+      # ⚠️ 但不能写死 `+nightly`：rust-toolchain.toml 的 channel 一旦钉成日期版本
+      #    （nightly-2026-08-18），`+nightly` 指的是**另一条**「最新 nightly」工具链。
+      #    那样 CI 用的 rustfmt 和本地 `just fmt` 用的就不是同一个版本，两者对同一份
+      #    代码的排版可能不一致——表现出来就是「本地 check 过、CI 挂」，且毫无线索。
+      #    所以这里按 channel 推导，规则和 justfile 的 fmt_toolchain 变量完全一致。
+      - name: Resolve rustfmt toolchain
+        run: |
+          channel=$(grep -m1 '^channel' rust-toolchain.toml | sed -E 's/.*"([^"]+)".*/\1/')
+          case "$channel" in
+            # channel 本身就是 nightly（含日期版本）：rust-toolchain.toml 的 components
+            # 里已经带了 rustfmt，用它自己即可，不要再装第二条 nightly 进来。
+            nightly*)
+              fmt="$channel"
+              ;;
+            # stable / 具体版本号：需要额外装一份 nightly 的 rustfmt。
+            # --allow-downgrade：某天的 nightly 偶尔缺 rustfmt，让 rustup 自动退回到有的那天。
+            *)
+              fmt=nightly
+              rustup toolchain install nightly --allow-downgrade --profile minimal --component rustfmt
+              ;;
+          esac
+          echo "FMT_TOOLCHAIN=$fmt" >> "$GITHUB_ENV"
       - name: Install cargo tools
         uses: taiki-e/install-action@ba47c86ac325773530516bb756137ac718732518 # v2.86.5
         with:
           tool: typos,taplo-cli
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Check code format
-        run: cargo +nightly fmt --all -- --check
+        run: cargo "+$FMT_TOOLCHAIN" fmt --all -- --check
       # rustfmt 不管 .toml。项目里十来个 TOML 配置全靠这一步保持排版一致，
       # 规则见 .taplo.toml；本地对应 `just fmt` / `just lint`。
       - name: Check TOML format

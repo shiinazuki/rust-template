@@ -59,11 +59,20 @@ profile = "minimal"
 # 关于格式化：
 # rustfmt.toml 里用到了 imports_granularity、group_imports、wrap_comments 等
 # unstable 选项，只有 nightly 的 rustfmt 才认，stable 会静默忽略它们。
-# 所以 justfile 与 CI 里的格式化命令一律显式写成 `cargo +nightly fmt`：
+# 所以格式化命令必须显式点名工具链——但**不写死 `+nightly`**，而是从下面这个
+# channel 推导出来。推导逻辑有三处，规则完全一致：
+#   - justfile 顶部的 `fmt_toolchain` 变量（just fmt / just lint / just doctor 都用它）
+#   - .github/workflows/{build,release}.yaml 的 "Resolve rustfmt toolchain" 步骤
+#   - .gitlab-ci.yml 的 lint job
 #
-#   - channel 是 nightly 时，+nightly 指向的就是同一个工具链，等价于 `cargo fmt`
-#   - channel 是 stable 时，需要额外装一次 nightly 的 rustfmt：
-#       rustup toolchain install nightly --profile minimal --component rustfmt
+# 推导规则：
+#   channel = "nightly"              -> 用 nightly，等价于 `cargo fmt`
+#   channel = "nightly-2026-08-18"   -> 用这条日期工具链本身，不去碰「最新 nightly」
+#   channel = "stable" / "1.85.0"    -> 退回 nightly，需要额外装一份 nightly 的 rustfmt：
+#       rustup toolchain install nightly --allow-downgrade --profile minimal --component rustfmt
+#     （`just install-tools` 会装，`just doctor` 会检查它在不在）
 #
-# 例外：如果把 channel 钉成了日期版本（nightly-2026-08-01），`+nightly` 指的是
-# 另一个「最新 nightly」工具链，需要单独安装，或者把那些命令里的 +nightly 去掉。
+# ⚠️ 为什么不能写死 `+nightly`：channel 一旦钉成日期版本，`+nightly` 指的就是
+#    **另一条**「最新 nightly」工具链——多半根本没装；就算装了，两个 rustfmt 版本
+#    对同一份代码的排版也可能不一样，于是「本地 check 过、CI 挂」，而且从报错里
+#    完全看不出原因。改 channel 时不必再去改任何格式化命令。

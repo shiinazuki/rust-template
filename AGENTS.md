@@ -22,15 +22,20 @@ clippy 和 rustdoc，不是编译。
 
 ## 五条最容易踩的
 
-### 1. 格式化必须走 nightly
+### 1. 格式化必须走 nightly，而且要走 `just fmt`
 
 ```bash
-cargo +nightly fmt --all      # 或 just fmt
+just fmt        # 不要手写 cargo fmt，也不要手写 cargo +nightly fmt
 ```
 
 `rustfmt.toml` 用了 `imports_granularity` / `group_imports` / `wrap_comments` 等
 **unstable 选项**。stable 的 rustfmt 会**静默忽略**它们——不报错，但也不格式化，
 于是你以为格式化过了，CI 上照样挂。绝不要写 `cargo fmt`。
+
+也不要图省事写死 `cargo +nightly fmt`：`rust-toolchain.toml` 的 channel 如果被钉成了
+日期版本（`nightly-2026-08-18`），`+nightly` 指的是**另一条**工具链，排版结果可能和
+CI 不一致。`just fmt` 会从 channel 推导出正确的那一条（见 justfile 顶部的
+`fmt_toolchain`），两套 CI 用的是同一套规则。
 
 ### 2. CI 是零警告
 

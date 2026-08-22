@@ -17,6 +17,32 @@ repo_host := if origin_url =~ 'gitlab' { "gitlab" } else { if origin_url =~ 'git
 # 包名（本文件不做 liquid 替换，只能从 Cargo.toml 里读）
 pkg := `grep -m1 '^name' Cargo.toml | sed -E 's/.*"(.*)".*/\1/'`
 
+# 格式化该用哪条工具链。
+#
+# rustfmt.toml 里用了 imports_granularity / group_imports / wrap_comments 等 unstable
+# 选项，只有 nightly 的 rustfmt 认，stable 会**静默忽略**——不报错，但也不生效。
+# 所以格式化命令必须显式点名工具链。
+#
+# ⚠️ 但不能写死 `+nightly`：channel 一旦钉成日期版本（nightly-2026-08-18），
+#    `+nightly` 指的是**另一条**「最新 nightly」工具链——多半根本没装；就算装了，
+#    两个 rustfmt 版本对同一份代码的排版也可能不一样，于是「本地 check 过、CI 挂」，
+#    而这种失败看起来毫无道理。rust-toolchain.toml 末尾预告的正是这个例外。
+#
+# 因此按 rust-toolchain.toml 的 channel 推导（和 msrv / nll 两条配方同一个手法）：
+#   nightly / nightly-YYYY-MM-DD  -> 就用它自己（等价于不加 +，但写出来更清楚，
+#                                     也顺带挡住 rustup 目录 override 的干扰）
+#   stable / 1.85.0 之类          -> 退回 nightly，需要额外装一份 nightly 的 rustfmt
+#                                     （just install-tools 会装，just doctor 会查）
+#
+# 读不到 rust-toolchain.toml 时（比如有人把它删了）落到 nightly，行为和从前一致。
+fmt_toolchain := ```
+    channel=$(grep -m1 '^channel' rust-toolchain.toml 2>/dev/null | sed -E 's/.*"([^"]+)".*/\1/')
+    case "$channel" in
+        nightly*) echo "$channel" ;;
+        *)        echo nightly ;;
+    esac
+```
+
 # 列出所有可用命令
 default:
     @just --list --unsorted
@@ -85,9 +111,9 @@ run *args:
 # rustfmt 只管 .rs，项目里十来个 .toml 归 taplo 管（配置见 .taplo.toml）。
 # 两条一起跑，免得「格式化过了」却还是挂在 CI 的 TOML 检查上。
 [group('dev')]
-[doc('格式化代码与 TOML（rustfmt.toml 用到 unstable 选项，必须走 nightly）')]
+[doc('格式化代码与 TOML（rustfmt.toml 用到 unstable 选项，必须走 nightly 的 rustfmt）')]
 fmt: _generated-only
-    cargo +nightly fmt --all
+    cargo +{{ fmt_toolchain }} fmt --all
     taplo fmt
 
 [group('dev')]
@@ -150,7 +176,7 @@ clean:
 [group('check')]
 [doc('格式化检查 / TOML 排版 / clippy / 拼写检查 / 文档警告（与 CI 的 lint job 等价）')]
 lint: _generated-only
-    cargo +nightly fmt --all -- --check
+    cargo +{{ fmt_toolchain }} fmt --all -- --check
     taplo fmt --check
     cargo clippy --all-targets --all-features -- -D warnings
     typos
@@ -392,6 +418,35 @@ doctor:
         missing=1
     }
 
+    # 并排打印版本号是看不出问题的——真正的坑在于 rust-toolchain.toml **是否还说了算**。
+    # rustup 的目录 override 和 RUSTUP_TOOLCHAIN 环境变量优先级都比它高，而且完全静默：
+    # 没有警告、没有提示，只有编译行为悄悄换了一套。所以这里做硬校验，不做肉眼比对。
+    #
+    # `rustup show active-toolchain` 会把生效原因一并写在括号里，三种取值：
+    #   overridden by '<...>/rust-toolchain.toml'        正常，本项目期望的状态
+    #   directory override for '<dir>'                   有人跑过 rustup override set
+    #   overridden by environment variable RUSTUP_TOOLCHAIN
+    # 工具链没装时这条命令会失败，上面那格已经报过了，这里静默跳过。
+    active=$(rustup show active-toolchain 2>/dev/null || true)
+    if [ -n "$active" ]; then
+        echo "  实际生效的工具链: ${active}"
+        case "$active" in
+            *"directory override"*)
+                echo "  ✗ 存在 rustup 目录 override，rust-toolchain.toml 被架空 -> rustup override unset"
+                missing=1 ;;
+            *"environment variable RUSTUP_TOOLCHAIN"*)
+                echo "  ✗ RUSTUP_TOOLCHAIN 环境变量覆盖了 rust-toolchain.toml -> unset RUSTUP_TOOLCHAIN"
+                missing=1 ;;
+            *rust-toolchain.toml*)
+                echo "  ✓ 由 rust-toolchain.toml 决定" ;;
+            *)
+                # 剩下的多半是 "(default)"：rustup 压根没读到本项目的 toolchain 文件，
+                # 通常是没在项目根目录下跑，或者 rust-toolchain.toml 被误删了。
+                echo "  ✗ 不是由 rust-toolchain.toml 决定的 -> 确认在项目根目录下运行，且该文件还在"
+                missing=1 ;;
+        esac
+    fi
+
     echo "== 组件 =="
     installed=$(rustup component list --installed 2>/dev/null)
     # llvm-tools 在 `component list` 里显示为 llvm-tools（不带 -preview 后缀）
@@ -406,10 +461,12 @@ doctor:
 
     # 格式化恒定依赖 nightly 的 rustfmt：rustfmt.toml 里用了 unstable 选项，
     # stable 的 rustfmt 会静默忽略它们（不报错，但也不生效）。
-    if rustup component list --toolchain nightly --installed 2>/dev/null | grep -q '^rustfmt'; then
-        echo "  ✓ rustfmt (nightly)"
+    # 查的是 just fmt / just lint 真正会用的那条工具链（见文件开头的 fmt_toolchain），
+    # 而不是写死的 nightly——channel 钉成日期版本时这两者不是一回事。
+    if rustup component list --toolchain '{{ fmt_toolchain }}' --installed 2>/dev/null | grep -q '^rustfmt'; then
+        echo "  ✓ rustfmt ({{ fmt_toolchain }})"
     else
-        echo "  ✗ rustfmt (nightly) -> rustup toolchain install nightly --allow-downgrade --profile minimal --component rustfmt"
+        echo "  ✗ rustfmt ({{ fmt_toolchain }}) -> just install-tools"
         missing=1
     fi
 
@@ -477,9 +534,16 @@ install-tools:
         echo ""
         cargo install --locked "${tools[@]}"
     fi
-    # --allow-downgrade：某天的 nightly 偶尔会缺 rustfmt 组件，加上它 rustup 会自动
-    # 退回到最近一个组件齐全的 nightly，而不是直接拒绝安装。
-    rustup toolchain install nightly --allow-downgrade --profile minimal --component rustfmt
+    # 只有 channel 不是 nightly 时才需要**额外**装一份 nightly 的 rustfmt。
+    # channel 本身就是 nightly（含 nightly-YYYY-MM-DD）时，rust-toolchain.toml 的
+    # components 里已经带了 rustfmt，再装一条滚动 nightly 反而会引入第二个 rustfmt
+    # 版本——排版结果可能和项目工具链不一致，正是 fmt_toolchain 要避开的那个坑。
+    channel=$(grep -m1 '^channel' rust-toolchain.toml 2>/dev/null | sed -E 's/.*"([^"]+)".*/\1/')
+    if [ "${channel#nightly}" = "$channel" ]; then
+        # --allow-downgrade：某天的 nightly 偶尔会缺 rustfmt 组件，加上它 rustup 会自动
+        # 退回到最近一个组件齐全的 nightly，而不是直接拒绝安装。
+        rustup toolchain install nightly --allow-downgrade --profile minimal --component rustfmt
+    fi
 
 # 启用仓库里的 .githooks/，而不是往 .git/hooks/ 拷贝一份。
 #
