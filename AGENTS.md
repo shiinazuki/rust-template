@@ -111,7 +111,15 @@ just nll        # 同一条 nightly，但把借用检查器换回 NLL
 
 ## 提交
 
-Conventional Commits，`.githooks/commit-msg` 会强制校验（`just hooks` 启用）：
+`just hooks` 启用后有三层检查，**不要用 `--no-verify` 绕过**：
+
+| 钩子 | 跑什么 |
+| --- | --- |
+| `pre-commit` | 按改动的文件类型跑 rustfmt / clippy / taplo / cargo-deny / typos + 私钥检测，秒级 |
+| `commit-msg` | 校验下面的提交格式 |
+| `pre-push` | 完整的 `just ci` |
+
+提交信息用 Conventional Commits：
 
 ```
 feat(cli): 支持 --json 输出

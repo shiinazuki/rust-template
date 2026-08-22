@@ -171,13 +171,24 @@ just hooks
 钩子脚本就在仓库的 [`.githooks/`](.githooks/) 里，`just hooks` 把 `core.hooksPath`
 指过去（git 不会自动信任仓库里的钩子，所以每个 clone 都要跑一次）：
 
-| 钩子 | 作用 |
-| --- | --- |
-| `commit-msg` | 校验 Conventional Commits —— CHANGELOG 分组与 cargo-release 的版本推导都依赖它 |
-| `pre-push` | 跑一遍 `just ci`（lint / test / audit） |
+| 钩子 | 作用 | 大概耗时 |
+| --- | --- | --- |
+| `pre-commit` | 按**本次改动的文件类型**跑快速检查：`.rs` → rustfmt + clippy；`.toml` → taplo；`Cargo.toml` / `Cargo.lock` / `deny.toml` → cargo-deny；外加拼写与私钥检测 | 秒级 |
+| `commit-msg` | 校验 Conventional Commits —— CHANGELOG 分组与 cargo-release 的版本推导都依赖它 | 瞬间 |
+| `pre-push` | 跑一遍 `just ci`（lint / test / audit） | 十几秒起 |
 
-刻意**没有** pre-commit 阶段的钩子：提交是本地动作，做到一半的活儿也该能存档；
-每次 commit 都跑 clippy + 全量测试，最后只会让人养成 `--no-verify` 的习惯。
+三层是有意分开的，越往后越全也越慢：
+
+- **`pre-commit` 里刻意不跑测试。** 提交是本地动作，做到一半的活儿也该能存档；
+  每次 commit 都等一遍全量测试，最后只会让人养成 `--no-verify` 的习惯——那才是真的失去防线。
+- **`cargo deny` 只在依赖真的可能变了时才跑**（`Cargo.toml` / `Cargo.lock` / `deny.toml`
+  被改动）。它要解析整棵依赖树，改一行注释也跑一遍纯属浪费。
+- **`pre-push` 才是真正的闸门。** commit 是本地的、随时能 `amend` / `rebase` 改掉；
+  push 才是「出去了」。所以全量检查放在这一层，没过就推不出去。
+
+> `pre-commit` 检查的是**工作区**当前状态，不是暂存区快照。`git commit -a` 下两者一致；
+> 用 `git add -p` 做部分暂存时，未暂存的改动也会被算进来。要精确只检查暂存内容，
+> 得先 stash 掉未暂存的改动再恢复——那是个经典的丢代码来源，模板刻意不做。
 
 临时跳过：`git commit --no-verify` / `git push --no-verify`。
 停用：`git config --unset core.hooksPath`。

@@ -516,6 +516,7 @@ hooks:
     chmod +x .githooks/*
     git config core.hooksPath .githooks
     echo "✓ 已启用 .githooks/"
+    echo "    pre-commit  按改动跑快速检查（fmt / clippy / taplo / typos / 私钥）"
     echo "    commit-msg  校验 Conventional Commits（CHANGELOG 与版本推导依赖它）"
     echo "    pre-push    跑一遍 just ci（lint / test / audit）"
     echo "  临时跳过：git commit --no-verify / git push --no-verify"

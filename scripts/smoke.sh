@@ -121,7 +121,8 @@ assert_layout() {
     # --- 与开关无关，永远该在 ---------------------------------------------
     for f in Cargo.toml README.md AGENTS.md justfile rust-toolchain.toml rustfmt.toml clippy.toml \
              deny.toml .taplo.toml .typos.toml cliff.toml release.toml bacon.toml \
-             .config/nextest.toml .cargo/config.toml .githooks/pre-push \
+             .config/nextest.toml .cargo/config.toml \
+             .githooks/pre-commit .githooks/commit-msg .githooks/pre-push \
              .editorconfig .gitattributes .gitignore src/lib.rs tests/integration.rs; do
         have "$f" "所有组合都该生成"
     done
