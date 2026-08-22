@@ -23,13 +23,25 @@ smoke-keep:
     bash scripts/smoke.sh --keep
 
 [group('template')]
-[doc('检查模板仓库自身：pre-commit + workflow 审计 + shell 脚本 + 文档链接')]
+[doc('检查模板仓库自身：TOML + 拼写 + workflow 审计 + shell 脚本 + 文档链接')]
 template-lint:
     #!/usr/bin/env bash
     set -uo pipefail
     fail=0
-    echo "== pre-commit =="
-    pre-commit run --all-files || fail=1
+    # 模板里十几个 TOML 必须同时是合法 TOML —— 「liquid 标签只能锚在注释行行尾」
+    # 那条约定一旦被破坏，这里会立刻发现。
+    echo "== taplo（TOML 排版与语法）=="
+    if command -v taplo >/dev/null 2>&1; then
+        taplo fmt --check || fail=1
+    else
+        echo "  - 未安装 taplo，跳过（cargo binstall taplo-cli）"
+    fi
+    echo "== typos（拼写）=="
+    if command -v typos >/dev/null 2>&1; then
+        typos || fail=1
+    else
+        echo "  - 未安装 typos，跳过（cargo binstall typos-cli）"
+    fi
     echo "== zizmor（workflow 安全审计）=="
     if command -v zizmor >/dev/null 2>&1; then
         zizmor --min-severity medium --no-progress .github/workflows || fail=1
@@ -46,7 +58,8 @@ template-lint:
     fi
     echo "== shellcheck =="
     if command -v shellcheck >/dev/null 2>&1; then
-        shellcheck scripts/*.sh || fail=1
+        # .githooks/ 一并检查：它们会在每个使用者的机器上执行
+        shellcheck scripts/*.sh .githooks/* || fail=1
     else
         echo "  - 未安装 shellcheck，跳过（brew install shellcheck）"
     fi
@@ -65,13 +78,10 @@ template-lint:
     exit "$fail"
 
 [group('template')]
-[doc('把 workflow 里钉死的 action hash 与 pre-commit 的 rev 更新到最新')]
+[doc('提示 workflow 里钉死的 action hash 该怎么更新')]
 template-update:
     #!/usr/bin/env bash
     set -euo pipefail
-    echo "更新 pre-commit hooks 的 rev..."
-    pre-commit autoupdate
-    echo ""
     echo "workflow 里的 action 是用 commit hash 钉死的，由 dependabot 每周自动升级。"
     # 用单引号：双引号里的反引号会被 bash 当成命令替换，`# vX.Y.Z` 会整段消失
     echo '想手动来一次的话，对照 .github/workflows/*.yaml 里 `# vX.Y.Z` 注释逐个更新：'

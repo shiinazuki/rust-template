@@ -201,14 +201,15 @@ cargo add clap --features derive,env
 | `Dockerfile` / `.dockerignore` | 多阶段构建 + distroless 运行镜像，可选生成 |
 | `.config/nextest.toml` | 测试运行器配置（CI profile + JUnit + 超时 + 测试分组示例） |
 | `.cargo/config.toml` | cargo 项目级配置：网络重试、依赖解析策略，以及链接器 / 并行前端 / 镜像源的开关 |
-| `.pre-commit-config.yaml` | Git 钩子（pre-commit / commit-msg / pre-push） |
+| `AGENTS.md` | 给 AI 编码助手的项目约定（会跟着渲染，按 async / 错误处理开关裁剪） |
+| `.githooks/` | Git 钩子（commit-msg 校验提交信息 / pre-push 跑 `just ci`），`just hooks` 启用 |
 | `.devcontainer/` | Dev Container / Codespaces 配置 |
 | `.editorconfig` / `.gitattributes` / `.gitignore` | 编辑器与 git 的基础约定 |
-| `.github/workflows/build.yaml` | CI：lint / test / deny / workflows / msrv（nightly 项目上改跑 nll）/ hack / semver / miri |
+| `.github/workflows/build.yaml` | CI：lint / test / deny / workflows / msrv（nightly 项目上改跑 nll）/ hack / semver |
 | `.github/workflows/release.yaml` | tag 触发：验证 → Release → 跨平台二进制（可选 SLSA provenance）→ crates.io |
 | `.github/workflows/audit.yaml` | 每日定时依赖安全审计 |
 | `.github/dependabot.yml` | cargo / actions 依赖的自动升级（选了 Docker 时再加 docker 一类） |
-| `.gitlab-ci.yml` | GitLab CI 的等价流水线（lint / test / deny / hack / msrv / semver / miri），可选生成 |
+| `.gitlab-ci.yml` | GitLab CI 的等价流水线（lint / test / deny / hack / msrv / semver），可选生成 |
 
 只属于模板仓库、**不会**进入生成项目的文件（在 `cargo-generate.toml` 的 `ignore` 里）：
 
@@ -240,9 +241,8 @@ error: custom toolchain '{{ toolchain }}' specified in override file ... is not 
 `cargo generate --path .` 同样会报这个错**——rustup 在 cargo 真正启动之前就失败了。
 自测脚本因此会先 `cd` 到临时目录，再用绝对路径指回模板。
 
-（`.pre-commit-config.yaml` 里的 cargo 类钩子都带了
-`grep -qF "{{ project-name }}" Cargo.toml && exit 0` 的守卫，正是为了在模板仓库里自动跳过。
-所以 `pre-commit run --all-files` 在模板仓库里是可以正常跑的。）
+（`.githooks/pre-push` 里带了 `grep -qF "{{ project-name }}" Cargo.toml` 的守卫，
+正是为了在模板仓库里自动跳过——那里跑不了 `just ci`。）
 
 ### 改完模板后的自测
 
@@ -253,7 +253,7 @@ just smoke          # 10 组：覆盖每个开关的开与关，含 2 组 nightl
 just smoke-full     # 19 组：bin 的 3 个源码开关全排列 + lib + nightly
                     #        + 三种 CI 平台 + 协议
 just smoke-keep     # 跑完保留生成的项目，方便进去手工看
-just template-lint  # 检查模板仓库自身：pre-commit + zizmor + actionlint + shellcheck + lychee
+just template-lint  # 检查模板仓库自身：taplo + typos + zizmor + actionlint + shellcheck + lychee
 ```
 
 每个组合会依次验证：
@@ -321,7 +321,7 @@ assert_eq!(msg, "Hello, world!");
 | `.github/workflows/**` | GitHub Actions 的 `${{ ... }}` |
 | `justfile` / `docker.just` / `template.just` | just 自己的 `{{ 变量 }}` |
 | `release.toml` | cargo-release 的 `{{version}}` |
-| `.pre-commit-config.yaml` | 钩子里用来识别模板仓库的 `{{ project-name }}` 字面量 |
+| `.githooks/**` | `pre-push` 里用来识别模板仓库的 `{{ project-name }}` 字面量 |
 | `scripts/**` | shell 的 `${...}` |
 | `.gitlab-ci.yml` | GitLab CI 的 `$VARIABLE` 与规则表达式 |
 | `README.md` | 就是本文件，里面有大量占位符示例 |
@@ -404,12 +404,11 @@ Rhai 的 `system::command` 受 cargo-generate 的命令确认机制管辖：
 
 ### 依赖的上游版本
 
-三处需要跟进，都有对应的自动化：
+两处需要跟进：
 
 | 位置 | 形式 | 谁来更新 |
 | --- | --- | --- |
 | workflow 里的 action | commit hash + `# vX.Y.Z` 注释 | 生成项目里由 dependabot 每周更新；模板仓库自己要手动跑 `just template-update` |
-| `.pre-commit-config.yaml` 的 `rev` | tag | `pre-commit autoupdate`（含在 `just template-update` 里） |
 | `Cargo.toml` 里可选依赖的版本 | caret 版本 | 手动，改动很少 |
 
 action 用 hash 而不是 tag，是因为 tag 是可变的：上游账号一旦被攻破，

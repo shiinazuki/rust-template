@@ -21,13 +21,52 @@ pkg := `grep -m1 '^name' Cargo.toml | sed -E 's/.*"(.*)".*/\1/'`
 default:
     @just --list --unsorted
 
+# 「你在模板仓库里，这里跑不了 cargo」的统一闸门。
+#
+# 模板仓库根目录的 Cargo.toml 还是 liquid 占位符，rust-toolchain.toml 的 channel
+# 也不是合法工具链名，任何 cargo 命令都会失败——问题在于失败得**很难看懂**：
+#
+#   - 一般情况是 rustup 先拦下：`custom toolchain '{{{{ toolchain }}' is not installed`
+#   - 但 `cargo +nightly fmt` 里的 +nightly 会显式覆盖 rust-toolchain.toml，绕过 rustup
+#     往前多走一步，死在 `cargo metadata` 上，再吐一整屏 rustfmt 的 usage
+#
+# 两种报错都不会告诉你「该去跑 just smoke」。下面几个最常被顺手敲的配方因此先撞这道闸。
+#
+# 判断依据是 Cargo.toml 里有没有 liquid 标签。用 `{%` 而不是 `{{`：后者是 just 自己的
+# 插值语法，写在 justfile 里会被 just 抢先解释掉。
+# （生成出来的项目里占位符已全部替换，这条 grep 永远不匹配，配方照常执行。）
+#
+# ⚠️ 写法上有个坑：just 的配方体**每一行都必须缩进**，顶格的行会被当成新的语法项。
+#    所以这里用 echo 而不是 heredoc —— heredoc 的内容和结束符都得顶格，
+#    just 会在解析阶段就报 `unknown start of token`。
+[private]
+_generated-only:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if grep -q '{%' Cargo.toml 2>/dev/null; then
+        {
+            echo "✗ 这里是【模板仓库】，不是生成出来的项目——跑不了 cargo。"
+            echo
+            echo "  Cargo.toml 里还是 liquid 占位符，rust-toolchain.toml 的 channel"
+            echo "  也不是合法工具链名。"
+            echo
+            echo "  模板仓库该跑的是："
+            echo "      just smoke          # 生成 10 组项目并逐个跑完整检查（模板真正的 CI）"
+            echo "      just smoke-full     # 19 组完整矩阵"
+            echo "      just template-lint  # 检查模板仓库自身（taplo / typos / zizmor / ...）"
+            echo
+            echo "  想验证某个具体组合：just smoke-keep 跑完保留现场，再进那个目录跑 just ci。"
+        } >&2
+        exit 1
+    fi
+
 # ---------------------------------------------------------------------------
 # 日常开发
 # ---------------------------------------------------------------------------
 
 [group('dev')]
 [doc('快速检查代码编译')]
-check:
+check: _generated-only
     cargo check --all-targets --all-features
 
 # 纯库项目没有可执行文件，`cargo run` 会直接报 "a bin target must be available"。
@@ -47,7 +86,7 @@ run *args:
 # 两条一起跑，免得「格式化过了」却还是挂在 CI 的 TOML 检查上。
 [group('dev')]
 [doc('格式化代码与 TOML（rustfmt.toml 用到 unstable 选项，必须走 nightly）')]
-fmt:
+fmt: _generated-only
     cargo +nightly fmt --all
     taplo fmt
 
@@ -64,7 +103,7 @@ dev:
 
 [group('dev')]
 [doc('生成并打开 API 文档')]
-doc:
+doc: _generated-only
     cargo doc --no-deps --all-features --open
 
 [group('dev')]
@@ -110,7 +149,7 @@ clean:
 # 本地不跑 cargo doc 根本看不见，推上去才在 CI 的 RUSTDOCFLAGS="-D warnings" 上挂掉。
 [group('check')]
 [doc('格式化检查 / TOML 排版 / clippy / 拼写检查 / 文档警告（与 CI 的 lint job 等价）')]
-lint:
+lint: _generated-only
     cargo +nightly fmt --all -- --check
     taplo fmt --check
     cargo clippy --all-targets --all-features -- -D warnings
@@ -119,7 +158,7 @@ lint:
 
 [group('check')]
 [doc('运行测试（含 doctest）')]
-test:
+test: _generated-only
     #!/usr/bin/env bash
     set -euo pipefail
     cargo nextest run --all-targets --all-features
@@ -140,7 +179,7 @@ coverage-html:
 
 [group('check')]
 [doc('依赖安全与 License 检查')]
-audit:
+audit: _generated-only
     cargo deny check
 
 # 和 CI 的 hack job 等价。只跑 `--all-features` 会漏掉「单独开某个 feature 编不过」，
@@ -225,34 +264,6 @@ nll:
     #    以后在那边加了编译参数，记得同步到这一行。
     CARGO_TARGET_DIR=target/nll RUSTFLAGS=-Zpolonius=off \
         cargo check --locked --all-targets --all-features
-
-# CI 的 miri job 在本地的等价物：在解释器里跑测试，检测未定义行为（越界、悬垂指针、
-# 数据竞争、对齐错误）。本模板默认 `unsafe_code = "forbid"`，你自己的代码里跑不出 UB，
-# 它的价值在于**依赖里的 unsafe** 也会被一并检查到。
-#
-# 判断条件和 CI 完全一致：只在 nightly 上可用；检测到 tokio 就跳过（起 runtime 要 epoll，
-# miri 不支持这类系统调用，留着只会得到一个永远红着的检查）。
-# 刻意不放进 `just ci`：miri 比原生慢一到两个数量级，不适合塞进随手跑的命令。
-[group('check')]
-[doc('在 miri 解释器里跑测试检测未定义行为（仅 nightly；有 tokio 时自动跳过）')]
-miri:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    channel=$(grep -m1 '^channel' rust-toolchain.toml | sed -E 's/.*"([^"]+)".*/\1/')
-    if [ "${channel#nightly}" = "$channel" ]; then
-        echo "工具链是 ${channel}：miri 仅 nightly 可用，跳过"
-        exit 0
-    fi
-    if grep -qE '^[[:space:]]*tokio[[:space:]]*=' Cargo.toml; then
-        echo "检测到 tokio：miri 不支持 epoll 等系统调用，跳过"
-        exit 0
-    fi
-    # --allow-downgrade：miri 组件偶尔会在某天的 nightly 里缺席，有了它 rustup 会
-    # 自动退回到最近一个带 miri 的 nightly，而不是直接失败。
-    rustup toolchain install nightly --allow-downgrade --profile minimal --component miri,rust-src
-    cargo +nightly miri setup
-    # -Zmiri-disable-isolation：允许测试读时钟 / 环境变量，否则很多测试直接报错
-    MIRIFLAGS=-Zmiri-disable-isolation cargo +nightly miri test --locked --all-features
 
 # 覆盖 CI 里的 lint / test / deny 三个 job。
 # 刻意不含 hack / msrv / nll：第一个要装 cargo-hack，第二个会 `rustup toolchain install`
@@ -350,18 +361,14 @@ release-execute level="patch":
 # post-script 会主动删掉它。而 CI 与 Dockerfile 全程用 `--locked`——
 # 没有 lock 就会在第一次推送时失败，报错信息离「你选了哪个开关」很远。
 [group('setup')]
-[doc('首次拉起项目：生成 Cargo.lock、安装 pre-commit 钩子')]
-bootstrap:
+[doc('首次拉起项目：生成 Cargo.lock、启用 git 钩子')]
+bootstrap: _generated-only
     #!/usr/bin/env bash
     set -euo pipefail
     # cargo fetch 只解析依赖树并下载，不编译，是生成 Cargo.lock 最快的方式
     cargo fetch
     echo "✓ Cargo.lock 已就绪"
-    if command -v pre-commit >/dev/null 2>&1; then
-        pre-commit install --install-hooks
-    else
-        echo "- 未装 pre-commit，跳过钩子（pipx install pre-commit 之后跑 just hooks 补上）"
-    fi
+    just hooks
     echo ""
     echo "接下来：just doctor 体检工具链，just ci 走一遍完整检查。"
 
@@ -417,8 +424,15 @@ doctor:
         fi
     done
 
+    echo "== git 钩子 =="
+    if [ "$(git config --get core.hooksPath 2>/dev/null)" = ".githooks" ]; then
+        echo "  ✓ .githooks 已启用（commit-msg / pre-push）"
+    else
+        echo "  - 未启用 -> just hooks"
+    fi
+
     echo "== 可选 =="
-    for t in pre-commit cargo-binstall cargo-flamegraph docker; do
+    for t in cargo-binstall cargo-flamegraph docker; do
         command -v "$t" >/dev/null 2>&1 \
             && echo "  ✓ ${t}" \
             || echo "  - ${t}（未安装，非必需）"
@@ -467,7 +481,42 @@ install-tools:
     # 退回到最近一个组件齐全的 nightly，而不是直接拒绝安装。
     rustup toolchain install nightly --allow-downgrade --profile minimal --component rustfmt
 
+# 启用仓库里的 .githooks/，而不是往 .git/hooks/ 拷贝一份。
+#
+# 用 core.hooksPath 的好处是钩子内容跟着版本库走：改了能 review、能 diff，
+# 也不会出现「你机器上的钩子和我机器上的不一样」。代价是每个 clone 都要跑一次
+# 这条命令——git 不会自动信任仓库里的钩子（那是设计如此，否则 clone 一个仓库
+# 就等于同意执行里面的任意代码）。
 [group('setup')]
-[doc('安装 pre-commit 钩子（pre-commit / commit-msg / pre-push）')]
+[doc('启用 git 钩子（commit-msg 校验提交信息 / pre-push 跑 just ci）')]
 hooks:
-    pre-commit install --install-hooks
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # 清理早期版本用 pre-commit 装进 .git/hooks/ 的脚本。
+    #
+    # 为什么非清不可：那些脚本写死了 `--config=.pre-commit-config.yaml`，而本模板已经
+    # 不再有那个文件，于是每次 git commit 都会得到一句
+    #   "No .pre-commit-config.yaml file was found"
+    # ——它既不说是谁在报错，也不说该怎么办。设了 core.hooksPath 之后 git 确实不再看
+    # .git/hooks/，但只要有人哪天 `git config --unset core.hooksPath`，它就又回来了。
+    #
+    # 只删自报家门的那些（文件头有 pre-commit 的生成标记），手写的钩子不动。
+    for h in pre-commit commit-msg pre-push post-commit post-checkout post-merge; do
+        f=".git/hooks/$h"
+        if [ -f "$f" ] && grep -q "File generated by pre-commit" "$f" 2>/dev/null; then
+            rm -f "$f"
+            echo "  已清理遗留的 pre-commit 钩子：$f"
+            # pre-commit 安装时会把原有的同名钩子改名备份成 .legacy
+            if [ -f "$f.legacy" ]; then
+                echo "  ⚠️ 发现 $f.legacy（pre-commit 当初备份的旧钩子），保留着，需要的话自己看一眼"
+            fi
+        fi
+    done
+    # cargo-generate 不保证保留可执行位，这里补一次，省得钩子被静默忽略
+    chmod +x .githooks/*
+    git config core.hooksPath .githooks
+    echo "✓ 已启用 .githooks/"
+    echo "    commit-msg  校验 Conventional Commits（CHANGELOG 与版本推导依赖它）"
+    echo "    pre-push    跑一遍 just ci（lint / test / audit）"
+    echo "  临时跳过：git commit --no-verify / git push --no-verify"
+    echo "  停用：git config --unset core.hooksPath"

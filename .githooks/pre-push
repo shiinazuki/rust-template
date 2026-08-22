@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# 推送前跑一遍 CI 的主要检查（just ci = lint + test + audit）。
+#
+# 为什么放 pre-push 而不是 pre-commit：提交是本地动作，做到一半的活儿也该能存档；
+# 推送才是「给别人看」的那一步。每次 commit 都跑一遍 clippy + 全量测试，
+# 迭代体验会很难受，而且大多数人最后都会养成 --no-verify 的习惯。
+#
+# 安装：just hooks        临时跳过：git push --no-verify
+set -euo pipefail
+
+# 模板仓库自身跑不了 cargo（rust-toolchain.toml 里的 channel 还是占位符，
+# rustup 会在 cargo 启动前就报错）。生成出来的项目里占位符已被替换，
+# 这行 grep 永远不匹配，钩子照常执行。
+#
+# ⚠️ 本文件在 cargo-generate.toml 的 exclude 列表里，不做变量替换 ——
+#    下面这个占位符必须原样保留，否则它会被换成真实包名而永远匹配成功。
+if grep -qF '{{ project-name }}' Cargo.toml 2>/dev/null; then
+    exit 0
+fi
+
+if ! command -v just >/dev/null 2>&1; then
+    echo "未安装 just，跳过 pre-push 检查（cargo binstall just）" >&2
+    exit 0
+fi
+
+just ci

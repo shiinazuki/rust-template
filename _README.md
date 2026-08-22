@@ -162,15 +162,30 @@ cargo install cargo-binstall
 | `git-cliff` | 生成 CHANGELOG |
 | `bacon` | 后台实时监控 |
 
-### pre-commit
+### git 钩子
 
 ```bash
-pipx install pre-commit
 just hooks
 ```
 
-`just hooks` 会装上 `pre-commit`、`commit-msg`、`pre-push` 三类钩子：
-提交前跑格式化 / clippy / 拼写检查，提交时校验 commit message 规范，推送前跑全量测试。
+钩子脚本就在仓库的 [`.githooks/`](.githooks/) 里，`just hooks` 把 `core.hooksPath`
+指过去（git 不会自动信任仓库里的钩子，所以每个 clone 都要跑一次）：
+
+| 钩子 | 作用 |
+| --- | --- |
+| `commit-msg` | 校验 Conventional Commits —— CHANGELOG 分组与 cargo-release 的版本推导都依赖它 |
+| `pre-push` | 跑一遍 `just ci`（lint / test / audit） |
+
+刻意**没有** pre-commit 阶段的钩子：提交是本地动作，做到一半的活儿也该能存档；
+每次 commit 都跑 clippy + 全量测试，最后只会让人养成 `--no-verify` 的习惯。
+
+临时跳过：`git commit --no-verify` / `git push --no-verify`。
+停用：`git config --unset core.hooksPath`。
+
+> **从旧版模板升级过来的项目**：早期版本用的是 pre-commit，`.git/hooks/` 里可能还留着
+> 它装的脚本。`.pre-commit-config.yaml` 已经不在了，那些脚本于是会在每次 `git commit`
+> 时报一句 `No .pre-commit-config.yaml file was found`。跑一次 `just hooks` 即可——
+> 它会把这类残留自动清掉。
 
 ### 容器里开发（可选）
 
@@ -204,7 +219,6 @@ just audit              # cargo deny check
 just hack               # feature 幂集检查
 just msrv               # 验证 MSRV 能编译（nightly 项目自动转去跑 nll）
 just nll                # 用 stable 的借用检查器编一遍（仅 nightly 项目有意义）
-just miri               # 在解释器里跑测试检测未定义行为（仅 nightly，有 tokio 时自动跳过）
 just ci                 # 本地跑一遍 CI 的主要检查（lint / test / audit）
 
 just unused             # 找出没用到的依赖（cargo-machete）
@@ -240,14 +254,13 @@ just docker-clean       # 删除本地镜像
 `invalid_html_tags` 这些都只是 `warn`，本地不跑 `cargo doc` 就看不见，
 推上去才会在 CI 的 `RUSTDOCFLAGS="-D warnings"` 上挂掉。
 
-`unused`、`semver`、`hack`、`msrv`、`nll`、`miri` 刻意留在外面手动跑：第一个对宏里用到的依赖会误报，
+`unused`、`semver`、`hack`、`msrv`、`nll` 刻意留在外面手动跑：第一个对宏里用到的依赖会误报，
 第二个需要和已发布版本联网比对，第三个要额外装 cargo-hack、feature 多起来还会变慢，
 第四个会 `rustup toolchain install` 往你机器上装一整条工具链，
-第五个换了 `RUSTFLAGS` 等于一次全量重编，第六个比原生慢一到两个数量级——
+第五个换了 `RUSTFLAGS` 等于一次全量重编——
 都不适合塞进「随手跑一下」的命令里。
 
-除 `unused` 外，它们在两套 CI 里都有对应的 job（`semver` 只对纯库项目生效，
-`miri` 只在 nightly 上跑）。`unused` 刻意**没有**进任何 CI：误报率高的检查一旦当上门禁，
+除 `unused` 外，它们在两套 CI 里都有对应的 job（`semver` 只对纯库项目生效）。`unused` 刻意**没有**进任何 CI：误报率高的检查一旦当上门禁，
 结果只会是所有人都学会忽略它。需要时手动跑 `just unused`。
 
 ## 工程结构
@@ -348,13 +361,14 @@ just docker-clean       # 删除本地镜像
 | [`Dockerfile`](Dockerfile) | 多阶段构建 + distroless 运行镜像 |{% endif %}
 | [`.config/nextest.toml`](.config/nextest.toml) | 测试运行器配置（含 CI 专用 profile、JUnit、超时与测试分组示例） |
 | [`.cargo/config.toml`](.cargo/config.toml) | cargo 项目级配置：网络重试、依赖解析策略，以及链接器 / 并行前端 / 镜像源的开关都收在这里 |
-| [`.pre-commit-config.yaml`](.pre-commit-config.yaml) | Git 钩子（pre-commit / commit-msg / pre-push） |
+| [`AGENTS.md`](AGENTS.md) | 给 AI 编码助手的项目约定（格式化必须走 nightly、零警告、不许压制 lint 等） |
+| [`.githooks/`](.githooks/) | Git 钩子（commit-msg 校验提交信息 / pre-push 跑 `just ci`），`just hooks` 启用 |
 | [`.editorconfig`](.editorconfig) | 跨编辑器的基础排版约定 |
 | [`.gitattributes`](.gitattributes) | 入库换行统一、二进制标记、`Cargo.lock` 折叠 |
 | [`.devcontainer/`](.devcontainer/) | Dev Container / Codespaces 配置 |{% if ci == "github" %}
 | [`.github/workflows/`](.github/workflows/) | CI（build / release / audit） |
 | [`.github/dependabot.yml`](.github/dependabot.yml) | 依赖自动升级：cargo / actions{% if docker and crate_type == "bin" %} / docker 基础镜像{% endif %} |{% endif %}{% if ci == "gitlab" %}
-| [`.gitlab-ci.yml`](.gitlab-ci.yml) | GitLab CI：lint / test / deny / hack / msrv / semver / miri + tag 触发 release |{% endif %}
+| [`.gitlab-ci.yml`](.gitlab-ci.yml) | GitLab CI：lint / test / deny / hack / msrv / semver + tag 触发 release |{% endif %}
 {% if ci == "github" %}
 ## CI
 
@@ -372,7 +386,6 @@ just docker-clean       # 删除本地镜像
 - **hack** —— 遍历 feature 幂集，防止「单独开某个 feature 编不过」
 - **semver** —— 以上一个 tag 为基线检查公开 API 破坏性变更（仅**纯库**项目，没有 tag 时跳过；
   二进制项目的 `src/lib.rs` 是自用的内部库，不对外承诺 API）
-- **miri** —— 在解释器里跑测试检测未定义行为（**仅 nightly**，stable 项目自动跳过）
 - **docker** —— 构建一次容器镜像确认 Dockerfile 没坏（仅选了 Docker 的项目；只构建不推送）
 
 打 `v*` tag 触发 [`release.yaml`](.github/workflows/release.yaml)：
@@ -400,9 +413,6 @@ just docker-clean       # 删除本地镜像
 - **第三方 action 全部用 commit hash 钉死**（后面的 `# vX.Y.Z` 是给人看的）。
   tag 是可变的，上游账号一旦被攻破，把 `v3` 指向恶意提交就能直接进你的 CI。
   hash 由 dependabot 每周自动更新。
-
-> Miri 比原生慢一到两个数量级，且不支持大多数 FFI / 系统调用。项目一旦引入 C 依赖或做真实 IO，
-> 这个 job 会开始失败——那时直接把它从 workflow 里删掉即可，它是可选项。
 {% endif %}{% if ci == "gitlab" %}
 ## CI
 
@@ -415,7 +425,6 @@ just docker-clean       # 删除本地镜像
 - **msrv** —— 用声明的最低版本编译一遍；nightly 项目改成用 `-Zpolonius=off` 编一遍，
   拦下只有新借用检查器才编得过的代码
 - **semver** —— 以上一个 tag 为基线检查公开 API 破坏性变更（仅**纯库**项目，没有 tag 时跳过）
-- **miri** —— 在解释器里跑测试检测未定义行为（**仅 nightly**，检测到 tokio 时自动跳过）
 
 打 `v*` tag 时额外跑 **verify-tag**（从零验证 + 核对版本号）、**changelog**、
 **build-binary**、**release**。
@@ -443,7 +452,7 @@ fix: 修正边界条件下的 panic
 docs: 补充 README
 ```
 
-commit message 由 pre-commit 的 `conventional-pre-commit` 钩子强制校验。
+commit message 由 [`.githooks/commit-msg`](.githooks/commit-msg) 强制校验（`just hooks` 启用后生效）。
 
 ## License
 

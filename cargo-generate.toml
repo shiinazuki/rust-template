@@ -34,9 +34,9 @@ exclude = [
   "justfile", # just 自己的 {{ 变量 }} 插值
   "docker.just", # 同上，just 的插值
   "release.toml", # cargo-release 的 {{version}} / {{crate_name}}
-  # 钩子里用 `{{ project-name }}` 判断是不是模板仓库本身，
+  # pre-push 钩子里用 `{{ project-name }}` 判断是不是模板仓库本身，
   # 这段字面量必须原样保留，不能被替换成真实包名
-  ".pre-commit-config.yaml",
+  ".githooks/**",
   "README.md", # 模板仓库自己的说明文档，里面全是占位符示例
   "scripts/**", # 模板自测脚本，里面有 shell 的 ${...} 与 cargo-generate 参数
   "template.just", # 模板仓库自己的 just 配方（just 的 {{ 变量 }} 插值）

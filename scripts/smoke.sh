@@ -56,7 +56,7 @@ unset RUSTUP_TOOLCHAIN
 #    带空格的值会被拆成三列。下面读取时再把 `dual` 翻译回完整的 SPDX 表达式。
 #
 # ⚠️ toolchain 那一列不要清一色写 stable：nightly 才是模板的**默认值**，
-#    而且 CI 里的 miri job 只在 nightly 下才跑。全测 stable 等于默认路径没人验过——
+#    全测 stable 等于默认路径没人验过——
 #    nightly 的 clippy/rustfmt 比 stable 严，生成的代码在它上面挂掉是很常见的事。
 matrix=(
     "minimal            bin stable  none   false false false false MIT"
@@ -119,9 +119,9 @@ assert_layout() {
     }
 
     # --- 与开关无关，永远该在 ---------------------------------------------
-    for f in Cargo.toml README.md justfile rust-toolchain.toml rustfmt.toml clippy.toml \
+    for f in Cargo.toml README.md AGENTS.md justfile rust-toolchain.toml rustfmt.toml clippy.toml \
              deny.toml .taplo.toml .typos.toml cliff.toml release.toml bacon.toml \
-             .config/nextest.toml .cargo/config.toml .pre-commit-config.yaml \
+             .config/nextest.toml .cargo/config.toml .githooks/pre-push \
              .editorconfig .gitattributes .gitignore src/lib.rs tests/integration.rs; do
         have "$f" "所有组合都该生成"
     done
@@ -376,7 +376,7 @@ PY
     if grep -rIn -e '{{' -e '{%' . \
         --exclude-dir=target --exclude-dir=.git --exclude-dir=workflows \
         --exclude=justfile --exclude=docker.just --exclude=release.toml \
-        --exclude=cliff.toml --exclude=.pre-commit-config.yaml --exclude=.gitlab-ci.yml \
+        --exclude=cliff.toml --exclude-dir=.githooks --exclude=.gitlab-ci.yml \
         >"$workdir/$proj.liquid.log" 2>&1; then
         echo "  ✗ 生成项目里残留未渲染的 liquid 占位符（$workdir/$proj.liquid.log）"; ok=0
     fi

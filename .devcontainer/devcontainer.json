@@ -4,7 +4,10 @@
   "name": "{{ project-name }}",
   // 官方 Rust 镜像，自带 rustup / cargo / git / 常用编译依赖。
   // 具体用哪个工具链由仓库里的 rust-toolchain.toml 决定，见下面的 postCreateCommand。
-  "image": "mcr.microsoft.com/devcontainers/rust:1-bookworm",
+  //
+  // trixie = Debian 13，和 Dockerfile / .gitlab-ci.yml 里的基础镜像保持同一个大版本。
+  // 上一代 bookworm（Debian 12）常规支持已于 2026-07-11 结束，新项目不该再从它起步。
+  "image": "mcr.microsoft.com/devcontainers/rust:1-trixie",
 
   "features": {
     // just 是本项目的命令入口

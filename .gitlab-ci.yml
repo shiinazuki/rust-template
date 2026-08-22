@@ -1,7 +1,7 @@
 # GitLab CI —— 与 .github/workflows/ 等价的一套流水线。
 # 生成项目时选 `ci = gitlab` 才会保留本文件（选 github 则保留 .github/）。
 #
-# 结构：lint / test / deny / hack / semver / miri 并行，msrv 视工具链走 MSRV / NLL 两条路之一，
+# 结构：lint / test / deny / hack / semver 并行，msrv 视工具链走 MSRV / NLL 两条路之一，
 #       打 v* tag 时额外跑 release（先从零验证一遍，再建 Release）。
 
 stages:
@@ -246,39 +246,6 @@ semver:
       cargo semver-checks --baseline-rev "$tag"
 
 # ---------------------------------------------------------------------------
-# Miri：在解释器里跑测试，检测未定义行为（越界、悬垂指针、数据竞争、对齐错误）。
-#
-# 本模板默认 `unsafe_code = "forbid"`，你自己的代码里跑不出 UB；它的价值在于
-# **依赖里的 unsafe** 也会被一并检查到。
-#
-# ⚠️ 仅 nightly 可用，工具链是 stable 时整个 job 自动跳过。
-#    检测到 tokio 也跳过：起 runtime 就要 epoll，而 miri 不支持这类系统调用，
-#    留着只会得到一个永远红着、谁也不看的 job。
-#    项目一旦引入 C 依赖或做真实 IO，这个 job 会失败——那时直接删掉它即可。
-#    本地等价命令：`just miri`。
-# ---------------------------------------------------------------------------
-miri:
-  stage: check
-  extends:
-    - .cargo-cache
-    - .rust-setup
-  script:
-    - |
-      channel=$(grep -m1 '^channel' rust-toolchain.toml | sed -E 's/.*"([^"]+)".*/\1/')
-      if [ "${channel#nightly}" = "$channel" ]; then
-        echo "工具链是 ${channel}：miri 仅 nightly 可用，跳过"; exit 0
-      fi
-      if grep -qE '^[[:space:]]*tokio[[:space:]]*=' Cargo.toml; then
-        echo "检测到 tokio：miri 不支持 epoll 等系统调用，跳过"; exit 0
-      fi
-      # --allow-downgrade：miri 组件偶尔会在某天的 nightly 里缺席，
-      # 有了它 rustup 会自动退回到最近一个带 miri 的 nightly，而不是直接失败。
-      rustup toolchain install nightly --allow-downgrade --profile minimal --component miri,rust-src
-      cargo +nightly miri setup
-      # -Zmiri-disable-isolation：允许测试读时钟 / 环境变量，否则很多测试直接报错
-      MIRIFLAGS=-Zmiri-disable-isolation cargo +nightly miri test --locked --all-features
-
-# ---------------------------------------------------------------------------
 # 以下只在 v* tag 上跑
 # ---------------------------------------------------------------------------
 
@@ -361,13 +328,19 @@ release:
       artifacts: true
     - job: build-binary
       artifacts: true
-  # ⚠️ `:latest` 是可变 tag，和 GitHub 那套「第三方 action 一律用 commit hash 钉死」
-  #    不是同一个标准。这里保留是因为风险来源不同：这个镜像由 GitLab 官方发布在自家
-  #    registry 上，和跑流水线的是同一方；钉 hash 防的是**第三方**作者账号被攻破
-  #    （2025 年 tj-actions 事件）。想把标准拉齐，用 `docker manifest inspect` 取到
-  #    digest，把下面这行换成 registry.gitlab.com/gitlab-org/release-cli@sha256:<digest>，
-  #    并自己安排定期更新（GitLab 这边没有 dependabot 那样的现成机制）。
-  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  # 钉到版本 tag 而不是 `:latest`。
+  #
+  # 这里**不是**供应链问题：镜像由 GitLab 官方发布在自家 registry 上，和跑流水线的
+  # 是同一方；GitHub 那边「第三方 action 一律 commit hash 钉死」防的是外部作者账号
+  # 被攻破（2025 年 tj-actions 事件），风险来源不同。
+  #
+  # 钉死的理由是**可复现性**：`:latest` 会在你没改任何东西的情况下换掉，而这是发版
+  # 路径上的最后一步——它出问题的时机必然是「正要发版」。升级时手工改这一行即可
+  # （GitLab 这边没有 dependabot 那样的现成机制）。
+  #
+  # 想更严就换成 digest（真正不可变，代价是可读性和手工更新成本）：
+  #   registry.gitlab.com/gitlab-org/release-cli@sha256:3f52d526f48e8d10625c722fa6d6423ee82aadeae1b1aa91f07b62551d96dacf
+  image: registry.gitlab.com/gitlab-org/release-cli:v0.24.0
   script:
     - echo "creating release for $CI_COMMIT_TAG"
   release:

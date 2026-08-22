@@ -80,8 +80,9 @@ exclude = [
   ".gitlab-ci.yml",
   ".config/",
   ".cargo/",
-  ".pre-commit-config.yaml",
   ".gitattributes",
+  ".githooks/",
+  "AGENTS.md",
   ".dockerignore",
   "Dockerfile",
   "cliff.toml",
@@ -169,10 +170,19 @@ opt-level = 2
 # 依赖的调试符号基本用不上，去掉能显著缩小 target/ 并加快链接
 debug = false
 
-[profile.dev]
-# macOS / Linux 上把调试信息留在 .o 里而不是打包进二进制，链接快很多。
-# Windows 上 cargo 会自动忽略这一项。
-split-debuginfo = "unpacked"
+# ⚠️ 这里刻意**没有** `[profile.dev] split-debuginfo = "unpacked"`。
+#    它在 Linux 上确实能缩短链接时间（把调试信息留在 .o 里而不是打包进二进制），
+#    但 windows-msvc **只支持 `packed`**，而且自 Rust 1.65 起碰上不支持的值是
+#    直接编译失败（1.64 及更早才是静默忽略）：
+#        error: -Csplit-debuginfo=unpacked is unstable on this platform
+#    profile 不支持 cfg 条件，写在这里就等于「这个项目在 Windows 上编不过」。
+#    见 https://doc.rust-lang.org/rustc/codegen-options/index.html#split-debuginfo
+#
+#    macOS 的 dev profile 本来就默认 unpacked，什么都不写就已经是最优解。
+#    Linux 上想要这个收益，写进**自己机器**的 ~/.cargo/config.toml —— 那份天然
+#    就是按机器走的，不会跟着仓库传给 Windows 上的人：
+#        [profile.dev]
+#        split-debuginfo = "unpacked"
 
 [profile.release]
 opt-level = 3

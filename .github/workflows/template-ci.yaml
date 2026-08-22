@@ -79,26 +79,32 @@ jobs:
             bash scripts/smoke.sh
           fi
 
-  hooks:
-    name: pre-commit
+  # 模板仓库**自身**的文件卫生。原来这一步是 pre-commit（连带一条 Python 工具链），
+  # 现在只留真正有价值的两项，直接用仓库已经在用的工具跑：
+  #
+  #   taplo  —— 模板里十几个 TOML 必须**同时**是合法 TOML（这正是「liquid 标签只能
+  #             锚在注释行行尾」那条约定的意义所在）。一旦有人写了单独占一行的裸标签，
+  #             这一步会立刻变红——这是模板仓库最容易悄悄坏掉的地方。
+  #   typos  —— 模板里注释极多，拼错的词会原样复制进每一个生成出来的项目。
+  #
+  # 空白 / 行尾那些原来由 pre-commit-hooks 管的项，交给 .editorconfig 与
+  # .gitattributes；提交信息格式由 .githooks/commit-msg 在本地拦。
+  hygiene:
+    name: toml & spelling
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+      - name: Install tools
+        uses: taiki-e/install-action@ba47c86ac325773530516bb756137ac718732518 # v2.86.5
         with:
-          python-version: "3.x"
-      # 模板仓库里的 cargo 类钩子会因为 Cargo.toml 里还是占位符而自动跳过，
-      # 剩下的（空白、行尾、TOML/JSON 语法、拼写、conventional commits）照常检查。
-      #
-      # ⚠️ pre-commit/action 上游已进入 maintenance-only（README 第一句就写着不再接受
-      #    新功能，推荐改用 pre-commit.ci）。它照常能跑，只是不会再有新特性；
-      #    真要换的话有两条路：接 pre-commit.ci（第三方服务，要授权仓库），
-      #    或者退回三行 run：`pip install pre-commit` + `pre-commit run --all-files`。
-      - name: Run pre-commit
-        uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1
+          tool: taplo-cli,typos
+      - name: Check TOML format
+        run: taplo fmt --check
+      - name: Check spelling
+        run: typos
 
   workflows:
     name: lint workflows
@@ -156,5 +162,7 @@ jobs:
         uses: taiki-e/install-action@ba47c86ac325773530516bb756137ac718732518 # v2.86.5
         with:
           tool: shellcheck
+      # .githooks/ 也要覆盖：它们是会在每个使用者机器上执行的 shell，
+      # 而且 commit-msg 里有 heredoc 与正则，正是最容易写错的那类代码。
       - name: Check shell scripts
-        run: shellcheck scripts/*.sh
+        run: shellcheck scripts/*.sh .githooks/*

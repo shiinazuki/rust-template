@@ -59,7 +59,7 @@ profile = "minimal"
 # 关于格式化：
 # rustfmt.toml 里用到了 imports_granularity、group_imports、wrap_comments 等
 # unstable 选项，只有 nightly 的 rustfmt 才认，stable 会静默忽略它们。
-# 所以 justfile / CI / pre-commit 里的格式化命令一律显式写成 `cargo +nightly fmt`：
+# 所以 justfile 与 CI 里的格式化命令一律显式写成 `cargo +nightly fmt`：
 #
 #   - channel 是 nightly 时，+nightly 指向的就是同一个工具链，等价于 `cargo fmt`
 #   - channel 是 stable 时，需要额外装一次 nightly 的 rustfmt：

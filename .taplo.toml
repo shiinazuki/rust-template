@@ -2,8 +2,8 @@
 #   格式化：just fmt      （rustfmt 管 .rs，taplo 管 .toml）
 #   只检查：just lint     （CI 跑的也是这一条）
 #
-# 为什么需要它：这个项目里有十来个 TOML，光靠人手对齐迟早会漂。rustfmt 不管 .toml，
-# pre-commit 的 check-toml 只验语法不管排版，taplo 是这块唯一的补位。
+# 为什么需要它：这个项目里有十来个 TOML，光靠人手对齐迟早会漂。
+# rustfmt 只管 .rs，taplo 是这块唯一的补位。
 #
 # ⚠️ VSCode 装了 even-better-toml 的话，保存时用的就是这份配置，
 #    编辑器里格式化出来的结果和 CI 一致，不会互相打架。
