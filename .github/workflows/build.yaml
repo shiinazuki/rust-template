@@ -404,8 +404,18 @@ jobs:
           tool: cargo-hack
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       # --depth 2 限制组合爆炸：feature 一多，完整幂集是 2^n 个组合，CI 会跑到天荒地老
+            
+      #
+      # ⚠️ 这里**不能**加 --locked。--no-dev-deps 会先把 [dev-dependencies] 从真实的
+      #    Cargo.toml 里删掉再 check，依赖图一变 cargo 就要把那些 dev 依赖从 Cargo.lock
+      #    里剪掉，而 --locked 禁止改动 lock，直接 101 退出：
+      #      error: cannot update the lock file ... because --locked was passed
+      #    [dev-dependencies] 为空时不会触发（删掉空表不改变依赖图），所以它会潜伏到
+      #    你加第一个 dev 依赖那天才炸。
+      #    「lock 已提交且是最新的」由 lint / test / msrv 那几个 job 的 --locked 保证，
+      #    这里不必重复。justfile 的 `just hack` 本来就没带 --locked，两边保持一致。
       - name: Check feature powerset
-        run: cargo hack --locked --feature-powerset --depth 2 --no-dev-deps check
+        run: cargo hack --feature-powerset --depth 2 --no-dev-deps check
 
   # 公开 API 的破坏性变更检查（只对**纯库**项目有意义，判断见 detect job）。
   # 以「上一个 v* tag」为基线：加了 pub 字段、改了函数签名、删了导出项，都会被指出来，
