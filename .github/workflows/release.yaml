@@ -39,6 +39,19 @@ jobs:
         with:
           submodules: recursive
           persist-credentials: false
+      # 本文件会原样跟着进入生成项目，但它同时也躺在模板仓库里。模板仓库上打一个
+      # v* tag 会把整条发版流程跑起来，然后在 `rustup toolchain install` 上以
+      # 「`{{ toolchain }}` 不是合法工具链」这种莫名其妙的方式失败。
+      # 这里提前拦下并说清楚原因——模板仓库本来也不该走这条发版路径。
+      # （build.yaml / audit.yaml 那两条是「跳过」，这里是「报错」：定时与 push 触发
+      #   是自动发生的，不该变红；而打 tag 是人主动做的，需要明确告诉他做错了。）
+      - name: Refuse to release the template repo itself
+        run: |
+          if grep -q '{%' Cargo.toml 2>/dev/null; then
+            echo "::error::这是模板仓库本身（Cargo.toml 里还是 liquid 占位符），不能走发版流程。"
+            echo "::error::模板仓库要发布新版本的话，用普通 tag（比如 template-v1.2.0）或 GitHub Release，不要用 v* 前缀。"
+            exit 1
+          fi
       - name: Install Rust (版本由 rust-toolchain.toml 固定)
         run: rustup show active-toolchain || rustup toolchain install
       - name: Install nightly rustfmt

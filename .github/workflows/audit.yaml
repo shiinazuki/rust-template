@@ -30,11 +30,26 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # 本文件会原样跟着进入生成项目，但它同时也躺在模板仓库里，GitHub 一样会按
+      # 上面的 cron 每天执行一次。而模板仓库的 Cargo.toml 还是 liquid 占位符，
+      # cargo-deny 解析不了——不判断的话，这条 workflow 会每天红一次，
+      # 而红的原因和依赖安全毫无关系。判断依据与 build.yaml 的 detect job 一致。
+      - name: Is this the template repo itself?
+        id: probe
+        run: |
+          if grep -q '{%' Cargo.toml 2>/dev/null; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::这是模板仓库本身，跳过依赖审计（生成出来的项目里会正常执行）。"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Install cargo-deny
+        if: steps.probe.outputs.skip == 'false'
         uses: taiki-e/install-action@ba47c86ac325773530516bb756137ac718732518 # v2.86.5
         with:
           tool: cargo-deny
       # 一条就够：`cargo deny check` 等价于 advisories + bans + licenses + sources。
       # 拆成两条只是 step 名字好看一点，代价是把依赖图整个再解析一遍。
       - name: Check advisories / licenses / bans / sources
+        if: steps.probe.outputs.skip == 'false'
         run: cargo deny check

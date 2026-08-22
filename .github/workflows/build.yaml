@@ -43,6 +43,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
+      is_template: ${{ steps.probe.outputs.is_template }}
       is_lib_only: ${{ steps.probe.outputs.is_lib_only }}
       has_docker: ${{ steps.probe.outputs.has_docker }}
     steps:
@@ -52,6 +53,22 @@ jobs:
       - name: Probe repository layout
         id: probe
         run: |
+          # 「这里是模板仓库本身吗」——本文件会原样跟着进入生成项目，但它同时也
+          # 躺在模板仓库里，GitHub 一样会执行。而模板仓库的 Cargo.toml 与
+          # rust-toolchain.toml 全是 liquid 占位符，任何 cargo 命令都必然失败
+          # （`rustup toolchain install` 拿到的 channel 是 `{{ toolchain }}`）。
+          # 不判断的话，模板仓库的这条 workflow 会永远红着——而红的原因和代码无关，
+          # 久而久之就没人看了，真出问题时也发现不了。
+          #
+          # 模板仓库自身的 CI 是 template-ci.yaml：它生成项目再跑检查，
+          # 覆盖面是本文件的超集，所以这里跳过不损失任何信心。
+          #
+          # 用 '{%' 判断：生成项目里 liquid 标签已全部消失，这条 grep 恒不匹配。
+          if grep -q '{%' Cargo.toml 2>/dev/null; then
+            is_template=true
+          else
+            is_template=false
+          fi
           # ⚠️ 是 is_lib_only 而不是 is_lib：bin 项目也有 src/lib.rs（业务逻辑在那边，
           #    main.rs 只做收口），但那是内部库，不对外承诺 API，不该跑 semver 检查。
           #    真要同时对外发布库和命令行时，把这里改成只判断 src/lib.rs 即可。
@@ -62,14 +79,20 @@ jobs:
           fi
           has_docker=$([ -f Dockerfile ] && echo true || echo false)
           {
+            echo "is_template=$is_template"
             echo "is_lib_only=$is_lib_only"
             echo "has_docker=$has_docker"
           } >> "$GITHUB_OUTPUT"
-          echo "lib_only=$is_lib_only docker=$has_docker"
+          echo "template=$is_template lib_only=$is_lib_only docker=$has_docker"
+          if [ "$is_template" = true ]; then
+            echo "::notice::检测到这是模板仓库本身（Cargo.toml 里还是 liquid 占位符），跳过所有 cargo 相关的 job。模板自身的检查见 template-ci.yaml。"
+          fi
 
   # 格式化 / 拼写 / clippy / 文档：不跑测试，失败得最快，PR 上第一时间给反馈
   lint:
     name: lint
+    needs: [detect]
+    if: needs.detect.outputs.is_template != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -109,6 +132,8 @@ jobs:
   # 测试 + 覆盖率
   test:
     name: test (${{ matrix.platform }})
+    needs: [detect]
+    if: needs.detect.outputs.is_template != 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -191,6 +216,8 @@ jobs:
   # 依赖审计：不需要编译，几秒钟就能出结果，和上面的 job 并行跑
   deny:
     name: cargo-deny
+    needs: [detect]
+    if: needs.detect.outputs.is_template != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -277,6 +304,8 @@ jobs:
   #    等 Polonius 进了 stable（官方计划 2026 年底），这一步连同注释一起删掉即可。
   msrv:
     name: msrv / nll
+    needs: [detect]
+    if: needs.detect.outputs.is_template != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -338,6 +367,8 @@ jobs:
   # 等你往 Cargo.toml 里加 [features] 之后它才真正开始发挥作用，无需再改 CI。
   hack:
     name: feature powerset
+    needs: [detect]
+    if: needs.detect.outputs.is_template != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -362,7 +393,7 @@ jobs:
   semver:
     name: semver-checks
     needs: [detect]
-    if: needs.detect.outputs.is_lib_only == 'true'
+    if: needs.detect.outputs.is_template != 'true' && needs.detect.outputs.is_lib_only == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -407,7 +438,7 @@ jobs:
   docker:
     name: docker build
     needs: [detect]
-    if: needs.detect.outputs.has_docker == 'true'
+    if: needs.detect.outputs.is_template != 'true' && needs.detect.outputs.has_docker == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
