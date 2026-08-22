@@ -6,11 +6,17 @@
 #    在本项目目录内一律以这里的 channel 为准。
 #
 # channel 可选：
-#   "nightly"            滚动更新的最新 nightly（本项目当前的选择方式）
-#   "nightly-2026-08-01" 钉死到某一天的 nightly：能用 #![feature(...)]，
+#   "stable"             跟随最新 stable（模板默认；绝大多数项目该用这个）
+#   "nightly"            滚动更新的最新 nightly。
+#                        ⚠️ 它每天都在变，某天的编译器 ICE、某个新增的 clippy lint
+#                        都会让 CI 无缘无故变红，而这跟你的代码没有关系。
+#                        选它只有一个正当理由：你确实要用 #![feature(...)]。
+#   "nightly-2026-08-01" 钉死到某一天的 nightly：既能用 #![feature(...)]，
 #                        又不会因为 nightly 每天变动导致 CI 莫名其妙挂掉。
 #                        某个 nightly 缺少 rustfmt/clippy 组件时也靠它绕过。
-#   "stable"             跟随最新 stable
+#                        ⚠️ 撞上编译器 ICE 时这就是**第一救急手段**：往前退几天
+#                        （`just ice` 会把该看的信息摘给你）。这是项目级决定——
+#                        模板不替你钉死日期，因为那个日期会随时间腐烂。
 #   "1.85.0"             完全锁死到某个具体版本
 #
 # ⚠️ 选 nightly 的话，有一条差异值得先知道：从 2026-08-06 起，nightly 默认启用了

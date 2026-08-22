@@ -47,6 +47,7 @@ retry = 5
 #    它会直接退回到一个「还能用」的旧版本——而安全补丁往往就在新版本里。
 #    time 的 RUSTSEC-2026-0009 就是这样：补丁在 0.3.47，它要求 rustc 1.88，
 #    MSRV 写 1.85 的项目于是拿到了有洞的 0.3.45，`cargo build` 一路绿灯。
+#    （模板的 rust-version 默认取 1.88 而不是 edition 地板值 1.85，就是为了避开这一条。）
 #
 #    所以 MSRV 定得越低，这类暴露面越大（详见 Cargo.toml 里 rust-version 那段）。
 #    唯一能发现它的是 `just audit`。改成 "allow" 可以让 resolver 永远取最新版本，

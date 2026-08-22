@@ -26,29 +26,29 @@ edition = "2024"
 # ⚠️ Polonius 进 stable 之后（官方计划 2026 年底），如果有代码是靠新借用检查器才编得过的，
 #    这里的版本号必须跟着抬到那一版——否则声明的 MSRV 就是一句空话。
 #
-# 1.85 是 edition 2024 的地板值（低于它根本不认这个 edition），所以它是「能声明的
-# 最低值」而不是随手写的数字。代价有两条：
+# ⚠️ 为什么不是 1.85。1.85 是 edition 2024 的地板值，看着像个「最兼容」的选择，
+#    实际上它配上 resolver = "3"（以及 .cargo/config.toml 里的
+#    `incompatible-rust-versions = "fallback"`）会带来一条**静默的安全代价**：
+#    某个依赖的新版本一旦把自己的 rust-version 抬到你的 MSRV 以上，resolver 不会
+#    报错也不会提示，它会直接退回到一个「还能用」的旧版本——而安全补丁往往就在
+#    新版本里。
 #
-# 1. clippy 会按这个版本给建议，也就是说 1.86 之后新增的 std API（`let`-chains、
-#    新的 `Option`/`Result` 方法等）它不会提示你用。
+#    这不是假想。time 的 RUSTSEC-2026-0009 补在 0.3.47，而 0.3.47 要求 rustc 1.88：
+#      rust-version = "1.85"  ->  resolver 选中 time 0.3.45（有洞），just audit FAILED
+#      rust-version = "1.88"  ->  resolver 选中 time 0.3.55，干净
+#    `cargo build` 在两种情况下都一路绿灯，唯一能发现它的是 `just audit`
+#    （cargo-deny 的 advisories 检查）。
 #
-# 2. ⚠️ 安全上的代价，容易被忽略：这个地板值配上 resolver = "3"（以及
-#    .cargo/config.toml 里的 `incompatible-rust-versions = "fallback"`）之后，
-#    某个依赖的**新版本**一旦把自己的 rust-version 抬到 1.85 以上，resolver 会
-#    **一声不吭地退回到还能用的旧版本**——而那个旧版本可能正带着未修的漏洞。
-#    真实例子：time 的 RUSTSEC-2026-0009 补在 0.3.47，但 0.3.47 要求 rustc 1.88，
-#    于是在 rust-version = "1.85" 的项目里 resolver 选的是有洞的 0.3.45，
-#    整个过程没有任何警告。
+# 所以这里取 1.88 而不是地板值：它同时买到了 time 那条补丁、更好的 clippy 建议
+# （clippy 按 MSRV 给建议，定低了就不会提示你用新的 std API），以及一条更窄的
+# 「依赖被悄悄降级」暴露面。
 #
-#    发现它的唯一渠道是 `just audit`（cargo-deny 的 advisories 检查）——`cargo build`
-#    永远是绿的。真撞上时的处理顺序：
-#      a. 把这里的 rust-version 抬到补丁版本要求的那一版（首选，一劳永逸）；
-#      b. 确实必须支持老 rustc，就在 deny.toml 的 [advisories] 里显式 ignore 那条
-#         并写清楚理由和复查时间，别让它无声地留着。
-#
-# 不打算支持老版本的话，把这里抬到你实际用的 stable：既拿到更好的 clippy 建议，
-# 也少一类「依赖被悄悄降级到有漏洞的版本」的暴露面。
-rust-version = "1.85"
+# 你的项目要支持更老的 rustc 就往下调，但要知道调低等于把上面那条风险重新打开。
+# 再撞上同类问题时的处理顺序：
+#   a. 把这里抬到补丁版本要求的那一版（首选，一劳永逸）；
+#   b. 确实必须支持老 rustc，就在 deny.toml 的 [advisories] 里显式 ignore 那条，
+#      并写清楚理由和复查时间，别让它无声地留着。
+rust-version = "1.88"
 license = "{{ license }}"
 # 域名按 ci 选项推导，不要写死 github.com——这个字段会跟着 `cargo publish` 进 crates.io，
 # 指错了就是一个所有人都点得到的 404。ci = none 时按 github 处理，需要的话手工改。
@@ -215,7 +215,7 @@ panic = "unwind" # 改成 "abort" 二进制更小，但会禁用 unwind 并影�
 #    只有 nightly 能用：
 #        cargo +nightly -Ztrim-paths build --release
 #    或在这一段里写 `trim-paths = "object"`（同样只有 nightly 认）。
-#    本模板默认工具链常常就是 nightly，值得知道有这个东西；稳定之后把这段注释删掉。
+#    模板默认是 stable，用不上；选了 nightly 的项目值得知道有这个东西，稳定之后把这段删掉。
 
 # 做性能分析（flamegraph / samply / instruments）时用：
 #   cargo build --profile profiling

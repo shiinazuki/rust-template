@@ -228,6 +228,14 @@ include-archives = false
 # ⚠️ 放行的是**这一个文件**，不是整个 crate：libc 的 build.rs 照常受检，
 #    哪天它夹带了别的脚本或二进制，这条 bypass 也拦不住报警。
 #    etc/ 是 libc 仓库放开发辅助脚本的目录（生成/比对 FFI 声明用），不参与构建。
+#
+# ⚠️ 代价：项目还没有 libc 依赖时（刚生成、依赖还很少的阶段），cargo-deny 会报一句
+#    `warning[unmatched-bypass]: crate build bypass was not encountered`
+#    ——它本意是提醒你删掉过期的 bypass，但对「预置的」bypass 就是个必然误报。
+#    所以所有调用点都写成 `cargo deny check -A unmatched-bypass`
+#    （justfile 的 audit / ci、两套 CI、scripts/smoke.sh）。
+#    代价是你自己加的 bypass 哪天失效了也不会被提醒——一个指向不存在的 crate 的
+#    bypass 什么也不放行，无害，用这点换开箱零噪音是划算的。
 [[bans.build.bypass]]
 name = "libc"
 allow-globs = ["etc/*.py"]
@@ -255,7 +263,7 @@ level = "deny"
 # 用的兜底版本。不写的话这类 crate 直接不参与匹配。
 # ⚠️ 打开的话要和 Cargo.toml 里的 rust-version 保持一致，改一处漏一处会得到
 #    「建议你用一个 MSRV 上还不存在的 API」这种坏建议。
-# rust-version = "1.85"
+# rust-version = "1.88"
 
 # 按 crate 禁用具体 feature（比 deny 整个 crate 精细得多）。
 # 典型场景：允许用某个库，但不许它把 openssl 那条后端拉进来。

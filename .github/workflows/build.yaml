@@ -249,7 +249,7 @@ jobs:
         with:
           tool: cargo-deny
       - name: Check dependencies (advisories / licenses / bans / sources)
-        run: cargo deny check
+        run: cargo deny check -A unmatched-bypass
 
   # workflow 文件自己的静态检查。CI 配置和业务代码一样会腐坏，而且它出问题的方式
   # 更隐蔽——脚本注入、过宽的 token 权限、被缓存投毒的发布流程，都不会让构建变红。

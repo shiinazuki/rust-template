@@ -52,7 +52,7 @@ just ci
 | --- | --- | --- |
 | `description` | 项目简介，写入 `Cargo.toml` 的 `description` | 默认 `A Rust project` |
 | `repo-owner` | 仓库所有者（GitHub / GitLab 的用户名或组织名），用于拼 `repository` 字段 | 允许字母数字与 `._/-`，GitLab 子组写 `group/subgroup` |
-| `toolchain` | 写入 `rust-toolchain.toml` 的 channel | `nightly`（默认）/ `stable` |
+| `toolchain` | 写入 `rust-toolchain.toml` 的 channel | `stable`（默认）/ `nightly` |
 | `license` | 开源协议 | `MIT`（默认）/ `Apache-2.0` / `MIT OR Apache-2.0` |
 | `ci` | CI 平台 | `github`（默认）/ `gitlab` / `none` |
 | `docker` | 是否生成 Dockerfile 与容器命令 | `false`（默认）/ `true` |

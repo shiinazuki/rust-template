@@ -56,7 +56,16 @@ CI 不一致。`just fmt` 会从 channel 推导出正确的那一条（见 justf
 - `unsafe_code = "forbid"`，`forbid` 连 `#[allow]` 都推翻不了。需要 unsafe 请先说明理由，
   由人决定要不要把它降成 `deny`。
 
-### 4. 默认工具链是 nightly，借用检查器不一样
+{% if toolchain == "stable" %}### 4. 编译器版本由 rust-toolchain.toml 钉死
+
+不要用 `rustup override set` 或 `RUSTUP_TOOLCHAIN` 绕过它——那两个的优先级都比
+`rust-toolchain.toml` 高，而且**完全静默**：版本号看着没变，实际用的是另一条工具链。
+`just doctor` 会硬校验这一点。
+
+编译器自己崩了（`error: internal compiler error`，并在工作目录留下
+`rustc-ice-*.txt`）时跑 `just ice`——它会告诉你是**哪一版**编译器崩的、崩在哪，
+以及那一版和本项目声明的 channel 对不对得上。
+{% else %}### 4. 这个项目跑在 nightly 上，借用检查器不一样
 
 nightly 用的是 Polonius，它比 stable 的 NLL 接受更多程序，而且**没有任何提示**
 ——没有属性、没有 lint、连 warning 都没有。也就是说你可能写出一段
@@ -68,6 +77,9 @@ nightly 用的是 Polonius，它比 stable 的 NLL 接受更多程序，而且**
 just nll        # 同一条 nightly，但把借用检查器换回 NLL
 ```
 
+另外：滚动 nightly 每天都在变，编译器 ICE 和新增 clippy lint 都可能让 CI
+无缘无故变红。撞上 `rustc-ice-*.txt` 时先跑 `just ice`，别去改自己的代码。
+{% endif %}
 ### 5. 输出不要用 println!
 
 程序的正常输出走 `src/main.rs` 里的 `print_line()`。`println!` 在下游管道提前关闭时

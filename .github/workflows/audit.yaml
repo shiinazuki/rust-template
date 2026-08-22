@@ -52,4 +52,4 @@ jobs:
       # 拆成两条只是 step 名字好看一点，代价是把依赖图整个再解析一遍。
       - name: Check advisories / licenses / bans / sources
         if: steps.probe.outputs.skip == 'false'
-        run: cargo deny check
+        run: cargo deny check -A unmatched-bypass

@@ -206,7 +206,7 @@ coverage-html:
 [group('check')]
 [doc('依赖安全与 License 检查')]
 audit: _generated-only
-    cargo deny check
+    cargo deny check -A unmatched-bypass
 
 # 和 CI 的 hack job 等价。只跑 `--all-features` 会漏掉「单独开某个 feature 编不过」，
 # 而使用者恰恰可能只开其中一个。--depth 2 限制组合爆炸。
@@ -291,6 +291,58 @@ nll:
     CARGO_TARGET_DIR=target/nll RUSTFLAGS=-Zpolonius=off \
         cargo check --locked --all-targets --all-features
 
+# 编译器内部错误（ICE）的转储怎么读。
+#
+# ⚠️ 先分清两件同时成立的事：
+#      - ICE 是**编译器自己崩了**，不是你的代码有语法或类型错误；
+#      - 但触发它的几乎总是你代码里某个具体构造，换个写法通常就绕过去了。
+#    所以「这是 rustc 的 bug」和「和我的代码有关」并不矛盾，别用前者当结论就停下。
+#
+# 转储文件动辄几百行栈回溯，真正有用的只有三处，这条配方就是把它们摘出来：
+#   1. 开头的 panic 消息  —— 崩在编译器哪个环节
+#   2. `rustc version:`   —— **哪一版编译器**产生的。这一行最容易被跳过，却最关键：
+#                            它和 rust-toolchain.toml 的 channel 对不上，就说明你的
+#                            工具链配置压根没生效（多半是 rustup 目录 override），
+#                            那才是要先解决的问题。`just doctor` 会直接告诉你。
+#   3. `query stack`      —— 崩的时候在编译哪个东西，据此能定位回自己代码里的位置。
+[group('check')]
+[doc('解读 rustc-ice-*.txt：哪一版编译器崩的、崩在哪、下一步怎么办')]
+ice:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    shopt -s nullglob
+    dumps=(rustc-ice-*.txt)
+    if [ "${#dumps[@]}" -eq 0 ]; then
+        echo "没有找到 rustc-ice-*.txt。"
+        echo "（rustc 把转储写在**当前工作目录**而不是 target/ 下；.gitignore 已经挡住它们，"
+        echo "  所以 git status 干净不代表没有——用这条配方看，别看 git。）"
+        exit 0
+    fi
+    channel=$(grep -m1 '^channel' rust-toolchain.toml 2>/dev/null | sed -E 's/.*"([^"]+)".*/\1/')
+    echo "发现 ${#dumps[@]} 个 ICE 转储；rust-toolchain.toml 声明的 channel：${channel:-（读不到）}"
+    echo ""
+    for f in "${dumps[@]}"; do
+        echo "── ${f}"
+        # 第 1、2 行就是 panic 位置与消息
+        sed -n '1,2p' "$f" | sed 's/^/     /'
+        grep -m1 '^rustc version:' "$f" | sed 's/^/     /'
+        # query stack 只取前几层，再往下是编译器内部细节，对定位自己的代码没帮助
+        sed -n '/^query stack during panic:/,/^end of query stack/p' "$f" \
+            | grep -E '^#[0-9]' | head -5 | sed 's/^/     /'
+        echo ""
+    done
+    echo "接下来："
+    echo "  1. 先核对上面的 rustc version 和 channel 是不是同一个编译器。"
+    echo "     对不上 -> 你的 rust-toolchain.toml 没生效，先跑 just doctor。"
+    echo "  2. 对得上 -> 就是这一版编译器在你的代码上崩了。照 query stack 找到那个"
+    echo "     函数 / 类型，那里多半有个能换写法绕开的构造。"
+    echo "  3. 要立刻恢复工作：把**你这个项目**的 channel 钉到前几天的 nightly ——"
+    echo "     rust-toolchain.toml 里写 channel = \"nightly-YYYY-MM-DD\"。"
+    echo "     这是项目级的临时措施，修好之后记得改回 \"nightly\" 或往前挪。"
+    echo "  4. 值得上报：https://github.com/rust-lang/rust/issues （附完整转储文件）"
+    echo ""
+    echo "清理：rm -f rustc-ice-*.txt"
+
 # 覆盖 CI 里的 lint / test / deny 三个 job。
 # 刻意不含 hack / msrv / nll：第一个要装 cargo-hack，第二个会 `rustup toolchain install`
 # 往你机器上装一整条工具链，第三个换了 RUSTFLAGS 等于一次全量重编，
@@ -308,7 +360,7 @@ ci: lint test audit
 [doc('按 Cargo.toml 的版本约束升级 Cargo.lock')]
 update:
     cargo update
-    cargo deny check
+    cargo deny check -A unmatched-bypass
 
 [group('deps')]
 [doc('列出可升级的依赖（需要 cargo-outdated）')]
@@ -480,6 +532,15 @@ doctor:
             missing=1
         fi
     done
+
+    # ICE 转储：存在就说明这台机器上的编译器在这个项目上崩过。
+    # 不算「缺失项」（可能是早就修好的旧转储），所以不置 missing，只提示去看。
+    shopt -s nullglob
+    ice_dumps=(rustc-ice-*.txt)
+    if [ "${#ice_dumps[@]}" -gt 0 ]; then
+        echo "== 编译器崩溃 =="
+        echo "  ⚠️ 发现 ${#ice_dumps[@]} 个 rustc-ice-*.txt（编译器内部错误转储）-> just ice"
+    fi
 
     echo "== git 钩子 =="
     if [ "$(git config --get core.hooksPath 2>/dev/null)" = ".githooks" ]; then

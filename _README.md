@@ -87,20 +87,50 @@ lint 让 CI 的 `-D warnings` 突然挂掉。前者用 `rustup toolchain install
 反过来说，也不要在项目里手写 `cargo +nightly fmt`——钉了日期之后 `+nightly` 指的是
 **另一条**工具链，两个 rustfmt 版本的排版可能不同，症状就是「本地 check 过、CI 挂」。
 {% endif %}
+### 编译器自己崩了（ICE）怎么办
+
+`error: internal compiler error` 加上工作目录里冒出来的 `rustc-ice-*.txt`，说明是
+**编译器崩了**，不是你的代码有语法或类型错误。别急着改自己的代码，先跑：
+
+```bash
+just ice
+```
+
+它会从那堆几百行的栈回溯里摘出三样真正有用的东西：panic 消息、**产生它的编译器版本**、
+以及崩溃时的 query stack。
+
+其中最容易被跳过、却最关键的是版本那一行。把它和 `rust-toolchain.toml` 里的 `channel` 对一下：
+
+- **对不上** —— 你的工具链配置根本没生效（多半是有人跑过 `rustup override set`，
+  它的优先级比 `rust-toolchain.toml` 高且完全静默）。先跑 `just doctor`，它会直接点出来。
+- **对得上** —— 就是这一版编译器在你的代码上崩了。query stack 会指向具体是在编译哪个
+  函数 / 类型，那里通常有个换个写法就能绕开的构造。要立刻恢复工作的话，把 `channel`
+  钉到前几天的 nightly（`nightly-YYYY-MM-DD`），修好之后再挪回来。
+
+⚠️ `.gitignore` 已经挡住了 `rustc-ice-*.txt`，所以 **`git status` 干净不代表没有转储**
+——用 `just ice` 看，别看 git。
+
 ### MSRV
 
 `Cargo.toml` 里的 `rust-version` 声明了最低支持版本。它**只是下限，不限制上限**，
 用更新的 stable 或 nightly 编译都没问题。
 
-⚠️ 它默认是 `1.85`（edition 2024 的地板值），这个选择有一条**安全代价**值得先知道：
-配上 `resolver = "3"` 与 `.cargo/config.toml` 的 `incompatible-rust-versions = "fallback"`，
-某个依赖的新版本一旦把自己的 `rust-version` 抬到 1.85 以上，resolver 会**一声不吭地
-退回旧版本**——而安全补丁往往就在新版本里。真实例子：`time` 的 RUSTSEC-2026-0009
-补在 0.3.47，但 0.3.47 要求 rustc 1.88，于是 MSRV 写 1.85 的项目拿到的是有洞的 0.3.45，
-`cargo build` 一路绿灯。唯一能发现它的是 `just audit`。
+⚠️ 它默认是 `1.88`，而**不是** edition 2024 的地板值 1.85。原因是把 MSRV 定低有一条
+静默的安全代价：配上 `resolver = "3"` 与 `.cargo/config.toml` 的
+`incompatible-rust-versions = "fallback"`，某个依赖的新版本一旦把自己的 `rust-version`
+抬到你的 MSRV 以上，resolver 会**一声不吭地退回旧版本**——而安全补丁往往就在新版本里。
 
-不打算支持老版本的话，把 `rust-version` 抬到你实际用的 stable——既能拿到更好的
-clippy 建议，也少一类「依赖被悄悄降级到有漏洞的版本」的暴露面。
+真实例子：`time` 的 RUSTSEC-2026-0009 补在 0.3.47，那个版本要求 rustc 1.88。
+
+| `rust-version` | resolver 选中的 `time` | `just audit` |
+| --- | --- | --- |
+| `1.85` | 0.3.45（有漏洞） | FAILED |
+| `1.88` | 0.3.55 | 通过 |
+
+两种情况下 `cargo build` 都一路绿灯，唯一能发现它的是 `just audit`。
+
+要支持更老的 rustc 就往下调，但那等于把上面这条风险重新打开；再撞上同类问题时，
+优先抬 `rust-version`，而不是在 `deny.toml` 里 ignore 掉告警。
 {% if toolchain == "stable" %}
 `just msrv` 和 CI 的 msrv job 会真的用那个版本编译一遍来验证声明属实。
 {% else %}
@@ -246,6 +276,7 @@ just audit              # cargo deny check
 just hack               # feature 幂集检查
 just msrv               # 验证 MSRV 能编译（nightly 项目自动转去跑 nll）
 just nll                # 用 stable 的借用检查器编一遍（仅 nightly 项目有意义）
+just ice                # 解读 rustc-ice-*.txt（编译器自己崩了的时候用）
 just ci                 # 本地跑一遍 CI 的主要检查（lint / test / audit）
 
 just unused             # 找出没用到的依赖（cargo-machete）

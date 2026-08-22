@@ -95,7 +95,7 @@ jobs:
         if: hashFiles('src/lib.rs') != ''
         run: cargo test --locked --doc --all-features
       - name: Check dependencies
-        run: cargo deny check
+        run: cargo deny check -A unmatched-bypass
       # tag 名和 Cargo.toml 里的版本必须一致，否则发出去的 v1.2.3 里装的是 1.2.2。
       # cargo-release 正常流程不会出这种错，手动打 tag 时很容易。
       - name: Tag matches Cargo.toml version

@@ -130,11 +130,24 @@ regex = "^[A-Za-z0-9][A-Za-z0-9._/-]{0,98}$"
 #    其余 -> github.com），见 Cargo.toml / Dockerfile / _README.md 里按 ci 分支的那几处。多问一个占位符不值得——CI 平台和代码托管平台在现实里
 #    几乎总是同一个。例外是 ci = none 又托管在 GitLab：生成完手工改一下 repository 即可。
 
+# ⚠️ 默认是 stable，这是有意的：生成出来的骨架里**没有任何** #![feature(...)]，
+#    唯一真正需要 nightly 的是 rustfmt（rustfmt.toml 用了 unstable 选项），
+#    而那一条已经和 channel 解耦了——justfile 的 fmt_toolchain 变量会在 channel
+#    是 stable 时自动去用单独装的那份 nightly rustfmt。
+#    也就是说默认选 nightly 换不来任何能力，只会带来三样代价：
+#      - 滚动 nightly 每天都在变，某天的编译器 ICE 或新 clippy lint 会让 CI
+#        无缘无故变红，而这跟你写的代码毫无关系；
+#      - `just msrv` / CI 的 msrv job 在 nightly 项目上不适用，自动转成 just nll，
+#        等于 MSRV 声明没人验证；
+#      - nightly 的借用检查器（Polonius）比 stable 宽，容易写出「这边过、那边不过」
+#        的代码（见 rust-toolchain.toml 与 just nll）。
+#    真的需要 #![feature(...)] 时再选 nightly，并做好随时把 channel 钉成
+#    nightly-YYYY-MM-DD 的准备——那是**项目**该做的决定，模板不替你钉。
 [placeholders.toolchain]
 type = "string"
 prompt = "Rust 工具链（写入 rust-toolchain.toml 的 channel）"
-choices = ["nightly", "stable"]
-default = "nightly"
+choices = ["stable", "nightly"]
+default = "stable"
 
 [placeholders.license]
 type = "string"

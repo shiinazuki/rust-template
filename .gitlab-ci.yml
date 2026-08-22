@@ -178,7 +178,7 @@ deny:
     - .rust-setup
   script:
     - install_tools cargo-deny
-    - cargo deny check
+    - cargo deny check -A unmatched-bypass
 
 # ---------------------------------------------------------------------------
 # 特性组合检查：只跑 --all-features 会漏掉「单独开某个 feature 编不过」
@@ -278,7 +278,7 @@ verify-tag:
     - cargo clippy --locked --all-targets --all-features -- -D warnings
     - cargo nextest run --locked --all-targets --all-features
     - if [ -f src/lib.rs ]; then cargo test --locked --doc --all-features; fi
-    - cargo deny check
+    - cargo deny check -A unmatched-bypass
     # tag 名必须和 Cargo.toml 里的版本一致，否则发出去的 v1.2.3 里装的是 1.2.2
     - |
       version=$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')

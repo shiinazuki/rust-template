@@ -55,9 +55,10 @@ unset RUSTUP_TOOLCHAIN
 # ⚠️ license 列写 `dual` 而不是 `MIT OR Apache-2.0`：行是靠 `set -- $row` 按空格拆的，
 #    带空格的值会被拆成三列。下面读取时再把 `dual` 翻译回完整的 SPDX 表达式。
 #
-# ⚠️ toolchain 那一列不要清一色写 stable：nightly 才是模板的**默认值**，
-#    全测 stable 等于默认路径没人验过——
-#    nightly 的 clippy/rustfmt 比 stable 严，生成的代码在它上面挂掉是很常见的事。
+# ⚠️ toolchain 那一列要两种都留着。stable 现在是模板的**默认值**（占了矩阵的大头，
+#    「一路回车」走的就是那条路），但 nightly 那两组不能删：nightly 的 clippy/rustfmt
+#    比 stable 严，生成的代码在它上面挂掉是很常见的事，而模板仍然把 nightly 列为
+#    可选项——没人验的选项等于坏的选项。
 matrix=(
     "minimal            bin stable  none   false false false false MIT"
     # 全开组顺带把双协议也测了：post-script 的 LICENSE 分支与 Dockerfile 的
@@ -77,8 +78,9 @@ matrix=(
     # 于是生成出来的项目开箱就过不了 fmt --check。短名字的组合永远测不到这一点。
     # 写模板时的对策：先 `let x = <crate>::foo(...)`，再让断言只碰短变量名。
     "a-deliberately-long-package-name-for-rustfmt bin stable github false true true true MIT"
-    # 下面两组走 nightly：第一组就是「一路回车」的默认生成结果
-    "nightly-default    bin nightly github false false true  false MIT"
+    # 下面两组走 nightly：模板默认已经是 stable，但 nightly 仍是可选项，
+    # 而 nightly 的 clippy/rustfmt 更严，必须有人替使用者先撞一遍
+    "nightly-bin        bin nightly github false false true  false MIT"
     "nightly-lib        lib nightly github false false true  false MIT"
 )
 if [ "$full" -eq 1 ]; then
@@ -307,7 +309,7 @@ for row in "${matrix[@]}"; do
     # 6. 依赖审计：某个开关引入的新依赖可能带着不在 deny.toml allow 列表里的协议，
     #    那会让使用者第一次跑 CI 就失败，而且报错信息离「你选了哪个开关」很远。
     if command -v cargo-deny >/dev/null 2>&1 \
-        && ! cargo deny check >"$workdir/$proj.deny.log" 2>&1; then
+        && ! cargo deny check -A unmatched-bypass >"$workdir/$proj.deny.log" 2>&1; then
         echo "  ✗ cargo deny 不通过（$workdir/$proj.deny.log）"; ok=0
     fi
     # 7. 留下来的 Cargo.lock 必须和 Cargo.toml 对得上。模板自带的 lock 只锁了根 crate，
