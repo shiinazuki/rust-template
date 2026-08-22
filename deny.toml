@@ -8,15 +8,10 @@
 # 依赖图的构建方式
 # ---------------------------------------------------------------------------
 [graph]
-# 只检查这里列出的目标平台；留空（当前状态）表示检查所有平台的依赖。
-#
-# 留空更安全——任何平台上的漏洞都能查到——代价是噪音：Windows 专有的
-# windows-sys / windows-targets 那一大坨几乎必然出现多版本共存。本模板把
-# [bans] multiple-versions 设成了 "warn" 而不是 "deny"，所以这些噪音不会卡 CI，
-# 留空是划算的。
-#
-# 什么时候该点名：把 multiple-versions 收紧成 "deny" 之后，或者项目明确只发布
-# 给固定几个平台时。取消注释并按实际支持的平台增删即可。
+# 只检查这里列出的目标平台；留空（当前状态）表示检查所有平台。留空更安全——任何平台上的
+# 漏洞都查得到——代价是 windows-sys / windows-targets 那一大坨几乎必然多版本共存。模板把
+# [bans] multiple-versions 设成 "warn" 而非 "deny"，这些噪音卡不住 CI，所以留空划算。
+# 什么时候该点名：把 multiple-versions 收紧成 "deny" 之后，或项目只发布给固定几个平台时。
 targets = [
   # "x86_64-unknown-linux-gnu",
   # "aarch64-unknown-linux-gnu",
@@ -190,10 +185,9 @@ unused = "warn"
 
 # 编译期执行的代码（build script 与 proc-macro）里夹带的可执行文件 / 脚本。
 #
-# ⚠️ 先说清楚它**不能**做什么：cargo-deny 不做恶意代码分析。build.rs 里用纯 Rust
-#    把你的 SSH key 传出去、或者用 include!() 在某个版本悄悄换掉内容，这里一概查不出。
-#    它能回答的只有一个问题：「这个 crate 的源码包里，有没有本不该出现的二进制或脚本」
-#    ——预编译 blob 和作者忘了清理的 CI 脚本，正是供应链事故最常见的载体。
+# ⚠️ 它**不做**恶意代码分析：build.rs 里用纯 Rust 把你的 SSH key 传出去、或用 include!()
+#    悄悄换掉内容，这里一概查不出。它只回答一个问题——「这个 crate 的源码包里有没有本不该
+#    出现的二进制或脚本」，而预编译 blob 和作者忘了清理的 CI 脚本正是供应链事故最常见的载体。
 #
 # 整个 [bans.build] 段不写的话，这项检查完全不跑。
 [bans.build]
@@ -216,33 +210,35 @@ include-workspace = false
 # 命中，而它们要链接之后才起作用，噪音远大于信号。
 include-archives = false
 
-# 预置的放行项。
+# 预置的放行项：这几个 crate 自带 build.rs，因此**它们本身**必被扫到
+# （include-dependencies = false 只是不再往它们的依赖里下钻），而包里又躺着上游留下的
+# CI / 测试脚本，于是 `just ci` 第一次跑到 audit 就会挂。不预置的话每个人都要踩一遍。
+# 逐个打开确认过，全部不在 build.rs 的执行路径上：
 #
-# ⚠️ 为什么模板要预置：上面把 interpreted 收紧成了 deny，而 libc 几乎是所有非平凡
-#    项目的间接依赖（std 之外但凡碰到系统调用就绕不开），它自己带 build.rs，
-#    因此**它本身**必被扫（include-dependencies = false 只是不再往它的依赖里下钻，
-#    拦不住这一条）。libc 0.2.189 起源码包里多了一个 etc/libc-util.py，带 shebang，
-#    于是 `just ci` 第一次跑到 audit 就会挂在这里。
-#    不预置的话，每个用这个模板的人都要自己踩一遍、再自己查一遍那个文件。
+#   libc              etc/libc-util.py        维护者生成/比对 FFI 声明用
+#   blake3            .github/workflows/*.py  发版脚本；c/test.py 测 C 实现
+#   curve25519-dalek  tests/build_tests.sh    检查各 feature 组合能否编过
 #
-# ⚠️ 放行的是**这一个文件**，不是整个 crate：libc 的 build.rs 照常受检，
-#    哪天它夹带了别的脚本或二进制，这条 bypass 也拦不住报警。
-#    etc/ 是 libc 仓库放开发辅助脚本的目录（生成/比对 FFI 声明用），不参与构建。
+# ⚠️ 放行的是**这几个文件**，不是整个 crate：它们的 build.rs 照常受检，哪天夹带了
+#    别的脚本或二进制一样会报。
 #
-# ⚠️ 代价：项目还没有 libc 依赖时（刚生成、依赖还很少的阶段），cargo-deny 会报一句
-#    `warning[unmatched-bypass]: crate build bypass was not encountered`
-#    ——它本意是提醒你删掉过期的 bypass，但对「预置的」bypass 就是个必然误报。
-#    所以所有调用点都写成 `cargo deny check -A unmatched-bypass`
-#    （justfile 的 audit / ci、两套 CI、scripts/smoke.sh）。
-#    代价是你自己加的 bypass 哪天失效了也不会被提醒——一个指向不存在的 crate 的
-#    bypass 什么也不放行，无害，用这点换开箱零噪音是划算的。
+# ⚠️ 项目没用到其中某个依赖时，cargo-deny 会报 `warning[unmatched-bypass]`。那本意是
+#    提醒你删掉过期的 bypass，对预置项则是必然误报，所以所有调用点都写成
+#    `cargo deny check -A unmatched-bypass`（justfile 的 audit / ci、两套 CI、
+#    scripts/smoke.sh）。代价是你自己加的 bypass 失效了也不会被提醒——一个指向不存在
+#    的 crate 的 bypass 什么也不放行，无害，用这点换开箱零噪音划算。
 [[bans.build.bypass]]
 name = "libc"
 allow-globs = ["etc/*.py"]
 
-# blake3 / curve25519-dalek 之类带预编译汇编或 .py 生成脚本的 crate 同样会命中，
-# 但那属于项目自选依赖，模板不替你决定，真用上了再照下面的写法加。
-#
+[[bans.build.bypass]]
+name = "blake3"
+allow-globs = [".github/workflows/*.py", "c/test.py"]
+
+[[bans.build.bypass]]
+name = "curve25519-dalek"
+allow-globs = ["tests/build_tests.sh"]
+
 # 撞上别的误报时在这里逐个放行（先打开那个文件看一眼，再决定要不要写进来）：
 # [[bans.build.bypass]]
 # name = "some-crate"

@@ -26,28 +26,19 @@ edition = "2024"
 # ⚠️ Polonius 进 stable 之后（官方计划 2026 年底），如果有代码是靠新借用检查器才编得过的，
 #    这里的版本号必须跟着抬到那一版——否则声明的 MSRV 就是一句空话。
 #
-# ⚠️ 为什么不是 1.85。1.85 是 edition 2024 的地板值，看着像个「最兼容」的选择，
-#    实际上它配上 resolver = "3"（以及 .cargo/config.toml 里的
-#    `incompatible-rust-versions = "fallback"`）会带来一条**静默的安全代价**：
-#    某个依赖的新版本一旦把自己的 rust-version 抬到你的 MSRV 以上，resolver 不会
-#    报错也不会提示，它会直接退回到一个「还能用」的旧版本——而安全补丁往往就在
-#    新版本里。
+# ⚠️ 为什么不是地板值 1.85。它配上 resolver = "3"（与 .cargo/config.toml 的
+#    `incompatible-rust-versions = "fallback"`）有一条**静默的安全代价**：依赖的新版本
+#    一旦把 rust-version 抬到你的 MSRV 以上，resolver 不报错也不提示，直接退回旧版本
+#    ——而安全补丁往往就在新版本里。time 的 RUSTSEC-2026-0009 补在 0.3.47（要求 1.88）：
+#      rust-version = "1.85"  ->  time 0.3.45（有洞），just audit FAILED
+#      rust-version = "1.88"  ->  time 0.3.55，干净
+#    两种情况 `cargo build` 都一路绿灯，唯一能发现它的是 `just audit`。
+#    取 1.88 还顺带买到更好的 clippy 建议（clippy 按 MSRV 给建议，定低了不会提示新 API）。
 #
-#    这不是假想。time 的 RUSTSEC-2026-0009 补在 0.3.47，而 0.3.47 要求 rustc 1.88：
-#      rust-version = "1.85"  ->  resolver 选中 time 0.3.45（有洞），just audit FAILED
-#      rust-version = "1.88"  ->  resolver 选中 time 0.3.55，干净
-#    `cargo build` 在两种情况下都一路绿灯，唯一能发现它的是 `just audit`
-#    （cargo-deny 的 advisories 检查）。
-#
-# 所以这里取 1.88 而不是地板值：它同时买到了 time 那条补丁、更好的 clippy 建议
-# （clippy 按 MSRV 给建议，定低了就不会提示你用新的 std API），以及一条更窄的
-# 「依赖被悄悄降级」暴露面。
-#
-# 你的项目要支持更老的 rustc 就往下调，但要知道调低等于把上面那条风险重新打开。
-# 再撞上同类问题时的处理顺序：
+# 要支持更老的 rustc 就往下调，但那等于把上面这条风险重新打开。再撞上同类问题时：
 #   a. 把这里抬到补丁版本要求的那一版（首选，一劳永逸）；
-#   b. 确实必须支持老 rustc，就在 deny.toml 的 [advisories] 里显式 ignore 那条，
-#      并写清楚理由和复查时间，别让它无声地留着。
+#   b. 确实必须支持老 rustc，就在 deny.toml 的 [advisories] 里显式 ignore，
+#      写清理由和复查时间，别让它无声地留着。
 rust-version = "1.88"
 license = "{{ license }}"
 # 域名按 ci 选项推导，不要写死 github.com——这个字段会跟着 `cargo publish` 进 crates.io，
@@ -59,13 +50,10 @@ authors = ["{{ authors }}"]
 # 版本号统一在这里定，成员里只写 `foo = { workspace = true }`，
 # 避免多个子 crate 各自声明版本导致同一个库被编进来两份。
 #
-# ⚠️ 下面用的是「注释锚定」写法：模板里的条件标签一律挂在 TOML 注释行的**行尾**，
-#    于是模板仓库里的这个文件**同时也是合法 TOML**——编辑器的 TOML 语言服务
-#    （taplo / even-better-toml）不会把两个标签行当成重复键而报
-#    "Duplicate dependency name"，`check-toml` 钩子与 `taplo fmt` 也能照常工作。
-#    反例：让标签单独占一行，文件就成了非法 TOML。
-#    （标签在生成时已经消失，这段说明留着只是为了解释下面这种排版从何而来；
-#      完整说明见模板仓库 README 的「TOML 文件里的 liquid 标签必须锚在注释行」。）
+# ⚠️ 下面那种「注释行尾挂条件标签」的排版叫注释锚定：这样模板仓库里的本文件同时也是
+#    合法 TOML，taplo / even-better-toml 不会把标签行当重复键报错，`taplo fmt` 也照常工作。
+#    标签在生成时已消失，这段只是解释排版从何而来。详见模板 README 的
+#    「TOML 文件里的 liquid 标签必须锚在注释行」。
 [workspace.dependencies]
 # 这里是版本目录：成员写 `foo = { workspace = true }` 引用后才真正生效{% if async_runtime %}
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
@@ -130,11 +118,9 @@ rustdoc-args = ["--cfg", "docsrs"]
 # ---------------------------------------------------------------------------
 # Feature 开关
 #
-# 现在一个都没声明，于是 CI 的 hack job（cargo hack --feature-powerset）等价于
-# 一次普通 check。等你把下面这段的注释去掉，它才真正开始发挥作用——不用改 CI。
-#
-# 为什么值得从第一天就把这个位置留出来：使用者可能只开其中一个 feature，
-# 而你本地永远跑的是 --all-features，「单独开 A 编不过」这类问题只有幂集检查能发现。
+# 现在一个都没声明，CI 的 hack job（cargo hack --feature-powerset）等价于一次普通 check；
+# 把下面几行的注释去掉它才真正发挥作用，不用改 CI。留这个位置是因为：使用者可能只开其中
+# 一个 feature，而你本地永远跑 --all-features，「单独开 A 编不过」只有幂集检查能发现。
 # ---------------------------------------------------------------------------
 # [features]
 # default = []
@@ -142,6 +128,10 @@ rustdoc-args = ["--cfg", "docsrs"]
 # # serde = ["dep:serde", "dep:serde_json"]
 
 [dependencies]
+# ⚠️ 你的依赖写在这一段里，也就是**下一个 [ ] 表头之前**。TOML 的键归属于它上方最近的
+#    那个表头，中间隔着多少行注释都不改变这一点。贴到 [dev-dependencies] 下面是最常见的
+#    翻车方式：`cargo build` 会报一整串 unresolved import，`cargo test` 反倒是好的。
+#
 # 版本继承自上面的 [workspace.dependencies]，这里只声明「本 crate 要用」{% if async_runtime and crate_type == "bin" %}
 tokio = { workspace = true }
 # 入口是 #[tokio::main]，见 src/main.rs{% endif %}{% if logging and crate_type == "bin" %}
@@ -153,6 +143,7 @@ thiserror = { workspace = true }
 anyhow = { workspace = true }
 # main 用它收口，配合 .context() 补充上下文{% endif %}
 
+[dev-dependencies]
 # 只在测试 / benchmark / example 里用到的依赖放这里，不会进使用者的依赖树。
 # 默认留空——测试辅助库按项目需要选，预置一堆没人用的反而是负担。常用的几个：
 #
@@ -164,7 +155,7 @@ anyhow = { workspace = true }
 #   tempfile                  临时目录 / 文件，测试结束自动清理
 #   pretty_assertions         断言失败时给彩色 diff，而不是两大坨 Debug 输出
 #   divan / criterion         benchmark（配合 benches/ 与 [profile.bench]）
-[dev-dependencies]
+#
 # tokio 只在「库 + async」这一种组合下出现在这里：库那一侧只有 #[tokio::test] 用得到它，
 # 放进 [dependencies] 等于让每个使用者都白拉一份。bin 项目的 tokio 在上面那一段——
 # 它的 #[tokio::main] 是真的运行时依赖。{% if async_runtime and crate_type == "lib" %}
@@ -188,19 +179,13 @@ opt-level = 2
 # 依赖的调试符号基本用不上，去掉能显著缩小 target/ 并加快链接
 debug = false
 
-# ⚠️ 这里刻意**没有** `[profile.dev] split-debuginfo = "unpacked"`。
-#    它在 Linux 上确实能缩短链接时间（把调试信息留在 .o 里而不是打包进二进制），
-#    但 windows-msvc **只支持 `packed`**，而且自 Rust 1.65 起碰上不支持的值是
-#    直接编译失败（1.64 及更早才是静默忽略）：
-#        error: -Csplit-debuginfo=unpacked is unstable on this platform
-#    profile 不支持 cfg 条件，写在这里就等于「这个项目在 Windows 上编不过」。
-#    见 https://doc.rust-lang.org/rustc/codegen-options/index.html#split-debuginfo
-#
-#    macOS 的 dev profile 本来就默认 unpacked，什么都不写就已经是最优解。
-#    Linux 上想要这个收益，写进**自己机器**的 ~/.cargo/config.toml —— 那份天然
-#    就是按机器走的，不会跟着仓库传给 Windows 上的人：
-#        [profile.dev]
-#        split-debuginfo = "unpacked"
+# ⚠️ 这里刻意**没有** `[profile.dev] split-debuginfo = "unpacked"`。它能缩短 Linux 上的
+#    链接时间，但 windows-msvc 只支持 `packed`，自 Rust 1.65 起碰上不支持的值是直接
+#    编译失败（`-Csplit-debuginfo=unpacked is unstable on this platform`），而 profile
+#    不支持 cfg 条件——写在这里等于「这个项目在 Windows 上编不过」。
+#    macOS 的 dev profile 本来就默认 unpacked，不写已是最优解；Linux 上想要这个收益，
+#    写进**自己机器**的 ~/.cargo/config.toml，那份不会跟着仓库传给 Windows 上的人。
+#    https://doc.rust-lang.org/rustc/codegen-options/index.html#split-debuginfo
 
 [profile.release]
 opt-level = 3
@@ -209,13 +194,11 @@ codegen-units = 1
 strip = "symbols"
 panic = "unwind" # 改成 "abort" 二进制更小，但会禁用 unwind 并影响 #[should_panic] 测试
 
-# ⚠️ strip = "symbols" 去掉的是符号表，**不包括**源码路径：panic 信息里仍会露出
-#    构建机器的绝对路径（CI 上是 /home/runner/work/...，依赖是 ~/.cargo/registry/...）。
-#    要一并抹掉得用 trim-paths，但它到 2026 年 8 月仍是 unstable（-Ztrim-paths），
-#    只有 nightly 能用：
-#        cargo +nightly -Ztrim-paths build --release
-#    或在这一段里写 `trim-paths = "object"`（同样只有 nightly 认）。
-#    模板默认是 stable，用不上；选了 nightly 的项目值得知道有这个东西，稳定之后把这段删掉。
+# ⚠️ strip = "symbols" 去掉的是符号表，**不包括**源码路径：panic 信息里仍会露出构建机器的
+#    绝对路径（CI 上是 /home/runner/work/...，依赖是 ~/.cargo/registry/...）。要一并抹掉
+#    得用 trim-paths，但它到 2026 年 8 月仍是 unstable，只有 nightly 认——
+#    `cargo +nightly -Ztrim-paths build --release`，或在这段里写 `trim-paths = "object"`。
+#    模板默认 stable 用不上；稳定之后把这段删掉。
 
 # 做性能分析（flamegraph / samply / instruments）时用：
 #   cargo build --profile profiling

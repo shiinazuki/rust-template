@@ -19,31 +19,21 @@
 #                        模板不替你钉死日期，因为那个日期会随时间腐烂。
 #   "1.85.0"             完全锁死到某个具体版本
 #
-# ⚠️ 选 nightly 的话，有一条差异值得先知道：从 2026-08-06 起，nightly 默认启用了
-#    新一代借用检查器 Polonius，它比 stable 的 NLL 接受更多合法程序（最典型的是
-#    「条件返回一个借用，之后再可变借用同一个值」这类写法）。
-#
-#    麻烦的地方在于这个差异没有任何显式标记——不像 #![feature(...)] 一眼可见，
-#    它没有属性、没有 lint、连 warning 都没有。所以在 nightly 上完全可能写出一段
-#    stable 编不过的代码而毫无察觉。本模板的应对是 `just nll` / CI 的 msrv job：
-#    用同一条 nightly 编译但把借用检查器换回 NLL（`-Zpolonius=off`），就地拦下。
-#
-#    钉日期版本时也要留意：nightly-2026-08-05 及更早用的还是 NLL，2026-08-06 起才是 Polonius
-#    （官方博客发在 08-04，但 rust-lang/rust#159343 是 08-05 21:37 UTC 合入的，
-#      当天的 nightly 已经切完，所以第一个带 Polonius 的是 nightly-2026-08-06）。
-#    官方计划 2026 年底把 Polonius 推进 stable，到那时上面这套兜底就可以删掉了。
+# ⚠️ 选 nightly 要知道一条差异：nightly-2026-08-06 起默认启用了新一代借用检查器
+#    Polonius，它比 stable 的 NLL 接受更多合法程序（典型是「条件返回一个借用，
+#    之后再可变借用同一个值」）。这个差异**没有任何显式标记**——没有属性、没有 lint、
+#    连 warning 都没有，所以完全可能在 nightly 上写出一段 stable 编不过的代码而不自知。
+#    模板的应对是 `just nll` / CI 的 msrv job：同一条 nightly 编译但换回 NLL
+#    （`-Zpolonius=off`）就地拦下。Polonius 进 stable 后（官方计划 2026 年底）可删。
 [toolchain]
 channel = "{{ toolchain }}"
 # profile = "minimal" 只装 rustc / cargo / rust-std，其余按需在这里点名：
 #   rustfmt / clippy      格式化与 lint
 #   rust-src              rust-analyzer 解析标准库所必需——缺了它编辑器里对 std
 #                         没有补全和跳转，还会报 "can't find crate for core"
-#   llvm-tools-preview    cargo-llvm-cov 生成覆盖率所必需。
-#                         ⚠️ 名字有两个：`llvm-tools` 是现在的规范名，
-#                         `llvm-tools-preview` 是保留下来的旧别名，装的是同一份东西。
-#                         但 `rustup component list --installed` 只会显示 `llvm-tools`
-#                         ——`just doctor` 和 template-ci 里因此都按不带后缀的名字匹配。
-#                         哪天想统一，把这里也改成 `llvm-tools` 即可。
+#   llvm-tools-preview    cargo-llvm-cov 生成覆盖率所必需。它和 `llvm-tools` 是同一份
+#                         东西的新旧两个名字，但 `rustup component list --installed`
+#                         只显示后者——`just doctor` 和 template-ci 因此按不带后缀的匹配。
 components = ["rustfmt", "clippy", "rust-src", "llvm-tools-preview"]
 profile = "minimal"
 
@@ -62,23 +52,19 @@ profile = "minimal"
 # ⚠️ channel 是滚动的 "nightly" 时，偶尔会碰上某天的 nightly 缺其中某个组件，
 #    rustup 会直接拒绝安装整个工具链。真遇上了就把 channel 钉成前一天的日期版本。
 
-# 关于格式化：
-# rustfmt.toml 里用到了 imports_granularity、group_imports、wrap_comments 等
-# unstable 选项，只有 nightly 的 rustfmt 才认，stable 会静默忽略它们。
-# 所以格式化命令必须显式点名工具链——但**不写死 `+nightly`**，而是从下面这个
-# channel 推导出来。推导逻辑有三处，规则完全一致：
-#   - justfile 顶部的 `fmt_toolchain` 变量（just fmt / just lint / just doctor 都用它）
-#   - .github/workflows/{build,release}.yaml 的 "Resolve rustfmt toolchain" 步骤
-#   - .gitlab-ci.yml 的 lint job
-#
-# 推导规则：
+# 关于格式化：rustfmt.toml 用了 imports_granularity、group_imports、wrap_comments 等
+# unstable 选项，只有 nightly 的 rustfmt 认，stable 会静默忽略。所以格式化命令必须显式
+# 点名工具链——但**不写死 `+nightly`**，而是从上面的 channel 推导：
 #   channel = "nightly"              -> 用 nightly，等价于 `cargo fmt`
 #   channel = "nightly-2026-08-18"   -> 用这条日期工具链本身，不去碰「最新 nightly」
-#   channel = "stable" / "1.85.0"    -> 退回 nightly，需要额外装一份 nightly 的 rustfmt：
+#   channel = "stable" / "1.85.0"    -> 退回 nightly，需额外装一份 nightly 的 rustfmt：
 #       rustup toolchain install nightly --allow-downgrade --profile minimal --component rustfmt
-#     （`just install-tools` 会装，`just doctor` 会检查它在不在）
+#     （`just install-tools` 会装，`just doctor` 会检查）
 #
-# ⚠️ 为什么不能写死 `+nightly`：channel 一旦钉成日期版本，`+nightly` 指的就是
-#    **另一条**「最新 nightly」工具链——多半根本没装；就算装了，两个 rustfmt 版本
-#    对同一份代码的排版也可能不一样，于是「本地 check 过、CI 挂」，而且从报错里
-#    完全看不出原因。改 channel 时不必再去改任何格式化命令。
+# 三处实现规则一致：justfile 顶部的 `fmt_toolchain` 变量、
+# .github/workflows/{build,release}.yaml 的 "Resolve rustfmt toolchain" 步骤、
+# .gitlab-ci.yml 的 lint job。
+#
+# ⚠️ 写死 `+nightly` 的后果：channel 一旦钉成日期版本，`+nightly` 指的是**另一条**
+#    工具链，多半没装；就算装了，两个 rustfmt 版本的排版也可能不同，于是「本地 check
+#    过、CI 挂」，且报错里完全看不出原因。用推导则改 channel 时不必动格式化命令。
