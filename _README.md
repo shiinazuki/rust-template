@@ -40,33 +40,29 @@ tests/
 src/
   lib.rs           业务逻辑都写在这一侧{% if error_handling %}
   error.rs         领域错误类型（thiserror）{% endif %}
-  main.rs          可执行入口：初始化日志、错误收口{% if logging %}
+  main.rs          可执行入口：{% if logging %}初始化日志、{% endif %}错误收口{% if logging %}
   telemetry.rs     日志 / 追踪初始化（tracing）{% endif %}
 tests/
   integration.rs   集成测试：以外部使用者的视角调用 lib 的公开 API
 ```
 
-**为什么二进制项目也有 `lib.rs`**：`main.rs` 里的东西集成测试（`tests/` 是独立
-crate）、benchmark、doctest 都够不着，逻辑留在那边就只能靠手工跑一遍程序来验证。
-把 `main.rs` 保持薄薄一层、逻辑放进 `lib.rs`，这三样立刻都能用上。
-
-所以 `main.rs` 长起来了，就说明有东西该往 `lib.rs` 挪了。
+二进制项目也有 `lib.rs`：集成测试（`tests/` 是独立 crate）、benchmark、doctest 都只能
+`use` 到 `lib.rs` 导出的 `pub` 项。`main.rs` 长起来了，就说明有东西该往 `lib.rs` 挪。
 {% endif %}
 ## 开发环境
 
 ### Rust 工具链
 
-工具链由 [`rust-toolchain.toml`](rust-toolchain.toml) 固定为 **{{ toolchain }}**，首次进入目录时 rustup 会自动安装。
-注意这个文件会**覆盖你 rustup 的全局默认工具链**，在本项目目录内一律以它为准。
+工具链由 [`rust-toolchain.toml`](rust-toolchain.toml) 固定为 {{ toolchain }}，首次进入目录时
+rustup 自动安装。这个文件会覆盖 rustup 的全局默认工具链，在本项目目录内一律以它为准。
 
-同时会装上 `rustfmt`、`clippy`、`rust-src`（rust-analyzer 解析标准库要用，
-缺了它编辑器里对 `std` 没有补全和跳转）和 `llvm-tools-preview`（覆盖率要用；
-`llvm-tools` 是它现在的规范名，两者装的是同一份东西）。
-`rust-analyzer`、`miri`、交叉编译 target 等可选项在该文件里以注释列出，按需打开。
+同时会装上 `rustfmt`、`clippy`、`rust-src`（rust-analyzer 解析标准库要用）和
+`llvm-tools-preview`（覆盖率要用）。`rust-analyzer`、`miri`、交叉编译 target 等可选项
+在该文件里以注释列出，按需打开。
 
 [`rustfmt.toml`](rustfmt.toml) 用到了 `imports_granularity`、`group_imports`、`wrap_comments`
-等 unstable 选项，只有 nightly 的 rustfmt 才认（stable 会**静默忽略**它们），
-所以格式化请一律走 `just fmt` / `just lint`，不要手写 `cargo fmt`。
+等 unstable 选项，只有 nightly 的 rustfmt 才认（stable 会静默忽略），所以格式化一律走
+`just fmt` / `just lint`，不要手写 `cargo fmt`。
 {% if toolchain == "stable" %}
 本项目跑在 stable 上，需要额外装一次 nightly 的 rustfmt——`just install-tools` 会替你装，
 `just doctor` 会检查它在不在。手工装的话：
@@ -77,72 +73,57 @@ rustup toolchain install nightly --allow-downgrade --profile minimal --component
 {% else %}
 本项目本身就跑在 nightly 上，格式化用的就是同一条工具链，不需要额外安装。
 
-nightly 是滚动更新的，偶尔会出现某个版本缺 `rustfmt` / `clippy` 组件，或者 clippy 新增的
-lint 让 CI 的 `-D warnings` 突然挂掉。前者用 `rustup toolchain install nightly --allow-downgrade`
-就能绕过（自动退回到组件齐全的那天）；后者真遇上了就把 `channel` 钉成日期版本，例如
-`channel = "nightly-2026-08-18"`。
+nightly 滚动更新，偶尔会缺 `rustfmt` / `clippy` 组件，或者 clippy 新增的 lint 让 CI 的
+`-D warnings` 突然挂掉。前者加 `--allow-downgrade` 重装即可，后者把 `channel` 钉成日期版本，
+例如 `channel = "nightly-2026-08-18"`。
 
-钉日期版本**不需要**再改任何格式化命令：`just fmt` / `just lint` 与两套 CI 都从
-`rust-toolchain.toml` 的 `channel` 推导该用哪条工具链（见 justfile 顶部的 `fmt_toolchain`）。
-反过来说，也不要在项目里手写 `cargo +nightly fmt`——钉了日期之后 `+nightly` 指的是
-**另一条**工具链，两个 rustfmt 版本的排版可能不同，症状就是「本地 check 过、CI 挂」。
+钉日期版本不需要改任何格式化命令：`just fmt` / `just lint` 与两套 CI 都从 `channel` 推导
+该用哪条工具链（见 justfile 顶部的 `fmt_toolchain`）。也不要手写 `cargo +nightly fmt`，
+钉了日期之后 `+nightly` 指的是另一条工具链，排版可能不同。
 {% endif %}
 ### 编译器自己崩了（ICE）怎么办
 
-`error: internal compiler error` 加上工作目录里冒出来的 `rustc-ice-*.txt`，说明是
-**编译器崩了**，不是你的代码有语法或类型错误。别急着改自己的代码，先跑：
+`error: internal compiler error` 加上工作目录里的 `rustc-ice-*.txt`，说明是编译器崩了，
+不是你的代码有语法或类型错误。先跑：
 
 ```bash
 just ice
 ```
 
-它会从那堆几百行的栈回溯里摘出三样真正有用的东西：panic 消息、**产生它的编译器版本**、
-以及崩溃时的 query stack。
+它从几百行栈回溯里摘出三样东西：panic 消息、产生它的编译器版本、崩溃时的 query stack。
+把版本那一行和 `rust-toolchain.toml` 里的 `channel` 对一下：对不上说明工具链配置没生效
+（跑 `just doctor` 会点出来）；对得上就是这一版编译器崩了，照 query stack 找到那个
+函数 / 类型换个写法，或把 `channel` 钉到前几天的 nightly。
 
-其中最容易被跳过、却最关键的是版本那一行。把它和 `rust-toolchain.toml` 里的 `channel` 对一下：
-
-- **对不上** —— 你的工具链配置根本没生效（多半是有人跑过 `rustup override set`，
-  它的优先级比 `rust-toolchain.toml` 高且完全静默）。先跑 `just doctor`，它会直接点出来。
-- **对得上** —— 就是这一版编译器在你的代码上崩了。query stack 会指向具体是在编译哪个
-  函数 / 类型，那里通常有个换个写法就能绕开的构造。要立刻恢复工作的话，把 `channel`
-  钉到前几天的 nightly（`nightly-YYYY-MM-DD`），修好之后再挪回来。
-
-⚠️ `.gitignore` 已经挡住了 `rustc-ice-*.txt`，所以 **`git status` 干净不代表没有转储**
-——用 `just ice` 看，别看 git。
+⚠️ `.gitignore` 挡住了 `rustc-ice-*.txt`，所以 `git status` 干净不代表没有转储，用 `just ice` 看。
 
 ### MSRV
 
-`Cargo.toml` 里的 `rust-version` 声明了最低支持版本。它**只是下限，不限制上限**，
-用更新的 stable 或 nightly 编译都没问题。
+`Cargo.toml` 里的 `rust-version` 声明了最低支持版本，它只是下限，用更新的 stable
+或 nightly 编译都没问题。
 
-⚠️ 它默认是 `1.88`，而**不是** edition 2024 的地板值 1.85。原因是把 MSRV 定低有一条
-静默的安全代价：配上 `resolver = "3"` 与 `.cargo/config.toml` 的
-`incompatible-rust-versions = "fallback"`，某个依赖的新版本一旦把自己的 `rust-version`
-抬到你的 MSRV 以上，resolver 会**一声不吭地退回旧版本**——而安全补丁往往就在新版本里。
-
-真实例子：`time` 的 RUSTSEC-2026-0009 补在 0.3.47，那个版本要求 rustc 1.88。
+默认取 `1.88` 而不是 edition 2024 的地板值 1.85：配上 `resolver = "3"` 与
+`.cargo/config.toml` 的 `incompatible-rust-versions = "fallback"`，依赖的新版本一旦把
+`rust-version` 抬到你的 MSRV 以上，resolver 会一声不吭地退回旧版本，而安全补丁往往就在
+新版本里。`time` 的 RUSTSEC-2026-0009 补在 0.3.47（要求 rustc 1.88）：
 
 | `rust-version` | resolver 选中的 `time` | `just audit` |
 | --- | --- | --- |
 | `1.85` | 0.3.45（有漏洞） | FAILED |
 | `1.88` | 0.3.55 | 通过 |
 
-两种情况下 `cargo build` 都一路绿灯，唯一能发现它的是 `just audit`。
-
-要支持更老的 rustc 就往下调，但那等于把上面这条风险重新打开；再撞上同类问题时，
-优先抬 `rust-version`，而不是在 `deny.toml` 里 ignore 掉告警。
+两种情况下 `cargo build` 都一路绿灯，只有 `just audit` 能发现。要支持更老的 rustc 就往下调，
+再撞上同类问题时优先抬 `rust-version`，而不是在 `deny.toml` 里 ignore 掉告警。
 {% if toolchain == "stable" %}
 `just msrv` 和 CI 的 msrv job 会真的用那个版本编译一遍来验证声明属实。
 {% else %}
-`just msrv` 和 CI 的 msrv job 本来会用那个版本编译一遍验证声明属实，但 nightly 项目上
-这项检查不适用——代码里可能有 `#![feature(...)]`，那种写法在任何 stable 上都编不过。
-它们会自动转去跑 `just nll`，那才是 nightly 项目真正需要的那道兜底。
+nightly 项目上 MSRV 检查不适用（代码里可能有 `#![feature(...)]`，那在任何 stable 上都编不过），
+`just msrv` 和 CI 的 msrv job 会自动转去跑 `just nll`。
 
 ### nightly 的借用检查器比 stable 宽
 
-2026-08-06 起（即 `nightly-2026-08-06` 及之后），nightly 默认启用了新一代借用检查器
-**Polonius**，它比 stable 的 NLL 接受更多合法程序。最典型的是「条件返回一个借用，
-之后再可变借用同一个值」：
+`nightly-2026-08-06` 及之后默认启用了新一代借用检查器 Polonius，它比 stable 的 NLL
+接受更多合法程序。最典型的是「条件返回一个借用，之后再可变借用同一个值」：
 
 ```rust
 fn get_or_insert(map: &mut HashMap<u32, String>) -> &String {
@@ -154,23 +135,14 @@ fn get_or_insert(map: &mut HashMap<u32, String>) -> &String {
 }
 ```
 
-这段代码在 nightly 上编得过，在 stable 上编不过。
+这段代码在 nightly 上编得过，在 stable 上编不过。分界线是 `nightly-2026-08-05` 及更早
+用的还是 NLL。
 
-> 把 `channel` 钉成日期版本时注意分界线：`nightly-2026-08-05` 及更早用的还是 NLL。
-> 官方博客发在 08-04，但对应的 PR（rust-lang/rust#159343）是 08-05 21:37 UTC 才合入的，
-> 那天的 nightly 已经切完了。
+这个差异没有任何显式标记：没有属性、没有 lint、连 warning 都没有。
 
-麻烦的地方在于**这个差异没有任何显式标记**：不像 `#![feature(...)]` 那样一眼可见，
-它没有属性、没有 lint、连 warning 都没有。于是完全可能在 nightly 上写出一段 stable
-编不过的代码而毫无察觉，而 `Cargo.toml` 里的 `rust-version` 依旧写着一个早期版本——
-发布成库的话是下游用户先撞上，不发布的话就是哪天想切回 stable 时才发现欠了一堆债。
-
-`just nll` 用同一条 nightly 编译，只把借用检查器换回 NLL（`-Zpolonius=off`），
-就地拦下这类代码。CI 的 msrv job 每次都会跑它；本地则在动过生命周期相关的代码之后
-手动跑一次就够——它换了 `RUSTFLAGS`，等于一次全量重编，所以刻意没进 `just ci`。
-
-官方计划 2026 年底把 Polonius 推进 stable。到那时：确实有代码靠它才编得过的话，
-把 `rust-version` 抬到那一版；随后 `just nll`、CI 里对应的 step 和这一节都可以删掉。
+`just nll` 用同一条 nightly 编译，只把借用检查器换回 NLL（`-Zpolonius=off`）拦下这类代码。
+CI 的 msrv job 每次都会跑它；本地在动过生命周期相关的代码之后手动跑一次即可（它换了
+`RUSTFLAGS`，等于一次全量重编，所以没进 `just ci`）。Polonius 进 stable 后这一节可以删掉。
 {% endif %}
 ### 配套工具
 
@@ -184,8 +156,7 @@ just doctor          # 确认真的都装上了
 ```
 
 `install-tools` 会优先用 [cargo-binstall](https://github.com/cargo-bins/cargo-binstall)
-直接下载上游发布的预编译二进制——这些工具从源码编译一遍要十几分钟，binstall 只要几十秒。
-强烈建议先装上它：
+下载预编译二进制（从源码编译一遍要十几分钟，binstall 只要几十秒），建议先装上它：
 
 ```bash
 cargo install cargo-binstall
@@ -214,8 +185,8 @@ cargo install cargo-binstall
 just hooks
 ```
 
-钩子脚本就在仓库的 [`.githooks/`](.githooks/) 里，`just hooks` 把 `core.hooksPath`
-指过去（git 不会自动信任仓库里的钩子，所以每个 clone 都要跑一次）：
+钩子脚本在 [`.githooks/`](.githooks/) 里，`just hooks` 把 `core.hooksPath` 指过去
+（每个 clone 都要跑一次）：
 
 | 钩子 | 作用 | 大概耗时 |
 | --- | --- | --- |
@@ -223,18 +194,12 @@ just hooks
 | `commit-msg` | 校验 Conventional Commits —— CHANGELOG 分组与 cargo-release 的版本推导都依赖它 | 瞬间 |
 | `pre-push` | 跑一遍 `just ci`（lint / test / audit） | 十几秒起 |
 
-三层是有意分开的，越往后越全也越慢：
+三层越往后越全也越慢：`pre-commit` 只跑秒级检查，提交到一半的活儿也该能存档；
+`cargo deny` 只在依赖真可能变了时才跑（它要解析整棵依赖树）；`pre-push` 才是真正的闸门，
+全量检查没过就推不出去。
 
-- **`pre-commit` 里刻意不跑测试。** 提交是本地动作，做到一半的活儿也该能存档；
-  每次 commit 都等一遍全量测试，最后只会让人养成 `--no-verify` 的习惯——那才是真的失去防线。
-- **`cargo deny` 只在依赖真的可能变了时才跑**（`Cargo.toml` / `Cargo.lock` / `deny.toml`
-  被改动）。它要解析整棵依赖树，改一行注释也跑一遍纯属浪费。
-- **`pre-push` 才是真正的闸门。** commit 是本地的、随时能 `amend` / `rebase` 改掉；
-  push 才是「出去了」。所以全量检查放在这一层，没过就推不出去。
-
-> `pre-commit` 检查的是**工作区**当前状态，不是暂存区快照。`git commit -a` 下两者一致；
-> 用 `git add -p` 做部分暂存时，未暂存的改动也会被算进来。要精确只检查暂存内容，
-> 得先 stash 掉未暂存的改动再恢复——那是个经典的丢代码来源，模板刻意不做。
+> `pre-commit` 检查的是工作区当前状态，不是暂存区快照。`git commit -a` 下两者一致；
+> 用 `git add -p` 做部分暂存时，未暂存的改动也会被算进来。
 
 临时跳过：`git commit --no-verify` / `git push --no-verify`。
 停用：`git config --unset core.hooksPath`。
@@ -246,50 +211,31 @@ just hooks
 
 ### 容器里开发（可选）
 
-[`.devcontainer/`](.devcontainer/) 里有一份 Dev Container 配置，
-VS Code 的 Dev Containers 插件或 GitHub Codespaces 可以直接用，
-省掉本机装工具链的过程。
+[`.devcontainer/`](.devcontainer/) 里有一份 Dev Container 配置，VS Code 的
+Dev Containers 插件或 GitHub Codespaces 可以直接用，省掉本机装工具链的过程。
 
 ## 常用命令
 
-`just` 直接列出全部命令（按用途分组）。
+`just` 不带参数会列出全部命令，那份清单直接来自 [`justfile`](justfile) 里每条配方的
+`[doc]` 标注，是唯一权威的一份。日常最常用的是这些：
 
 ```bash
-just                    # 列出所有命令
-just doctor             # 环境体检
-just bootstrap          # 首次拉起：生成 Cargo.lock + 安装 git 钩子
-just check              # 快速检查编译
-just run -- --help      # 运行程序（仅 bin 项目），-- 后的参数透传给程序
-just fmt                # 格式化 .rs（nightly rustfmt）与 .toml（taplo）
-just fix                # clippy --fix 自动修复 + 格式化
-just dev                # bacon 实时监控
-just doc                # 生成并打开 API 文档
-just bench              # 跑 benchmark
-just flamegraph         # 采样生成火焰图（仅 bin 项目）
-just clean              # 清理编译产物与本地报告
+just                 # 列出全部命令
+just doctor          # 环境体检：缺什么、怎么装
+just dev             # bacon 实时监控，边写边重跑 clippy
+just check           # 快速检查编译
+just fmt             # 格式化 .rs（nightly rustfmt）与 .toml（taplo）
+just fix             # clippy --fix 自动修复 + 格式化
+just test            # 运行测试（含 doctest）
+just lint            # 格式化检查 + clippy + typos + 文档警告
+just ci              # 本地跑一遍 CI 的主要检查（lint / test / audit）
 
-just lint               # 格式化检查（.rs + .toml）+ clippy + typos + 文档警告
-just test               # 运行测试（含 doctest）
-just coverage           # 生成覆盖率报告 lcov.info
-just coverage-html      # HTML 覆盖率报告并打开
-just audit              # cargo deny check
-just hack               # feature 幂集检查
-just msrv               # 验证 MSRV 能编译（nightly 项目自动转去跑 nll）
-just nll                # 用 stable 的借用检查器编一遍（仅 nightly 项目有意义）
-just ice                # 解读 rustc-ice-*.txt（编译器自己崩了的时候用）
-just ci                 # 本地跑一遍 CI 的主要检查（lint / test / audit）
-
-just unused             # 找出没用到的依赖（cargo-machete）
-just semver             # 公开 API 破坏性变更检查（仅纯库项目）
-
-just update             # 升级 Cargo.lock 并重新审计
-just outdated           # 列出可升级的依赖
-
-just changelog          # 刷新 CHANGELOG.md
-just release minor      # 发版预演：跑全套检查 + 干跑一遍，不改动任何东西
+just release minor          # 发版预演：跑全套检查 + 干跑，不改动任何东西
 just release-execute minor  # 真正发版：抬版本号 + CHANGELOG + tag + 推送
-                            # （紧接在 release 之后跑，不再重复跑一遍检查）
 ```
+
+覆盖率、火焰图、benchmark、依赖升级、CHANGELOG、MSRV / NLL、ICE 解读、
+公开 API 破坏性变更检查等都各有配方，`just` 一敲就能看到。
 {% if docker and crate_type == "bin" %}
 容器相关命令来自 [`docker.just`](docker.just)（根 justfile 用 `import?` 可选加载）：
 
@@ -301,34 +247,25 @@ just docker-scan        # 用 trivy 扫已知漏洞
 just docker-clean       # 删除本地镜像
 ```
 
-镜像里的二进制是用 [cargo-auditable](https://github.com/rust-secure-code/cargo-auditable)
-构建的：依赖清单（名字 + 版本）被编进二进制的一个专用 section，于是
-`just docker-scan` 的 trivy、以及 `cargo audit bin <二进制>` 都能直接对着**产物**查 CVE。
-没有它，trivy 扫这个镜像只看得到 distroless 基础层，你自己那一整棵 Rust 依赖树对它完全隐形。
-体积代价约 1%，运行时零开销；不需要就把 `Dockerfile` 里那一层删掉。
+镜像里的二进制用 [cargo-auditable](https://github.com/rust-secure-code/cargo-auditable)
+构建：依赖清单被编进二进制的一个专用 section，`just docker-scan` 的 trivy 和
+`cargo audit bin <二进制>` 都能直接对着产物查 CVE。体积代价约 1%，运行时零开销；
+不需要就把 `Dockerfile` 里那一层删掉。
 {% endif %}
-`just ci` 包含 `lint` / `test` / `audit` 三项。其中 `lint` 和 CI 的 lint job 严格对齐，
-**含 `cargo doc` 的文档警告检查**——`[workspace.lints.rustdoc]` 里 `bare_urls`、
-`invalid_html_tags` 这些都只是 `warn`，本地不跑 `cargo doc` 就看不见，
-推上去才会在 CI 的 `RUSTDOCFLAGS="-D warnings"` 上挂掉。
+`just ci` 包含 `lint` / `test` / `audit` 三项，其中 `lint` 和 CI 的 lint job 严格对齐，
+含 `cargo doc` 的文档警告检查（`[workspace.lints.rustdoc]` 里 `bare_urls`、
+`invalid_html_tags` 这些只是 `warn`，本地不跑 `cargo doc` 就看不见）。
 
-`unused`、`semver`、`hack`、`msrv`、`nll` 刻意留在外面手动跑：第一个对宏里用到的依赖会误报，
-第二个需要和已发布版本联网比对，第三个要额外装 cargo-hack、feature 多起来还会变慢，
-第四个会 `rustup toolchain install` 往你机器上装一整条工具链，
-第五个换了 `RUSTFLAGS` 等于一次全量重编——
-都不适合塞进「随手跑一下」的命令里。
-
-除 `unused` 外，它们在两套 CI 里都有对应的 job（`semver` 只对纯库项目生效）。`unused` 刻意**没有**进任何 CI：误报率高的检查一旦当上门禁，
-结果只会是所有人都学会忽略它。需要时手动跑 `just unused`。
+`unused` / `semver` / `hack` / `msrv` / `nll` 留在外面手动跑：分别是误报多、需要联网比对
+已发布版本、要额外装 cargo-hack、会往机器上装一整条工具链、换 `RUSTFLAGS` 等于全量重编。
+除 `unused` 外它们在两套 CI 里都有对应的 job（`semver` 只对纯库项目生效）。
 
 ## 工程结构
 
-`Cargo.toml` 里已经铺好了 workspace 骨架：`[workspace.package]`、
-`[workspace.dependencies]`、`[workspace.lints]` 三段是给**将来拆分子 crate** 准备的。
-现在只有根 crate 一个成员，它通过 `version.workspace = true` / `[lints] workspace = true`
-继承这些配置。等你要拆出 `crates/core`、`crates/cli` 时，
-只需在 `members` 里登记，子 crate 里同样写 `.workspace = true` 即可，
-版本号与 lint 规则不会各自漂移。
+`Cargo.toml` 里已经铺好了 workspace 骨架：`[workspace.package]`、`[workspace.dependencies]`、
+`[workspace.lints]` 三段供将来拆分子 crate 继承。现在只有根 crate 一个成员，它通过
+`version.workspace = true` / `[lints] workspace = true` 继承这些配置；要拆出 `crates/core`、
+`crates/cli` 时只需在 `members` 里登记，子 crate 同样写 `.workspace = true`。
 
 ### 编译 profile
 
@@ -341,7 +278,7 @@ just docker-clean       # 删除本地镜像
 | `bench` | 继承 release 且保留符号，保证 benchmark 测的是优化后的代码 |
 
 `Cargo.toml` 末尾还注释着两项按需打开的配置：`build-override`（加速 proc-macro 编译）
-和 `overflow-checks`（release 下也检查整数溢出，账务 / 协议解析类项目建议打开）。
+和 `overflow-checks`（release 下也检查整数溢出）。
 {% if async_runtime %}
 ### 异步运行时
 
@@ -352,23 +289,20 @@ just docker-clean       # 删除本地镜像
 入口是 `#[tokio::main]`。{% endif %}
 
 同时 [`clippy.toml`](clippy.toml) 里启用了 `disallowed-types` / `disallowed-methods`：
-用到 `std::fs` / `std::process` 这类**阻塞** API 会被拦下（CI 是 `-D warnings`，
-直接构建失败）——一次同步 `read` 就足以把 runtime 的一个 worker 线程钉死，
+用到 `std::fs` / `std::process` 这类阻塞 API 会被拦下（CI 是 `-D warnings`，直接构建失败），
 请改用 `tokio::fs` 对应项。
 
-⚠️ 这条禁令**不区分 async 上下文**：clippy 看不出一处调用是不是在 `async fn` 里，
-所以同步代码、测试、`build.rs` 里的 `std::fs` 一样会被拦。
-确有必要时在那一处写 `#[expect(clippy::disallowed_types, reason = "...")]` 说明原因——
-用 `expect` 而不是 `allow` 是本模板的约定（`clippy::allow_attributes` 在盯着）：
-等哪天那处代码改掉、lint 不再触发时，`expect` 会反过来提醒你把压制项删掉。
+这条禁令不区分 async 上下文——clippy 看不出一处调用是不是在 `async fn` 里，所以同步代码、
+测试、`build.rs` 里的 `std::fs` 一样会被拦。确有必要时在那一处写
+`#[expect(clippy::disallowed_types, reason = "...")]`：用 `expect` 而不是 `allow` 是本模板的
+约定（`clippy::allow_attributes` 在盯着），lint 不再触发时 `expect` 会提醒你删掉压制项。
 {% endif %}{% if error_handling %}
 ### 错误处理
 {% if crate_type == "lib" %}
 [`src/error.rs`](src/error.rs) 里用 [thiserror](https://docs.rs/thiserror) 定义了公开错误类型
 `Error` 与 `Result<T>` 别名，并从 `lib.rs` 重新导出。
 
-库只用 thiserror、不用 anyhow，这是有意的：库抛 `anyhow::Error` 等于告诉调用方
-「出错了，但我不告诉你是什么错」，对方除了打印之外什么都做不了。
+库只用 thiserror、不用 anyhow：库抛 `anyhow::Error` 会让调用方除了打印之外什么都做不了。
 `Error` 上标了 `#[non_exhaustive]`，以后新增变体不构成破坏性变更。
 {% else %}
 两层分工，[`src/error.rs`](src/error.rs)（属于 lib 那一侧）与 `main.rs` 各管一段：
@@ -379,9 +313,6 @@ just docker-clean       # 删除本地镜像
 
 `main.rs` 里那行 `{{ crate_name }}::greet(&name).context("...")?` 就是分界线：
 左边是可以 `match` 的具体错误，右边开始是「打印给人看」的 anyhow。
-
-只有 anyhow 的项目，在需要「按错误类型决定要不要重试」时会非常难受；
-全都手写 enum 又太啰嗦。两者搭配是应用层的常见解法。
 {% endif %}{% endif %}{% if logging and crate_type == "bin" %}
 ### 日志
 
@@ -389,15 +320,12 @@ just docker-clean       # 删除本地镜像
 `tracing-subscriber` 初始化全局 subscriber：
 
 - 过滤规则运行时可调：`RUST_LOG=warn,{{ crate_name }}=debug`，不必重新编译；
-- 日志写 **stderr**，stdout 留给程序真正的输出，管道和重定向才不会串味——
-  `main.rs` 里的 `println!` 是程序输出，`tracing::info!` 是日志，各走各的，
+- 日志写 stderr，stdout 留给程序真正的输出（`main.rs` 里走 `print_line`），
   所以把日志级别调到 `warn` 也不会把程序的结果一起吞掉；
-- 过滤表达式写错、或 `RUST_LOG` 被设成空串时，退回 `main.rs` 里
-  `telemetry::init("info")` 给的默认级别，而不是得到一个「进程正常启动、
-  却一条日志都不打」的空 filter；
-- `RUST_LOG` 写成一个裸词（`RUST_LOG=inof`）时会提示一句——按 `EnvFilter` 的语法
-  裸词是**目标名**不是级别，它解析得**成功**，于是默认指令失效、日志一条都不打，
-  这一类 `EnvFilter` 自己不会出声。
+- 过滤表达式写错、或 `RUST_LOG` 被设成空串时，退回 `telemetry::init("info")` 给的默认级别，
+  而不是得到一个「进程正常启动、却一条日志都不打」的空 filter；
+- `RUST_LOG` 写成一个裸词（`RUST_LOG=inof`）时会提示一句：按 `EnvFilter` 的语法裸词是
+  目标名不是级别，它解析得成功，于是默认指令失效、日志一条都不打，`EnvFilter` 自己不会出声。
 
 要输出 JSON 给日志采集系统、或者接 OpenTelemetry，文件末尾的注释里写了怎么改。
 {% endif %}
@@ -434,7 +362,7 @@ just docker-clean       # 删除本地镜像
 
 - **detect** —— 探测仓库里有哪些 target，供下面的 job 做条件判断（几秒钟）
 - **lint** —— 格式化（`.rs` 走 rustfmt、`.toml` 走 taplo）、拼写、clippy（`-D warnings`）、文档警告
-- **test** —— `cargo check` + nextest（CI profile：不 fail-fast、失败重试、输出 JUnit）+ 覆盖率 + doctest
+- **test** —— nextest（CI profile：不 fail-fast、失败重试、输出 JUnit）+ 覆盖率 + doctest
 - **deny** —— 依赖的安全公告 / License / 重复版本 / 来源
 - **workflows** —— 用 [zizmor](https://docs.zizmor.sh/) 审计 workflow 的**安全性**（脚本注入、
   过宽权限、缓存投毒），再用 [actionlint](https://github.com/rhysd/actionlint) 查**正确性**
@@ -452,32 +380,31 @@ just docker-clean       # 删除本地镜像
 - **github-release** —— git-cliff 生成变更说明并创建 Release
 - **binaries** —— 五个目标平台（Linux musl x64/arm64、macOS x64/arm64、Windows x64）
   交叉编译、打包、生成 sha256 并挂到 Release 上（仅 bin 项目）。
-  再往上一层是**构建来源证明**（SLSA provenance，Sigstore 签名，`gh attestation verify` 可验）：
-  校验和只能证明「文件没被改过」，证明回答的是「它是谁造的」——**默认关闭**，
+  可选再加一层构建来源证明（SLSA provenance，Sigstore 签名，`gh attestation verify` 可验）：
+  校验和只证明「文件没被改过」，来源证明回答「它是谁造的」。默认关闭，
   需要在仓库 Variables 里加 `ATTEST_BUILD_PROVENANCE=true`（私有仓库需要 GitHub Enterprise）
 - **crates-io** —— 用 crates.io 的 Trusted Publishing（OIDC，无需长期 token）发布，
   **默认关闭**，需要在仓库 Variables 里加 `PUBLISH_TO_CRATES_IO=true`
 
-[`audit.yaml`](.github/workflows/audit.yaml) 每天定时跑一次依赖审计——
-安全公告是「代码没动风险也会变」的东西，只靠 PR 触发发现不了。
+[`audit.yaml`](.github/workflows/audit.yaml) 每天定时跑一次依赖审计：安全公告是
+「代码没动风险也会变」的东西，只靠 PR 触发发现不了。
 
-两点值得注意：
+三点值得注意：
 
-- **CI 与发布分成两个 workflow**，因为发布流程刻意不使用编译缓存。缓存是可写的，
-  一旦发布产物建立在缓存之上，「污染缓存」就等价于「污染 release 二进制」。
-- **按 target 裁剪的 job（semver / binaries / docker）一律靠 `detect` 传出的 outputs 判断**，
-  而不是在 job 级写 `if: hashFiles(...)`。job 级的 `if:` 在 checkout 之前就求值，
-  那时工作区还是空的，hashFiles 恒为空串——条件永远不成立，job 被静默跳过，不报任何错。
-- **第三方 action 全部用 commit hash 钉死**（后面的 `# vX.Y.Z` 是给人看的）。
-  tag 是可变的，上游账号一旦被攻破，把 `v3` 指向恶意提交就能直接进你的 CI。
-  hash 由 dependabot 每周自动更新。
+- CI 与发布分成两个 workflow，发布流程不使用编译缓存：缓存是可写的，一旦发布产物建立在
+  缓存之上，污染缓存就等价于污染 release 二进制。
+- 按 target 裁剪的 job（semver / binaries / docker）一律靠 `detect` 传出的 outputs 判断，
+  而不是在 job 级写 `if: hashFiles(...)`——job 级的 `if:` 在 checkout 之前求值，
+  那时 hashFiles 恒为空串，job 会被静默跳过且不报错。
+- 第三方 action 全部用 commit hash 钉死（后面的 `# vX.Y.Z` 是给人看的），
+  由 dependabot 每周自动更新。tag 可变，上游账号被攻破就能直接进你的 CI。
 {% endif %}{% if ci == "gitlab" %}
 ## CI
 
 推送和 MR 会触发 [`.gitlab-ci.yml`](.gitlab-ci.yml)：
 
 - **lint** —— 格式化（`.rs` 走 rustfmt、`.toml` 走 taplo）、拼写、clippy（`-D warnings`）、文档警告
-- **test** —— `cargo check` + nextest + 覆盖率（MR 页面直接显示百分比）+ JUnit 报告
+- **test** —— nextest + 覆盖率（MR 页面直接显示百分比）+ JUnit 报告
 - **deny** —— 依赖的安全公告 / License / 重复版本 / 来源
 - **hack** —— feature 幂集检查
 - **msrv** —— 用声明的最低版本编译一遍；nightly 项目改成用 `-Zpolonius=off` 编一遍，
@@ -487,12 +414,10 @@ just docker-clean       # 删除本地镜像
 打 `v*` tag 时额外跑 **verify-tag**（从零验证 + 核对版本号）、**changelog**、
 **build-binary**、**release**。
 
-> 依赖的安全公告是「代码没动风险也会变」的东西，只靠 MR 触发发现不了。
-> 建议到 CI/CD → Schedules 配一条每日定时流水线，专门跑 `deny`
-> （GitHub 那边对应的是 `audit.yaml`）。
+> 安全公告是「代码没动风险也会变」的东西，只靠 MR 触发发现不了。建议到
+> CI/CD → Schedules 配一条每日定时流水线专门跑 `deny`（对应 GitHub 的 `audit.yaml`）。
 
-配套 cargo 工具用 cargo-binstall 下预编译二进制，并单独缓存 `.cargo-home/bin/`：
-第一条流水线之后就不会再花时间装工具了。
+配套 cargo 工具用 cargo-binstall 下预编译二进制，并单独缓存 `.cargo-home/bin/`。
 {% endif %}{% if ci == "none" %}
 ## CI
 
