@@ -9,35 +9,30 @@ on:
       - main
   workflow_dispatch: # 允许在 Actions 页面手动触发
 
-# 发布流程在 release.yaml 里，本文件只负责 push / PR 上的持续检查。
-#
-# 为什么分开：一个既使用编译缓存、又能把产物发布出去的 workflow，等于给
-# 「污染缓存 -> 污染发布产物」留了一条路径（zizmor 的 cache-poisoning 审计）。
-# 拆开之后，缓存只服务于 CI，发布流程从零构建。
+# 本文件只负责 push / PR 上的持续检查，发布流程在 release.yaml 里。
+# 分开是为了让缓存只服务于 CI，发布流程从零构建。
 #
 # 同一分支/PR 连续推送时取消上一次尚未跑完的 run
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# 默认只给读权限；确实需要写的 job 在自己身上单独申明（最小权限原则）
+# 默认只给读权限，需要写的 job 在自己身上单独申明
 permissions:
   contents: read
 
 env:
   CARGO_TERM_COLOR: always
-  # CI 是一次性环境，增量编译只会拖慢速度并撑大缓存体积
+  # CI 是一次性环境，关掉增量编译
   CARGO_INCREMENTAL: 0
   RUST_BACKTRACE: 1
 
 jobs:
   # 探测仓库里有哪些 target，供后面的 job 做条件判断。
   #
-  # ⚠️ 为什么要为这点小事单开一个 job：**job 级的 `if:` 在 checkout 之前就被求值**，
-  #    那时 GITHUB_WORKSPACE 还是空的，`hashFiles('src/lib.rs')` 恒为空串，
-  #    条件永远不成立、job 永远被静默跳过——不报错，只是那个 job 从此形同虚设。
-  #    先 checkout 再把结论用 outputs 传出去，是唯一可靠的写法。
-  #    （**步骤级**的 `if: hashFiles(...)` 没有这个问题：那时代码已经拉下来了。）
+  # 单独开一个 job 是因为 job 级的 `if:` 在 checkout 之前求值，那时
+  # `hashFiles('src/lib.rs')` 恒为空串；先 checkout 再用 outputs 传结论才可靠。
+  # （步骤级的 `if: hashFiles(...)` 没有这个问题。）
   detect:
     name: detect targets
     runs-on: ubuntu-latest
@@ -53,25 +48,16 @@ jobs:
       - name: Probe repository layout
         id: probe
         run: |
-          # 「这里是模板仓库本身吗」——本文件会原样跟着进入生成项目，但它同时也
-          # 躺在模板仓库里，GitHub 一样会执行。而模板仓库的 Cargo.toml 与
-          # rust-toolchain.toml 全是 liquid 占位符，任何 cargo 命令都必然失败
-          # （`rustup toolchain install` 拿到的 channel 是 `{{ toolchain }}`）。
-          # 不判断的话，模板仓库的这条 workflow 会永远红着——而红的原因和代码无关，
-          # 久而久之就没人看了，真出问题时也发现不了。
-          #
-          # 模板仓库自身的 CI 是 template-ci.yaml：它生成项目再跑检查，
-          # 覆盖面是本文件的超集，所以这里跳过不损失任何信心。
-          #
-          # 用 '{%' 判断：生成项目里 liquid 标签已全部消失，这条 grep 恒不匹配。
+          # 判断这里是不是模板仓库本身：模板仓库的 Cargo.toml 还是 liquid 占位符，
+          # 任何 cargo 命令都会失败，所以下面所有 cargo 相关的 job 都跳过。
+          # 模板自身的检查见 template-ci.yaml。
           if grep -q '{%' Cargo.toml 2>/dev/null; then
             is_template=true
           else
             is_template=false
           fi
-          # ⚠️ 是 is_lib_only 而不是 is_lib：bin 项目也有 src/lib.rs（业务逻辑在那边，
-          #    main.rs 只做收口），但那是内部库，不对外承诺 API，不该跑 semver 检查。
-          #    真要同时对外发布库和命令行时，把这里改成只判断 src/lib.rs 即可。
+          # 是 is_lib_only 而不是 is_lib：bin 项目也有 src/lib.rs，但那是内部库，
+          # 不对外承诺 API，不跑 semver 检查。
           if [ -f src/lib.rs ] && [ ! -f src/main.rs ]; then
             is_lib_only=true
           else
@@ -88,7 +74,7 @@ jobs:
             echo "::notice::检测到这是模板仓库本身（Cargo.toml 里还是 liquid 占位符），跳过所有 cargo 相关的 job。模板自身的检查见 template-ci.yaml。"
           fi
 
-  # 格式化 / 拼写 / clippy / 文档：不跑测试，失败得最快，PR 上第一时间给反馈
+  # 格式化 / 拼写 / clippy / 文档：不跑测试，失败得最快
   lint:
     name: lint
     needs: [detect]
@@ -99,30 +85,22 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
-          # 后续步骤都不需要推东西回仓库。留着凭据等于把一枚可写 token 摊在
-          # 工作区的 .git/config 里，任何一个依赖的 build.rs 都能读到。
+          # 后续步骤不需要推东西回仓库，不保留凭据
           persist-credentials: false
       - name: Install Rust (版本由 rust-toolchain.toml 固定)
         run: rustup show active-toolchain || rustup toolchain install
-      # rustfmt.toml 用到了 imports_granularity / group_imports 等 unstable 选项，
-      # stable 的 rustfmt 会静默忽略它们，所以格式检查必须走 nightly 的 rustfmt。
-      #
-      # ⚠️ 但不能写死 `+nightly`：rust-toolchain.toml 的 channel 一旦钉成日期版本
-      #    （nightly-2026-08-18），`+nightly` 指的是**另一条**「最新 nightly」工具链。
-      #    那样 CI 用的 rustfmt 和本地 `just fmt` 用的就不是同一个版本，两者对同一份
-      #    代码的排版可能不一致——表现出来就是「本地 check 过、CI 挂」，且毫无线索。
-      #    所以这里按 channel 推导，规则和 justfile 的 fmt_toolchain 变量完全一致。
+      # 按 rust-toolchain.toml 的 channel 推导格式化工具链，规则与 justfile 的
+      # fmt_toolchain 变量一致（rustfmt.toml 用了 unstable 选项，必须走 nightly 的 rustfmt）。
       - name: Resolve rustfmt toolchain
         run: |
           channel=$(grep -m1 '^channel' rust-toolchain.toml | sed -E 's/.*"([^"]+)".*/\1/')
           case "$channel" in
-            # channel 本身就是 nightly（含日期版本）：rust-toolchain.toml 的 components
-            # 里已经带了 rustfmt，用它自己即可，不要再装第二条 nightly 进来。
+            # channel 本身是 nightly（含日期版本）：用它自己，components 里已带 rustfmt
             nightly*)
               fmt="$channel"
               ;;
-            # stable / 具体版本号：需要额外装一份 nightly 的 rustfmt。
-            # --allow-downgrade：某天的 nightly 偶尔缺 rustfmt，让 rustup 自动退回到有的那天。
+            # stable / 具体版本号：额外装一份 nightly 的 rustfmt，
+            # --allow-downgrade 让 rustup 在当天缺组件时自动退回
             *)
               fmt=nightly
               rustup toolchain install nightly --allow-downgrade --profile minimal --component rustfmt
@@ -136,8 +114,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Check code format
         run: cargo "+$FMT_TOOLCHAIN" fmt --all -- --check
-      # rustfmt 不管 .toml。项目里十来个 TOML 配置全靠这一步保持排版一致，
-      # 规则见 .taplo.toml；本地对应 `just fmt` / `just lint`。
+      # rustfmt 不管 .toml，项目里的 TOML 排版由 taplo 保证，规则见 .taplo.toml
       - name: Check TOML format
         run: taplo fmt --check
       - name: Check spelling
@@ -158,10 +135,8 @@ jobs:
       fail-fast: false
       matrix:
         platform: [ubuntu-latest]
-        # 默认只跑一个平台：多数项目的代码是平台无关的，三倍的 CI 时间换不来
-        # 等比例的信心。一旦碰了路径分隔符、换行、文件权限、进程 API 或任何 FFI，
-        # 就该把下面这行放开——`.gitattributes` 里的换行规则已经替 Windows
-        # 协作者铺好路了。
+        # 默认只跑一个平台；代码碰了路径分隔符、换行、文件权限、进程 API 或 FFI 时，
+        # 把下面这行放开跑多平台。
         # platform: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.platform }}
     timeout-minutes: 30
@@ -191,27 +166,20 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       # - name: Install Protoc
       #   uses: arduino/setup-protoc@v3
-      # ⚠️ 这里刻意**没有**一条 `cargo check --all-targets`：
-      #    lint job 的 `cargo clippy --locked --all-targets --all-features` 已经是它的
-      #    严格超集（examples / benches 也覆盖到），而下面的 llvm-cov 会带着
-      #    `-C instrument-coverage` 在 target/llvm-cov-target 里从头编一遍，
-      #    check 留下的产物它一点都用不上——加回去就是每次 CI 白烧一次全量编译。
+      # 这里没有单独的 `cargo check`：lint job 的 clippy 已是它的超集，
+      # 而下面的 llvm-cov 会带 `-C instrument-coverage` 重新编一遍。
+      # 只测 debug；要提前拦 release-only 的编译错误，补一条
+      # `cargo check --locked --release --all-targets --all-features`。
       #
-      #    另外只测 debug：release-only 的编译错误（`#[cfg(not(debug_assertions))]`
-      #    之类）很少见，且发版时 release.yaml 从零构建那一步一定会撞上。真要提前拦住，
-      #    补 `cargo check --locked --release --all-targets --all-features`。
       # 用 .config/nextest.toml 里的 ci profile：不 fail-fast、失败重试 2 次、输出 JUnit
       - name: Execute rust tests with coverage
         run: cargo llvm-cov nextest --locked --profile ci --all-features --lcov --output-path lcov.info
       # nextest 不跑 doctest，有 lib target 时补一次。
-      # 这里的 hashFiles 是**步骤级**的，此刻已经 checkout 过，结果可信；
-      # 同样的写法放到 job 级就会恒为空——见文件开头 detect job 的说明。
+      # 这里的 hashFiles 是步骤级的，此刻已经 checkout 过，结果可信。
       - name: Execute doc tests
         if: hashFiles('src/lib.rs') != ''
         run: cargo test --locked --doc --all-features
-      # 想给覆盖率设下限的话，在上一条命令里加 --fail-under-lines N（N 是百分比）。
-      # 刻意不预设一个数字：阈值定低了没意义，定高了会逼着人写凑数的测试。
-      # 建议的做法是先跑几周看看实际水位，再把当前值写进去防止下滑。
+      # 想给覆盖率设下限就在上一条命令里加 --fail-under-lines N（N 是百分比）
       - name: Upload coverage report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -233,7 +201,7 @@ jobs:
       #     files: lcov.info
       #     token: ${{ secrets.CODECOV_TOKEN }}
 
-  # 依赖审计：不需要编译，几秒钟就能出结果，和上面的 job 并行跑
+  # 依赖审计：不需要编译，和上面的 job 并行跑
   deny:
     name: cargo-deny
     needs: [detect]
@@ -251,14 +219,9 @@ jobs:
       - name: Check dependencies (advisories / licenses / bans / sources)
         run: cargo deny check -A unmatched-bypass
 
-  # workflow 文件自己的静态检查。CI 配置和业务代码一样会腐坏，而且它出问题的方式
-  # 更隐蔽——脚本注入、过宽的 token 权限、被缓存投毒的发布流程，都不会让构建变红。
-  #
-  # 两个工具是互补的，不要只留一个：
+  # workflow 文件自己的静态检查，两个工具互补：
   #   zizmor      安全向——脚本注入、过宽权限、缓存投毒、可变 tag
-  #   actionlint  正确性向——写错的表达式、不存在的 job 依赖、runner 标签打错、
-  #               run: 里的 shell 语法错误（它内部会调 shellcheck）
-  # `needs:` 里把 job 名拼错了这种事 zizmor 不管，actionlint 当场就拦下来。
+  #   actionlint  正确性向——表达式、job 依赖、runner 标签、run: 里的 shell 语法
   workflows:
     name: lint workflows
     runs-on: ubuntu-latest
@@ -271,14 +234,10 @@ jobs:
         uses: taiki-e/install-action@ba47c86ac325773530516bb756137ac718732518 # v2.86.5
         with:
           tool: zizmor
-      # actionlint 不在 install-action 的支持列表里（它是 Go 写的，crates.io 上也没有
-      # 同名包）。install-action 碰到不认识的工具会退回 cargo-binstall，这一步于是会以
-      # `For crate actionlint: actionlint is not found` 失败——不是网络抖动，重试没用。
-      # 官方发布的就是预编译二进制，这里自己取回来、核对 sha256 再装。
-      #
-      # ⚠️ 版本得手工升：dependabot 只认 `uses:` 里的 action，管不到 run: 里的版本号。
-      #    升级时把版本与下面的 sha256 一起换掉，校验和取自 release 页的
-      #    actionlint_<版本>_checksums.txt。
+      # actionlint 不在 install-action 的支持列表里（Go 写的，crates.io 上没有同名包），
+      # 这里自己取回官方预编译二进制、核对 sha256 再装。
+      # 版本要手工升级：dependabot 管不到 run: 里的版本号，
+      # 校验和取自 release 页的 actionlint_<版本>_checksums.txt。
       - name: Install actionlint
         env:
           ACTIONLINT_VERSION: "1.7.12"
@@ -297,31 +256,17 @@ jobs:
           sudo install -m 0755 actionlint /usr/local/bin/actionlint
           rm -f "$tarball" actionlint
           actionlint --version
-      # --min-severity medium：低危项多是风格建议，卡 CI 性价比不高。
-      # 想更严可以去掉这个参数，或加 --persona=pedantic。
+      # --min-severity medium：低危项多是风格建议。想更严就去掉这个参数，
+      # 或加 --persona=pedantic。
       - name: Audit GitHub Actions workflows
         run: zizmor --min-severity medium --no-progress .github/workflows
       - name: Lint GitHub Actions workflows
         run: actionlint -color
 
-  # 「这份代码在比当前工具链更保守的环境里也编得过吗」——按 rust-toolchain.toml 的
-  # channel 分两条路走，判断依据在 job 内部读文件，以后换工具链不用改这里。
-  #
-  #   stable  → 装上 Cargo.toml 里 rust-version 声明的那个版本原样 check 一遍，
-  #             避免用了新版本才有的 API 却忘了抬 rust-version。
-  #   nightly → MSRV 检查没有意义（nightly 项目可能用 #![feature(...)]，那类代码在
-  #             任何 stable 上都编不过，E0554），改跑一次「借用检查器兜底」：
-  #             还是同一条 nightly，只把借用检查器换回 stable 那套。
-  #
-  # ⚠️ nightly 为什么非补这一步不可：2026-08-06 起 nightly 默认启用了新一代借用检查器
-  #    Polonius，它比 stable 的 NLL 接受更多合法程序（最典型的是「条件返回一个借用，
-  #    之后再可变借用同一个值」这类写法）。和 #![feature(...)] 不同的是，这个差异
-  #    **没有任何显式标记**——没有属性、没有 lint、连 warning 都没有。于是很容易写出
-  #    一段 nightly 编得过、stable 编不过的代码，而 Cargo.toml 里的 rust-version 依旧
-  #    写着一个早期版本：发到 crates.io 是下游用户先撞上，不发布的话就是哪天想切回
-  #    stable 时才发现欠了一堆还不清的债。`-Zpolonius=off` 让 nightly 用回 NLL，
-  #    把这类代码在 CI 上就地拦下。
-  #    等 Polonius 进了 stable（官方计划 2026 年底），这一步连同注释一起删掉即可。
+  # 按 rust-toolchain.toml 的 channel 分两条路，判断依据在 job 内部读文件：
+  #   stable  → 用 Cargo.toml 里 rust-version 声明的那个版本 check 一遍
+  #   nightly → MSRV 检查不适用，改用 `-Zpolonius=off` 把借用检查器换回 stable 的 NLL，
+  #             拦下只有 nightly 编得过的代码
   msrv:
     name: msrv / nll
     needs: [detect]
@@ -349,9 +294,7 @@ jobs:
             echo "MSRV = $version"
           fi
           echo "mode=$mode" >> "$GITHUB_OUTPUT"
-      # ⚠️ 这里用 env 把 step 输出接进来，而不是直接在 run: 里写 ${{ ... }}。
-      #    后者会被 Actions 在执行前做字符串替换，等于把外部内容拼进 shell 脚本
-      #    （脚本注入）。哪怕这里的值来自自家文件，也保持同一套写法更省心。
+      # 用 env 把 step 输出接进来，而不是把 ${{ ... }} 直接拼进 run:（防脚本注入）
       - name: Install Rust toolchain
         if: steps.msrv.outputs.mode == 'msrv'
         env:
@@ -360,8 +303,7 @@ jobs:
       - name: Install Rust (版本由 rust-toolchain.toml 固定)
         if: steps.msrv.outputs.mode == 'nll'
         run: rustup show active-toolchain || rustup toolchain install
-      # key 带上 mode：两条路的工具链与 RUSTFLAGS 都不同，编译产物互不通用，
-      # 共用一个 cache key 只会让两边反复把对方的缓存挤掉。
+      # key 带上 mode：两条路的工具链与 RUSTFLAGS 不同，编译产物互不通用
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         if: steps.msrv.outputs.mode != 'skip'
         with:
@@ -375,16 +317,12 @@ jobs:
       - name: Check with the stable borrow checker (NLL)
         if: steps.msrv.outputs.mode == 'nll'
         env:
-          # ⚠️ RUSTFLAGS 是整体**覆盖** .cargo/config.toml 里的 rustflags，不是追加。
-          #    以后在那边加了编译参数，记得同步到这一行，否则这次 check 用的是另一套配置。
+          # RUSTFLAGS 整体覆盖 .cargo/config.toml 里的 rustflags，在那边加参数时要同步这里
           RUSTFLAGS: -Zpolonius=off
         run: cargo check --locked --all-targets --all-features
 
-  # 特性组合检查：只跑 `--all-features` 会漏掉「单独开启某个 feature 编不过」这类问题，
-  # 而使用者恰恰可能只开其中一个。cargo-hack 把 [features] 的幂集逐个 check 一遍。
-  #
-  # 现在模板没有声明任何 feature，这个 job 相当于一次普通 check（几秒钟）；
-  # 等你往 Cargo.toml 里加 [features] 之后它才真正开始发挥作用，无需再改 CI。
+  # 特性组合检查：把 [features] 的幂集逐个 check 一遍，
+  # 覆盖「只开某一个 feature 编不过」这类问题。没声明 feature 时相当于一次普通 check。
   hack:
     name: feature powerset
     needs: [detect]
@@ -403,23 +341,15 @@ jobs:
         with:
           tool: cargo-hack
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      # --depth 2 限制组合爆炸：feature 一多，完整幂集是 2^n 个组合，CI 会跑到天荒地老
-            
-      #
-      # ⚠️ 这里**不能**加 --locked。--no-dev-deps 会先把 [dev-dependencies] 从真实的
-      #    Cargo.toml 里删掉再 check，依赖图一变 cargo 就要把那些 dev 依赖从 Cargo.lock
-      #    里剪掉，而 --locked 禁止改动 lock，直接 101 退出：
-      #      error: cannot update the lock file ... because --locked was passed
-      #    [dev-dependencies] 为空时不会触发（删掉空表不改变依赖图），所以它会潜伏到
-      #    你加第一个 dev 依赖那天才炸。
-      #    「lock 已提交且是最新的」由 lint / test / msrv 那几个 job 的 --locked 保证，
-      #    这里不必重复。justfile 的 `just hack` 本来就没带 --locked，两边保持一致。
+      # --depth 2 限制组合爆炸。
+      # 这里不能加 --locked：--no-dev-deps 会临时删掉 [dev-dependencies]，
+      # 依赖图一变 cargo 就要改 Cargo.lock，而 --locked 禁止改动，直接 101 退出。
+      # 「lock 是最新的」由 lint / test / msrv 那几个 job 的 --locked 保证。
       - name: Check feature powerset
         run: cargo hack --feature-powerset --depth 2 --no-dev-deps check
 
-  # 公开 API 的破坏性变更检查（只对**纯库**项目有意义，判断见 detect job）。
-  # 以「上一个 v* tag」为基线：加了 pub 字段、改了函数签名、删了导出项，都会被指出来，
-  # 并告诉你这次该抬 minor 还是 major。仓库还没打过 tag 时自动跳过。
+  # 公开 API 的破坏性变更检查（只对纯库项目跑，判断见 detect job）。
+  # 以上一个 v* tag 为基线，指出该抬 minor 还是 major；没有 tag 时自动跳过。
   semver:
     name: semver-checks
     needs: [detect]
@@ -456,15 +386,9 @@ jobs:
           BASELINE: ${{ steps.baseline.outputs.rev }}
         run: cargo semver-checks --baseline-rev "$BASELINE"
 
-  # 容器镜像构建验证（只在生成项目时选了 Docker 才有这个 job）。
-  #
-  # 刻意**只构建、不推送**：推镜像是对外动作，要先决定仓库（GHCR / Docker Hub）、
-  # 凭据与 tag 策略，模板不替你做主。这里补的是另一件事——dependabot 每周盯着
-  # 基础镜像的 CVE，但如果 CI 从不构建，Dockerfile 什么时候坏掉是没人知道的。
-  #
-  # ⚠️ Dockerfile 里的 BuildKit cache mount 在 CI 上恒为空（每次都是全新机器），
-  #    所以这个 job 每次都从零编译一遍依赖。项目大了嫌慢的话，两条路见 Dockerfile
-  #    顶部的说明（build-push-action 的 gha 缓存，或换 cargo-chef）。
+  # 容器镜像构建验证（只在生成项目时选了 Docker 才有这个 job）：只构建、不推送，
+  # 用来发现 Dockerfile 什么时候坏掉。
+  # CI 上 BuildKit 的 cache mount 恒为空，每次都从零编译依赖；提速方案见 Dockerfile 顶部。
   docker:
     name: docker build
     needs: [detect]

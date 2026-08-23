@@ -1,32 +1,18 @@
-# cargo 的**项目级**配置：https://doc.rust-lang.org/cargo/reference/config.html
-#
-# 这个文件入库，因此只放「团队里每个人都该生效」的设置。纯个人偏好（自己机器上的
-# mold 路径、公司代理、镜像源）请写进 ~/.cargo/config.toml —— 那份是用户级的，
-# 优先级更低，但不会污染仓库、也不会跟着 CI 跑。
+# cargo 的项目级配置：https://doc.rust-lang.org/cargo/reference/config.html
+# 只放团队共用的设置，个人偏好写进 ~/.cargo/config.toml。
 #
 # 生效优先级（高 → 低）：
 #   环境变量（RUSTFLAGS / CARGO_*） > 本文件 > ~/.cargo/config.toml > cargo 内置默认值
 #
-# ⚠️ 本文件最容易踩的坑：环境变量里的 `RUSTFLAGS` 会**整体替换**下面
-#    `[build] rustflags` / `[target.*] rustflags` 的全部内容，而不是追加。
-#    项目里有两处显式设了 RUSTFLAGS：
-#      - justfile 的 `nll` 配方
-#      - CI 的 msrv job（nll 分支，GitHub 与 GitLab 两套里各一处）
-#    所以一旦在这里启用了 rustflags，务必同步到那几处，否则那次 check 用的是另一套
-#    编译参数，而它不会有任何提示。
-#
-# ⚠️ 下面绝大多数条目默认注释着，这是有意的：编译参数一改就是一次全量重编，
-#    而「快多少」和机器、项目规模强相关。这个文件的价值在于把「该在哪儿改什么」
-#    收口到一处，而不是替你做主。
+# 环境变量里的 `RUSTFLAGS` 会整体替换下面 `[build] rustflags` / `[target.*] rustflags`。
+# 项目里显式设了 RUSTFLAGS 的地方：justfile 的 `nll` 配方、CI 的 msrv job
+# （GitHub 与 GitLab 各一处）；在这里启用 rustflags 时要同步过去。
 
 [net]
-# 默认是 3。crates.io / GitHub 的偶发超时在 CI runner 和国内网络下都很常见，
-# 多试两次的代价远小于整条流水线红掉重跑。
+# 网络请求的重试次数
 retry = 5
 
-# 走系统 git 而不是 cargo 内置的 libgit2。私有 git 依赖需要 SSH 凭据、
-# 或公司网络要求走特定代理时，几乎必开——libgit2 读不到 ~/.ssh/config 和
-# git 的 credential helper。代价是略慢一点。
+# 走系统 git 而不是内置的 libgit2，私有 git 依赖需要 SSH 凭据或代理时打开
 # git-fetch-with-cli = true
 
 # ---------------------------------------------------------------------------
@@ -34,103 +20,66 @@ retry = 5
 # ---------------------------------------------------------------------------
 [resolver]
 # 解析依赖版本时，怎么对待「要求的 rustc 比本项目 rust-version 更新」的版本：
-#   allow     一视同仁（老行为）
-#   fallback  实在没有别的版本可选时才用它
+#   allow     一视同仁
+#   fallback  没有别的版本可选时才用它
 #
-# Cargo.toml 里的 resolver = "3" 已经给了这个行为，这里再写一次是因为两者作用域
-# 不同：resolver = "3" 绑在 workspace 上，这一行绑在**目录**上，将来在这个目录下
-# 临时开个还没写 resolver 的子项目、或者用老一点的工具链跑，行为也一致。
-# （cargo 1.84+ 认这个键；更老的版本会当成未知键忽略。）
-#
-# ⚠️ fallback 是有安全代价的，而且这个代价完全静默：依赖发新版时如果把自己的
-#    rust-version 抬到了本项目 MSRV 之上，resolver 不会报错、也不会提示，
-#    它会直接退回到一个「还能用」的旧版本——而安全补丁往往就在新版本里。
-#    time 的 RUSTSEC-2026-0009 就是这样：补丁在 0.3.47，它要求 rustc 1.88，
-#    MSRV 写 1.85 的项目于是拿到了有洞的 0.3.45，`cargo build` 一路绿灯。
-#    （模板的 rust-version 默认取 1.88 而不是 edition 地板值 1.85，就是为了避开这一条。）
-#
-#    所以 MSRV 定得越低，这类暴露面越大（详见 Cargo.toml 里 rust-version 那段）。
-#    唯一能发现它的是 `just audit`。改成 "allow" 可以让 resolver 永远取最新版本，
-#    代价是本项目可能编不过声明的 MSRV——那样就该把 rust-version 抬上去，
-#    而不是继续让 fallback 替你掩盖问题。
+# 与 Cargo.toml 的 resolver = "3" 作用域不同：那个绑在 workspace 上，这一行绑在目录上。
+# fallback 下依赖抬高 rust-version 后会静默退回旧版本，靠 `just audit` 发现。
 incompatible-rust-versions = "fallback"
 
-# 想把 Cargo.lock 放到别处（比如源码目录只读）时用，路径必须以 Cargo.lock 结尾。
-# 需要 cargo 1.97+。
+# 把 Cargo.lock 放到别处，路径必须以 Cargo.lock 结尾（需要 cargo 1.97+）
 # lockfile-path = "Cargo.lock"
 
 # ---------------------------------------------------------------------------
-# 较新的 cargo 配置项（都已稳定，本模板默认没开，列在这里是为了让你知道它们存在）
+# 其它已稳定但默认没开的 cargo 配置项
 #
-# ⚠️ 下面出现了好几个 `[build]` 段（这里一个、链接器那节后面还有两个）。
-#    TOML 里同一个表只能出现一次——**同时**取消多个 `[build]` 的注释会让 cargo 直接
-#    报 "duplicate key"。要开多项就合并到同一个 [build] 段里。
+# 下面出现了多个 `[build]` 段，同一个表在 TOML 里只能出现一次：
+# 要同时启用多项就合并到一个 [build] 段里。
 # ---------------------------------------------------------------------------
 
 # [build]
-# # cargo 1.97 稳定。把本地包的编译警告统一升级成错误：
-# #   "warn"(默认) / "allow" / "deny"
-# # 它是 CI 里那句 `-D warnings` 的正规替身，而且**不走 RUSTFLAGS**——也就是不会踩
-# # 本文件开头那条「RUSTFLAGS 整体覆盖」的坑，`just nll` 之类换了 RUSTFLAGS 的命令
-# # 照样受它管。
-# #
-# # 默认不开的理由只有一个：本地边写边 `cargo check` 时，一个 unused import 就让
-# # 编译失败，迭代体验很差。本模板的分工是「本地 warn，CI 拦」——CI 已经用
-# # `cargo clippy -- -D warnings` 和 `RUSTDOCFLAGS=-D warnings` 兜住了。
-# # 想在 CI 里额外给 `cargo check` / `cargo test` 也上闸，不要改这里，改成在 CI 的
-# # env 里设 `CARGO_BUILD_WARNINGS: deny`，本地就不受影响。
+# # cargo 1.97 稳定。把本地包的编译警告升级成错误："warn"(默认) / "allow" / "deny"。
+# # 它不走 RUSTFLAGS，因此换了 RUSTFLAGS 的命令也受它管。
+# # 只想在 CI 上生效的话，改在 CI 的 env 里设 `CARGO_BUILD_WARNINGS: deny`。
 # warnings = "deny"
 #
-# # cargo 1.91 稳定。把「中间产物」和「最终产物」分开存放：target/ 下只留最终产物，
-# # 编译中间件挪到别处。支持 {workspace-root} / {cargo-cache-home} / {workspace-path-hash}
-# # 三个模板变量，例如把所有项目的中间产物集中到 CARGO_HOME 下、按项目路径哈希分目录：
+# # cargo 1.91 稳定。把中间产物与最终产物分开存放，target/ 下只留最终产物。
+# # 支持 {workspace-root} / {cargo-cache-home} / {workspace-path-hash} 三个模板变量：
 # #   build-dir = "{cargo-cache-home}/build/{workspace-path-hash}"
-# # ⚠️ 改了它，justfile 里 `just clean` 的 rm、以及 CI 里所有写死 target/ 的路径
-# #    （nextest 的 junit、llvm-cov 的输出）都要一起核对。
+# # 改了它要同步 justfile 的 `just clean` 和 CI 里写死 target/ 的路径。
 # build-dir = "target"
 
-# cargo 1.88 起会自动清理全局缓存：.crate 文件 3 个月没访问、解压出来的源码 1 个月
-# 没访问就删。默认 "1 day" 检查一次，`--offline` / `--frozen` 时不清理。
-#
-# ⚠️ CI 上如果把 CARGO_HOME 放进了自己的缓存目录（本模板的 GitLab 流水线就是这么做的），
-#    这个 GC 可能刚恢复完缓存就把内容删掉一部分。那种场景请设成 "never"，
-#    或者在 CI 的 env 里设 CARGO_CACHE_AUTO_CLEAN_FREQUENCY=never。
+# 全局缓存的自动清理频率（cargo 1.88 起默认 "1 day" 检查一次）。
+# CI 上把 CARGO_HOME 放进缓存目录时设成 "never"，或用 CARGO_CACHE_AUTO_CLEAN_FREQUENCY=never。
 # [cache]
 # auto-clean-frequency = "never"
 
-# cargo 1.94 稳定。把配置拆成多份再合并，路径相对本文件解析，只接受 .toml 结尾。
-# 适合把「团队共享」和「可选的本地覆盖」分开，而不必靠注释约定：
+# cargo 1.94 稳定。把配置拆成多份再合并，路径相对本文件解析，只接受 .toml 结尾：
 # include = [{ path = "cargo-local.toml", optional = true }]
 
-# 依赖里有「将来会变成硬错误」的用法时，cargo 会在命令末尾提示一句
-# `cargo report future-incompatibilities`。默认就是 always，写出来是提醒它的存在——
-# 这份报告是唯一能提前发现「某个依赖迟早编不过」的渠道。
+# 依赖里有「将来会变成硬错误」的用法时，提示 `cargo report future-incompatibilities`
 # [future-incompat-report]
 # frequency = "always"
 
-# cargo 1.96 起支持按 target 配 rustdocflags（原来只能走环境变量）：
+# cargo 1.96 起支持按 target 配 rustdocflags：
 # [target.'cfg(all())']
 # rustdocflags = ["-D", "warnings"]
 
-# cargo 1.87 起可以把编译进度报给终端模拟器（显示在任务栏 / 标签页上）。
+# cargo 1.87 起可以把编译进度报给终端模拟器（显示在任务栏 / 标签页上）
 # [term]
 # progress.term-integration = true
 
 # ---------------------------------------------------------------------------
 # 链接器
 #
-# 链接是增量编译里最大的一块时间，换个链接器往往比任何编译参数都管用。
 # 各平台现状（截至 2026 年）：
-#
-#   x86_64-unknown-linux-gnu   rustc 1.90 起**默认**就是 rust-lld，无需配置。
-#                              想退回系统链接器：-Clinker-features=-lld
-#   aarch64-unknown-linux-gnu  还不是默认，装 mold 或显式开 lld 有明显收益
-#   macOS                      Xcode 15 起 Apple 自家的 ld 已经重写过，本身就快；
-#                              lld / zld 在这里通常不再是提升，别照抄 Linux 的配方
+#   x86_64-unknown-linux-gnu   rustc 1.90 起默认 rust-lld，无需配置
+#                              （退回系统链接器：-Clinker-features=-lld）
+#   aarch64-unknown-linux-gnu  换 mold 或显式开 lld 有明显收益
+#   macOS                      Xcode 15 起的系统 ld 本身已经很快
 #   windows-msvc               默认 link.exe，换 rust-lld（lld-link）一般更快
 #
-# ⚠️ 一旦取消下面任何一段的注释，就等于给这个项目设了 rustflags，
-#    请回到文件开头看那条关于 RUSTFLAGS 覆盖的说明。
+# 启用下面任一段即等于给项目设了 rustflags，注意文件开头那条覆盖规则。
 # ---------------------------------------------------------------------------
 
 # [target.aarch64-unknown-linux-gnu]
@@ -143,14 +92,8 @@ incompatible-rust-versions = "fallback"
 # ---------------------------------------------------------------------------
 # 并行前端（仅 nightly）
 #
-# rustc 的前端（解析、类型检查、借用检查）长期是单线程的，`-Zthreads=N` 把它并行化，
-# 干净构建通常能省 20%~30%。官方 2026 年的目标之一就是把它推进 stable。
-#
-# 默认不开的两个原因：
-#   1. 它仍是 nightly 实验特性，偶尔会碰上 ICE；
-#   2. 它必须以 rustflags 的形式存在，于是就落进了上面那条「RUSTFLAGS 会整体覆盖」
-#      的陷阱里——`just nll` 跑的时候它会被静默丢掉。
-# 想开的话取消注释，并把同样的参数补进 justfile 的 nll 配方与 CI 的 msrv job。
+# `-Zthreads=N` 并行化 rustc 的解析、类型检查、借用检查，干净构建通常能省 20%~30%。
+# 打开后要把同样的参数补进 justfile 的 nll 配方与 CI 的 msrv job，
 # 线程数超过 8 基本没有额外收益。
 # ---------------------------------------------------------------------------
 
@@ -161,29 +104,23 @@ incompatible-rust-versions = "fallback"
 # 其它按需打开的条目
 # ---------------------------------------------------------------------------
 
-# 用本机 CPU 的全部指令集编译。跑 benchmark / 做性能对比时很有用，
-# ⚠️ 但产物**只能在同型号 CPU 上运行**，绝不要用它构建要分发的二进制。
+# 用本机 CPU 的全部指令集编译，产物只能在同型号 CPU 上运行，别用于分发
 # [build]
 # rustflags = ["-C", "target-cpu=native"]
 
-# 国内网络下 crates.io 的稀疏索引经常慢到超时，可以换成镜像。
-# ⚠️ 三点注意：
+# 把 crates.io 的稀疏索引换成镜像。三点注意：
 #   1. 只影响下载来源，不影响校验和，Cargo.lock 与 `--locked` 照常工作；
-#   2. 凡是要直接连 registry 的命令（`cargo publish` / `cargo owner` / `cargo yank`）
-#      都得显式加 `--registry crates-io`，否则 cargo 分不清该连哪一个而拒绝执行；
-#   3. deny.toml 的 [sources] allow-registry 仍写 crates.io 官方地址即可 ——
-#      cargo-deny 看的是 Cargo.lock 里记录的原始 registry。
+#   2. `cargo publish` / `cargo owner` / `cargo yank` 要显式加 `--registry crates-io`；
+#   3. deny.toml 的 [sources] allow-registry 仍写官方地址。
 # [source.crates-io]
 # replace-with = "mirror"
 #
 # [source.mirror]
 # registry = "sparse+https://mirrors.tuna.tsinghua.edu.cn/crates.io-index/"
 
-# 给所有 cargo 子命令注入环境变量。比在 shell 里 export 稳：换台机器、换个终端
-# 都不会丢，跑 `cargo test` 的 CI 也一样能拿到。
+# 给所有 cargo 子命令注入环境变量
 # [env]
-# # 只在这个项目里默认打开 backtrace，不影响系统其它 Rust 程序
+# # 只在这个项目里默认打开 backtrace
 # RUST_BACKTRACE = "1"
-# # relative = true 时按「相对于本文件所在目录」解析成绝对路径，
-# # 适合指向仓库里的测试夹具
+# # relative = true 时按「相对于本文件所在目录」解析成绝对路径
 # FIXTURES_DIR = { value = "tests/fixtures", relative = true }

@@ -3,10 +3,7 @@
 **/*.rs.bk
 *.pdb
 
-# rustc 内部错误（ICE）的转储文件。
-# 两个原因让它必须单独写一行：一是 rustc 把它写在**当前工作目录**而不是 target/ 下，
-# 上面那条 /target 兜不住，它会直接落在仓库根上；二是本项目默认跑 nightly，
-# 撞上编译器 bug 的概率本来就比 stable 高。
+# rustc 内部错误（ICE）的转储文件，落在当前工作目录而不是 target/ 下
 rustc-ice-*.txt
 
 # 覆盖率 / 测试报告产物
@@ -21,8 +18,7 @@ flamegraph.svg
 perf.data*
 profile.json
 
-# 本地环境变量。最后一行是个惯例性的例外：不加的话，哪天你写了一份
-# .env.example 想提交给同事参考，会被上一行悄悄忽略掉，还很难看出原因。
+# 本地环境变量，但放行可以入库的 .env.example
 .env
 .env.*
 !.env.example
@@ -31,12 +27,10 @@ profile.json
 *.orig
 *.rej
 
-# GitLab CI 把 CARGO_HOME 指到工程目录下（只有工程目录能进 cache），
-# 本地用 gitlab-runner 跑流水线时会留下这个目录
+# 本地用 gitlab-runner 跑流水线时留下的 CARGO_HOME
 /.cargo-home
 
-# 编辑器 / 操作系统。编辑器的本地配置一律不进版本库——各人用的编辑器不一样，
-# 而且里面多半有只在自己机器上成立的路径。
+# 编辑器 / 操作系统的本地文件
 .DS_Store
 .idea/
 .vscode/

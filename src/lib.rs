@@ -1,12 +1,7 @@
 //! {{ description }}
 //!{% if crate_type == "bin" %}
-//! 这里是**库**目标，业务逻辑写在这一侧；`src/main.rs` 只做参数解析、日志初始化
-//! 和错误收口，然后调用这里的函数。
-//!
-//! 这么分不是为了好看：`main.rs` 里的东西集成测试（`tests/`）、benchmark 和
-//! doctest 都够不着，逻辑留在那边就只能靠手工跑一遍程序来验证。{% else %}
-//! 调用方 `use` 得到的，就是这里标了 `pub` 的东西。
-//! `tests/integration.rs` 以外部使用者的视角调用它们，替你回答「导出的够不够用」。{% endif %}
+//! 库目标：存放业务逻辑，供 `src/main.rs` 与 `tests/` 调用。{% else %}
+//! 标了 `pub` 的项构成对外公开的 API，`tests/integration.rs` 从外部视角调用它们。{% endif %}
 {% if error_handling %}
 mod error;
 
@@ -87,7 +82,7 @@ mod tests {
         assert_eq!(greet("world"), "Hello, world!");
     }
 {% endif %}{% if async_runtime %}
-    /// 异步测试用 `#[tokio::test]`，它会自动起一个 runtime，不需要手写 `block_on`。
+    /// 异步测试示例。
     #[tokio::test]
     async fn async_test_works() {
         assert_eq!(add(1, 1), 2);

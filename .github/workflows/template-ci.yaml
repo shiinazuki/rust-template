@@ -1,19 +1,15 @@
 name: template-ci
 
-# 模板仓库**自己的** CI：按矩阵生成项目，再逐个跑一遍完整检查。
-# 这个文件在 cargo-generate.toml 的 ignore 列表里，不会进入生成的项目。
+# 模板仓库自己的 CI：按矩阵生成项目，再逐个跑一遍完整检查。
+# 本文件在 cargo-generate.toml 的 ignore 列表里，不会进入生成的项目。
 #
-# 为什么必须有它：模板仓库里跑不了 cargo（根目录的 rust-toolchain.toml 与
-# Cargo.toml 里都是占位符），所以「改完模板还能不能生成出可用项目」这件事
-# 完全没有其它办法验证。liquid 标签写错一个、conditional 漏一条、生成的代码
-# 差一个空行过不了 fmt --check——这些都只有真生成一次才会暴露。
+# 模板仓库根目录跑不了 cargo，「改完模板还能不能生成出可用项目」只能靠真生成一次来验证。
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
-  # 每周跑一次完整矩阵：上游的 clippy / rustfmt / 依赖都在变，
-  # 模板没动也可能某天就生成不出能过 CI 的项目了。
+  # 每周跑一次完整矩阵：上游的 clippy / rustfmt / 依赖都在变
   schedule:
     - cron: "0 3 * * 1"
   workflow_dispatch:
@@ -28,11 +24,9 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
-  # ⚠️ 模板根目录的 rust-toolchain.toml 里 channel 是 `{{ toolchain }}`，不是合法
-  #    工具链名，在这个目录下跑任何 cargo/rustup 命令都会失败。RUSTUP_TOOLCHAIN
-  #    的优先级高于 rust-toolchain.toml，用它绕过去。
-  #    （scripts/smoke.sh 会在真正生成项目前把这个变量解开，
-  #      否则它会连生成项目声明的 channel 一起盖掉。）
+  # 模板根目录的 rust-toolchain.toml 里 channel 还是占位符，在这个目录下跑任何
+  # cargo/rustup 命令都会失败。RUSTUP_TOOLCHAIN 优先级高于 rust-toolchain.toml，
+  # 用它绕过去；scripts/smoke.sh 会在真正生成项目前把这个变量解开。
   RUSTUP_TOOLCHAIN: stable
 
 jobs:
@@ -44,10 +38,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # nightly 这条不只是给 `cargo +nightly fmt` 用的：矩阵里有 toolchain=nightly
-      # 的组合，进到那种项目目录后 rustup 会照 rust-toolchain.toml 把 components
-      # 补齐。在这里用 --allow-downgrade 一次性装好，rustup 后面就不必现装——
-      # 否则碰上某天的 nightly 缺组件，它没有 --allow-downgrade 可用，会直接失败。
+      # 矩阵里有 toolchain=nightly 的组合，这里用 --allow-downgrade 一次性把
+      # 组件装齐，免得后面 rustup 现装时撞上缺组件的 nightly。
       - name: Install Rust
         run: |
           rustup toolchain install stable --profile minimal --component clippy
@@ -56,18 +48,14 @@ jobs:
       - name: Install tools
         uses: taiki-e/install-action@ba47c86ac325773530516bb756137ac718732518 # v2.86.5
         with:
-          # cargo-deny 不能漏：smoke.sh 的依赖审计那一步是 `command -v cargo-deny`
-          # 守卫的，装不上就静默跳过——CI 绿着，但那项检查其实一次都没跑过。
+          # cargo-deny 不能漏：smoke.sh 的依赖审计那一步由 `command -v cargo-deny`
+          # 守卫，装不上就会静默跳过。
           tool: cargo-generate,cargo-nextest,cargo-deny,just,taplo-cli
-      # PR / push 上跑默认矩阵（10 组，够覆盖每个开关的开与关）；
-      # 定时任务与手动触发跑完整矩阵（19 组：bin 的 3 个源码开关全排列 + lib +
-      # nightly + 三种 CI 平台 + 协议），并顺带真正构建一次容器镜像
-      # （SMOKE_DOCKER=1，见 scripts/smoke.sh 的第 14 项检查）。
+      # PR / push 上跑默认矩阵（10 组）；定时任务与手动触发跑完整矩阵（19 组），
+      # 并用 SMOKE_DOCKER=1 真正构建一次容器镜像。
       #
-      # ⚠️ 这里刻意不写成 `bash scripts/smoke.sh $MODE`：不加引号是为了让空的 MODE
-      #    展开成**零个**参数，但那恰好是 shellcheck 的 SC2086，而同一条流水线里的
-      #    actionlint 会调 shellcheck 检查每段 run:，于是模板自己的 CI 会判自己红。
-      #    显式分支既没有引号问题，也不必依赖 smoke.sh 去容忍空串参数。
+      # 写成显式分支而不是 `bash scripts/smoke.sh $MODE`：后者不加引号会触发
+      # shellcheck 的 SC2086，而同一条流水线里的 actionlint 会调 shellcheck。
       - name: Run smoke matrix
         env:
           MODE: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '--full' || '' }}
@@ -79,16 +67,9 @@ jobs:
             bash scripts/smoke.sh
           fi
 
-  # 模板仓库**自身**的文件卫生。原来这一步是 pre-commit（连带一条 Python 工具链），
-  # 现在只留真正有价值的两项，直接用仓库已经在用的工具跑：
-  #
-  #   taplo  —— 模板里十几个 TOML 必须**同时**是合法 TOML（这正是「liquid 标签只能
-  #             锚在注释行行尾」那条约定的意义所在）。一旦有人写了单独占一行的裸标签，
-  #             这一步会立刻变红——这是模板仓库最容易悄悄坏掉的地方。
-  #   typos  —— 模板里注释极多，拼错的词会原样复制进每一个生成出来的项目。
-  #
-  # 空白 / 行尾那些原来由 pre-commit-hooks 管的项，交给 .editorconfig 与
-  # .gitattributes；提交信息格式由 .githooks/commit-msg 在本地拦。
+  # 模板仓库自身的文件卫生：
+  #   taplo  —— 模板里十几个 TOML 必须同时是合法 TOML（即「liquid 标签只能锚在注释行行尾」）
+  #   typos  —— 拼错的词会原样复制进每一个生成出来的项目
   hygiene:
     name: toml & spelling
     runs-on: ubuntu-latest
@@ -118,14 +99,10 @@ jobs:
         uses: taiki-e/install-action@ba47c86ac325773530516bb756137ac718732518 # v2.86.5
         with:
           tool: zizmor
-      # actionlint 不在 install-action 的支持列表里（它是 Go 写的，crates.io 上也没有
-      # 同名包）。install-action 碰到不认识的工具会退回 cargo-binstall，这一步于是会以
-      # `For crate actionlint: actionlint is not found` 失败——不是网络抖动，重试没用。
-      # 官方发布的就是预编译二进制，这里自己取回来、核对 sha256 再装。
-      #
-      # ⚠️ 版本得手工升：dependabot 只认 `uses:` 里的 action，管不到 run: 里的版本号。
-      #    升级时把版本与下面的 sha256 一起换掉，校验和取自 release 页的
-      #    actionlint_<版本>_checksums.txt。
+      # actionlint 不在 install-action 的支持列表里（Go 写的，crates.io 上没有同名包），
+      # 这里自己取回官方预编译二进制、核对 sha256 再装。
+      # 版本要手工升级：dependabot 管不到 run: 里的版本号，
+      # 校验和取自 release 页的 actionlint_<版本>_checksums.txt。
       - name: Install actionlint
         env:
           ACTIONLINT_VERSION: "1.7.12"
@@ -146,7 +123,7 @@ jobs:
           actionlint --version
       - name: Audit GitHub Actions workflows
         run: zizmor --min-severity medium --no-progress .github/workflows
-      # actionlint 查的是「写法对不对」，和 zizmor 的「安不安全」互补，见 build.yaml 里的说明
+      # actionlint 查写法，zizmor 查安全，两者互补
       - name: Lint GitHub Actions workflows
         run: actionlint -color
 
@@ -162,7 +139,6 @@ jobs:
         uses: taiki-e/install-action@ba47c86ac325773530516bb756137ac718732518 # v2.86.5
         with:
           tool: shellcheck
-      # .githooks/ 也要覆盖：它们是会在每个使用者机器上执行的 shell，
-      # 而且 commit-msg 里有 heredoc 与正则，正是最容易写错的那类代码。
+      # .githooks/ 一并覆盖：它们会在每个使用者机器上执行
       - name: Check shell scripts
         run: shellcheck scripts/*.sh .githooks/*

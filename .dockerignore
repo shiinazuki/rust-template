@@ -1,4 +1,4 @@
-# 构建上下文越小，docker build 越快。target/ 动辄好几个 G，务必排除。
+# 排除构建上下文里用不到的文件，减小 docker build 的上下文体积。
 target/
 .git/
 .github/
@@ -6,9 +6,7 @@ target/
 .idea/
 .devcontainer/
 scripts/
-# 项目级 cargo 配置刻意不带进容器：里面多半是只在宿主机成立的设置（指定 mold
-# 链接器、镜像源、nightly 才认的 -Zthreads），带进去轻则不生效、重则让构建直接失败。
-# 代价是 [net] retry 那类无害设置在容器里也用不上——需要的话在这里放行它。
+# 项目级 cargo 配置不带进容器（里面多是只在宿主机成立的设置）
 .cargo/
 
 # 容器里用不到的开发期文件

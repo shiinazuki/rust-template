@@ -419,7 +419,7 @@ just docker-clean       # 删除本地镜像
 | [`Dockerfile`](Dockerfile) | 多阶段构建 + distroless 运行镜像 |{% endif %}
 | [`.config/nextest.toml`](.config/nextest.toml) | 测试运行器配置（含 CI 专用 profile、JUnit、超时与测试分组示例） |
 | [`.cargo/config.toml`](.cargo/config.toml) | cargo 项目级配置：网络重试、依赖解析策略，以及链接器 / 并行前端 / 镜像源的开关都收在这里 |
-| [`AGENTS.md`](AGENTS.md) | 给 AI 编码助手的项目约定（格式化必须走 nightly、零警告、不许压制 lint 等） |
+| [`CLAUDE.md`](CLAUDE.md) | 给 AI 编码助手的项目约定（格式化必须走 nightly、零警告、不许压制 lint 等） |
 | [`.githooks/`](.githooks/) | Git 钩子（commit-msg 校验提交信息 / pre-push 跑 `just ci`），`just hooks` 启用 |
 | [`.editorconfig`](.editorconfig) | 跨编辑器的基础排版约定 |
 | [`.gitattributes`](.gitattributes) | 入库换行统一、二进制标记、`Cargo.lock` 折叠 |

@@ -1,70 +1,36 @@
-# 生成的项目默认自成一个 workspace root。
-# 这样即使把项目放进别的 workspace 目录下，也不会被父级 workspace 意外接管
-# （否则 cargo 会报 "current package believes it's in a workspace when it's not"）。
+# 生成的项目自成一个 workspace root，不会被外层 workspace 接管。
 [workspace]
-# 现在只有根 crate 一个成员。以后拆分子 crate（比如 crates/core、crates/cli）时
-# 在这里登记，下面 [workspace.package] / [workspace.dependencies] / [workspace.lints]
-# 里的配置它们可以直接继承，不必每个子 crate 抄一遍。
-#
-# 真拆成多个包之后，发布用 `cargo publish --workspace`（或 -p a -p b）：cargo 1.90
-# 起原生支持一次发布多个互相依赖的包，会自己排好顺序，不必再手工按依赖关系一个个发。
-# ⚠️ 它**不是原子操作**，中途失败可能只发出去一半。
+# 拆分出子 crate（如 crates/core、crates/cli）时在这里登记，
+# 它们即可继承下面的 [workspace.package] / [workspace.dependencies] / [workspace.lints]。
 members = []
 resolver = "3"
 
 # --- 供所有成员继承的公共元数据 -------------------------------------------
-# 子 crate 里写 `version.workspace = true` 即可继承，发版时只改这一处。
+# 子 crate 写 `version.workspace = true` 之类即可继承。
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-# MSRV（最低支持版本）。它只是下限，不限制上限——用更新的 stable 或 nightly 编译都没问题。
-# 作用：低于它时 cargo 直接报错；resolver 选依赖版本时会避开要求更高 rustc 的版本；
-# clippy 也会读它，不建议你用比 MSRV 更新的 API。
-# `just msrv` 和 CI 的 msrv job 会验证它属实；nightly 项目上改由 `just nll` 兜底
-# （见 rust-toolchain.toml 里关于 Polonius 的说明）。
-#
-# ⚠️ Polonius 进 stable 之后（官方计划 2026 年底），如果有代码是靠新借用检查器才编得过的，
-#    这里的版本号必须跟着抬到那一版——否则声明的 MSRV 就是一句空话。
-#
-# ⚠️ 为什么不是地板值 1.85。它配上 resolver = "3"（与 .cargo/config.toml 的
-#    `incompatible-rust-versions = "fallback"`）有一条**静默的安全代价**：依赖的新版本
-#    一旦把 rust-version 抬到你的 MSRV 以上，resolver 不报错也不提示，直接退回旧版本
-#    ——而安全补丁往往就在新版本里。time 的 RUSTSEC-2026-0009 补在 0.3.47（要求 1.88）：
-#      rust-version = "1.85"  ->  time 0.3.45（有洞），just audit FAILED
-#      rust-version = "1.88"  ->  time 0.3.55，干净
-#    两种情况 `cargo build` 都一路绿灯，唯一能发现它的是 `just audit`。
-#    取 1.88 还顺带买到更好的 clippy 建议（clippy 按 MSRV 给建议，定低了不会提示新 API）。
-#
-# 要支持更老的 rustc 就往下调，但那等于把上面这条风险重新打开。再撞上同类问题时：
-#   a. 把这里抬到补丁版本要求的那一版（首选，一劳永逸）；
-#   b. 确实必须支持老 rustc，就在 deny.toml 的 [advisories] 里显式 ignore，
-#      写清理由和复查时间，别让它无声地留着。
+# MSRV（最低支持版本）：低于它 cargo 直接报错，resolver 选依赖版本、clippy 给建议时也按它取舍。
+# `just msrv` 和 CI 的 msrv job 负责验证它属实。
 rust-version = "1.88"
 license = "{{ license }}"
-# 域名按 ci 选项推导，不要写死 github.com——这个字段会跟着 `cargo publish` 进 crates.io，
-# 指错了就是一个所有人都点得到的 404。ci = none 时按 github 处理，需要的话手工改。
+# 仓库地址，域名按 ci 选项推导（ci = none 时按 github 处理）。
 repository = "https://{% if ci == 'gitlab' %}gitlab.com{% else %}github.com{% endif %}/{{ repo-owner }}/{{ project-name }}"
 authors = ["{{ authors }}"]
 
 # --- 供所有成员继承的依赖版本 ---------------------------------------------
-# 版本号统一在这里定，成员里只写 `foo = { workspace = true }`，
-# 避免多个子 crate 各自声明版本导致同一个库被编进来两份。
-#
-# ⚠️ 下面那种「注释行尾挂条件标签」的排版叫注释锚定：这样模板仓库里的本文件同时也是
-#    合法 TOML，taplo / even-better-toml 不会把标签行当重复键报错，`taplo fmt` 也照常工作。
-#    标签在生成时已消失，这段只是解释排版从何而来。详见模板 README 的
-#    「TOML 文件里的 liquid 标签必须锚在注释行」。
+# 版本号统一在这里定，成员里只写 `foo = { workspace = true }`。
 [workspace.dependencies]
-# 这里是版本目录：成员写 `foo = { workspace = true }` 引用后才真正生效{% if async_runtime %}
+# 版本目录：成员引用后才真正生效{% if async_runtime %}
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
-# tokio 的 feature 在此统一收口，子 crate 不要各自再开{% endif %}{% if logging and crate_type == "bin" %}
+# tokio 的 feature 在此统一收口{% endif %}{% if logging and crate_type == "bin" %}
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-# env-filter 提供 RUST_LOG 那套运行时可调的过滤语法，不用重新编译就能改日志级别{% endif %}{% if error_handling %}
+# env-filter 提供 RUST_LOG 那套运行时可调的过滤语法{% endif %}{% if error_handling %}
 thiserror = "2"
-# thiserror 只在编译期展开成 impl，不会给运行时增加负担{% endif %}{% if error_handling and crate_type == "bin" %}
+# thiserror 用来定义领域错误类型{% endif %}{% if error_handling and crate_type == "bin" %}
 anyhow = "1"
-# anyhow 只给应用层用；库对外暴露它等于剥夺了调用方分类处理错误的能力，见 src/error.rs{% endif %}
+# anyhow 只给应用层用，见 src/main.rs{% endif %}
 
 [package]
 name = "{{ project-name }}"
@@ -76,11 +42,11 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-# keywords = ["cli"]                        # 最多 5 个，发布到 crates.io 时用于搜索
+# keywords = ["cli"]                        # crates.io 的搜索关键词，最多 5 个
 # categories = ["command-line-utilities"]   # 取值见 https://crates.io/categories
-# publish = false                           # 内部项目建议打开，防止误发布到 crates.io
+# publish = false                           # 禁止发布到 crates.io
 
-# 打包发布时排除掉只对开发有意义的文件，减小 .crate 体积
+# 打包发布时排除掉只对开发有意义的文件
 exclude = [
   ".github/",
   ".gitlab-ci.yml",
@@ -88,7 +54,7 @@ exclude = [
   ".cargo/",
   ".gitattributes",
   ".githooks/",
-  "AGENTS.md",
+  "CLAUDE.md",
   ".dockerignore",
   "Dockerfile",
   "cliff.toml",
@@ -104,35 +70,29 @@ exclude = [
   "rust-toolchain.toml",
 ]
 
-# docs.rs 元数据只有库项目才生成——bin 不会发布到 docs.rs。{% if crate_type == "lib" %}
-# 用全部 feature 构建文档，否则藏在 optional feature 后面的 API 在线文档里根本看不到；
-# --cfg docsrs 则允许你用 #[cfg_attr(docsrs, doc(cfg(...)))] 标注
-# 「这个 API 需要开哪个 feature」。
+# docs.rs 的文档构建参数，仅库项目生成{% if crate_type == "lib" %}
+# all-features 让藏在 optional feature 后的 API 也进文档，
+# --cfg docsrs 供 #[cfg_attr(docsrs, doc(cfg(...)))] 标注 feature 需求。
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 # 以上仅 lib{% endif %}
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+# 全部字段见 https://doc.rust-lang.org/cargo/reference/manifest.html
 
 # ---------------------------------------------------------------------------
 # Feature 开关
 #
-# 现在一个都没声明，CI 的 hack job（cargo hack --feature-powerset）等价于一次普通 check；
-# 把下面几行的注释去掉它才真正发挥作用，不用改 CI。留这个位置是因为：使用者可能只开其中
-# 一个 feature，而你本地永远跑 --all-features，「单独开 A 编不过」只有幂集检查能发现。
+# 取消下面几行的注释后，CI 的 hack job（cargo hack --feature-powerset）
+# 才会真正逐个组合地检查各 feature。
 # ---------------------------------------------------------------------------
 # [features]
 # default = []
-# # optional = true 的依赖会自动生成一个同名 feature；想改名字用 dep: 前缀显式转发：
+# # optional = true 的依赖会自动生成同名 feature；想改名用 dep: 前缀显式转发：
 # # serde = ["dep:serde", "dep:serde_json"]
 
 [dependencies]
-# ⚠️ 你的依赖写在这一段里，也就是**下一个 [ ] 表头之前**。TOML 的键归属于它上方最近的
-#    那个表头，中间隔着多少行注释都不改变这一点。贴到 [dev-dependencies] 下面是最常见的
-#    翻车方式：`cargo build` 会报一整串 unresolved import，`cargo test` 反倒是好的。
-#
-# 版本继承自上面的 [workspace.dependencies]，这里只声明「本 crate 要用」{% if async_runtime and crate_type == "bin" %}
+# 本 crate 的运行时依赖写在这一段（到下一个 [ ] 表头为止），版本继承自 [workspace.dependencies]{% if async_runtime and crate_type == "bin" %}
 tokio = { workspace = true }
 # 入口是 #[tokio::main]，见 src/main.rs{% endif %}{% if logging and crate_type == "bin" %}
 tracing = { workspace = true }
@@ -144,27 +104,11 @@ anyhow = { workspace = true }
 # main 用它收口，配合 .context() 补充上下文{% endif %}
 
 [dev-dependencies]
-# 只在测试 / benchmark / example 里用到的依赖放这里，不会进使用者的依赖树。
-# 默认留空——测试辅助库按项目需要选，预置一堆没人用的反而是负担。常用的几个：
-#
-#   assert_cmd + predicates   跑真实的可执行文件，断言退出码 / stdout / stderr
-#   trycmd                    把 CLI 的输入输出写成 .md 快照，改一行就能重跑对齐
-#   insta                     快照测试，`cargo insta review` 交互式确认差异
-#   rstest                    参数化测试，一个函数跑多组输入
-#   proptest                  性质测试，自动找反例并收缩到最小复现
-#   tempfile                  临时目录 / 文件，测试结束自动清理
-#   pretty_assertions         断言失败时给彩色 diff，而不是两大坨 Debug 输出
-#   divan / criterion         benchmark（配合 benches/ 与 [profile.bench]）
-#
-# tokio 只在「库 + async」这一种组合下出现在这里：库那一侧只有 #[tokio::test] 用得到它，
-# 放进 [dependencies] 等于让每个使用者都白拉一份。bin 项目的 tokio 在上面那一段——
-# 它的 #[tokio::main] 是真的运行时依赖。{% if async_runtime and crate_type == "lib" %}
+# 只在测试 / benchmark / example 里用到的依赖，不会进使用者的依赖树{% if async_runtime and crate_type == "lib" %}
 tokio = { workspace = true }
-# 要在库里跑异步逻辑时再把它挪回 [dependencies]；但不要在库里装 runtime，
-# 起不起 runtime 是应用的决定{% endif %}
+# 库这一侧只有 #[tokio::test] 用得到它{% endif %}
 
-# `just unused` 用 cargo-machete 找出声明了却没用到的依赖。它靠扫源码里的符号判断，
-# 只在宏展开里用到的依赖会被误报，在这里逐个放行：
+# `just unused`（cargo-machete）的误报放行名单
 # [package.metadata.cargo-machete]
 # ignored = ["some-crate"]
 
@@ -172,189 +116,139 @@ tokio = { workspace = true }
 # 编译配置
 # ---------------------------------------------------------------------------
 
-# 依赖用 O2 编译、自身代码保持 O0：调试体验不变，但依赖里的热点代码（解析、
-# 加解密、序列化等）在 debug 运行时快一个数量级。代价是首次编译稍慢。
+# 依赖用 O2 编译，自身代码保持 O0
 [profile.dev.package."*"]
 opt-level = 2
-# 依赖的调试符号基本用不上，去掉能显著缩小 target/ 并加快链接
+# 不生成依赖的调试符号，缩小 target/ 并加快链接
 debug = false
-
-# ⚠️ 这里刻意**没有** `[profile.dev] split-debuginfo = "unpacked"`。它能缩短 Linux 上的
-#    链接时间，但 windows-msvc 只支持 `packed`，自 Rust 1.65 起碰上不支持的值是直接
-#    编译失败（`-Csplit-debuginfo=unpacked is unstable on this platform`），而 profile
-#    不支持 cfg 条件——写在这里等于「这个项目在 Windows 上编不过」。
-#    macOS 的 dev profile 本来就默认 unpacked，不写已是最优解；Linux 上想要这个收益，
-#    写进**自己机器**的 ~/.cargo/config.toml，那份不会跟着仓库传给 Windows 上的人。
-#    https://doc.rust-lang.org/rustc/codegen-options/index.html#split-debuginfo
 
 [profile.release]
 opt-level = 3
-lto = "thin" # 需要更激进可改成 "fat"，体积更小但编译明显变慢
+lto = "thin" # 改成 "fat" 体积更小，编译更慢
 codegen-units = 1
 strip = "symbols"
 panic = "unwind" # 改成 "abort" 二进制更小，但会禁用 unwind 并影响 #[should_panic] 测试
 
-# ⚠️ strip = "symbols" 去掉的是符号表，**不包括**源码路径：panic 信息里仍会露出构建机器的
-#    绝对路径（CI 上是 /home/runner/work/...，依赖是 ~/.cargo/registry/...）。要一并抹掉
-#    得用 trim-paths，但它到 2026 年 8 月仍是 unstable，只有 nightly 认——
-#    `cargo +nightly -Ztrim-paths build --release`，或在这段里写 `trim-paths = "object"`。
-#    模板默认 stable 用不上；稳定之后把这段删掉。
-
-# 做性能分析（flamegraph / samply / instruments）时用：
-#   cargo build --profile profiling
-# 优化级别与 release 一致，但保留符号，火焰图才有可读的函数名。
+# 性能分析（flamegraph / samply / instruments）用：cargo build --profile profiling
+# 优化级别与 release 一致，但保留符号
 [profile.profiling]
 inherits = "release"
 debug = true
 strip = "none"
 
-# benchmark 跟着 release 的优化走，否则测出来的是 O0 的数字，没有参考价值
+# benchmark 按 release 的优化级别编译，并保留符号
 [profile.bench]
 inherits = "release"
 debug = true
 strip = "none"
 
-# 测试用 O1：比 O0 跑得快不少，又不像 O3 那样每次都要等半天编译
+# 测试用 O1
 [profile.test]
 opt-level = 1
 
-# 下面两项默认注释着，按项目性质决定要不要打开：
+# 按需打开的两项：
 #
 # [profile.dev.build-override]
-# build script 与 proc-macro（serde_derive 这类）是用这一段编译的，
-# 上面的 [profile.dev.package."*"] 管不到它们。derive 用得多时打开会更快。
+# build script 与 proc-macro 的编译配置，[profile.dev.package."*"] 管不到它们
 # opt-level = 1
 #
 # [profile.release]
+# release 下开启整数溢出检查（默认关闭，溢出会静默回绕）
 # overflow-checks = true
-# release 默认关闭整数溢出检查，溢出会静默回绕。对账务 / 计费 / 协议解析这类
-# 场景，宁可 panic 也不要算错——打开它的代价通常在噪声范围内。
 
 # ---------------------------------------------------------------------------
 # 统一代码规范与 Clippy 约束
 #
-# 放在 [workspace.lints] 而不是 [lints]，将来加子 crate 时它们只需写
-# `[lints] workspace = true` 就能继承同一套规则，不会各自漂移。
-#
-# 注意 lint 组（group）必须带 priority = -1，否则组会覆盖掉后面单条 lint 的设置。
+# 写在 [workspace.lints]，子 crate 用 `[lints] workspace = true` 继承同一套规则。
+# lint 组必须带 priority = -1，否则会覆盖后面单条 lint 的设置。
 # ---------------------------------------------------------------------------
 
 [workspace.lints.rust]
-unsafe_code = "forbid" # 默认禁止 unsafe（确实需要时改成 "deny"，再按处 expect 并写明理由）
-# 标识符里不许出现非 ASCII 字符。这是一条**安全**lint，不是风格洁癖：
-# 西里尔字母 `а` 和拉丁 `a` 在编辑器里长得一模一样，靠同形字混进一个假的
-# `аuthenticate` 是 Trojan Source 那类攻击的标准手法，代码评审基本看不出来。
-# ⚠️ 只管标识符，注释和字符串字面量不受影响——本模板满篇中文注释照常。
+unsafe_code = "forbid" # 禁止 unsafe（确实需要时改成 "deny"，再按处 expect 并写明理由）
+# 标识符里禁止非 ASCII 字符（拦同形字伪装，注释和字符串不受影响）
 non_ascii_idents = "deny"
 missing_debug_implementations = "warn"
-# 和上面成对：小而无内部可变性的类型该实现 Copy，否则调用方到处写 .clone()，
-# 而且一旦发布出去，事后再加 Copy 是破坏性变更（它会改变移动语义）。
+# 小而无内部可变性的类型应实现 Copy
 missing_copy_implementations = "warn"
 unreachable_pub = "warn" # 只在 crate 内部用的类型不要暴露成 pub
 unused_qualifications = "warn"
-# `x as u64` 而 x 本来就是 u64。重构改过类型之后最容易留下这种空转的 cast，
-# 而它会把「以后类型再变一次」的编译错误一并吃掉。
+# 类型本就相同的多余 cast
 trivial_numeric_casts = "warn"
-# 声明了却完全可以省掉的生命周期参数（1.83 起有这条 lint）
+# 可以省掉的生命周期参数
 redundant_lifetimes = "warn"
-# 「能拿到这个类型的值，却写不出它的名字」——比如 pub fn 返回了一个没导出的类型。
-# 调用方于是没法把它存进结构体、也没法给它写 trait 实现。和上面的 unreachable_pub
-# 是一对：那条管「导出得太多」，这条管「导出得不够」。
+# 能取到值却写不出名字的类型（如 pub fn 返回未导出的类型）
 unnameable_types = "warn"
-# `let x = foo();` 而 foo() 返回的是 ()。多半是漏了 `?`、或者把返回值的函数改成了
-# 就地修改的版本却忘了改调用点。
+# 把 () 绑定到变量，如 `let x = foo();` 而 foo() 返回 ()
 unit_bindings = "warn"
 rust_2018_idioms = { level = "warn", priority = -1 }
-# 未来版本里会变成硬错误的用法，趁现在还只是 warning 就改掉
+# 未来版本里会变成硬错误的用法
 future_incompatible = { level = "warn", priority = -1 }
-# `let _ = mutex.lock()` 这类「守卫当场被丢弃」的坑：编译器不拦，这条拦
+# `let _ = mutex.lock()` 这类守卫当场被丢弃的写法
 let_underscore_drop = "warn"
 unused_lifetimes = "warn"
-# macro_rules! 里元变量的误用（`$x` 在展开体里出现的次数与重复层级对不上）。
-# 宏展开出来的错误信息一向难读，能在定义处就拦下最好。
+# macro_rules! 里元变量的误用
 meta_variable_misuse = "warn"
-# 2018 edition 之后 `#[macro_use] extern crate foo` 已经没必要了，
-# 它把宏名整个灌进 crate 根，看代码时根本查不出某个宏是哪来的。
+# `#[macro_use] extern crate foo` 这种把宏灌进 crate 根的写法
 macro_use_extern_crate = "warn"
-# 返回 async 块的闭包，直接写成 async 闭包更准确（也少一层 Box）。
-# 没用 async 的项目里它永远不触发，留着无害。
+# 返回 async 块的闭包，应直接写成 async 闭包
 closure_returning_async_block = "warn"
-# 下面两条同类但更吵，按需打开：
-#   trivial_casts        能靠自动 coercion 完成的 cast（`&T as &T`）。
-#                        本模板 unsafe_code = "forbid"，裸指针少，误伤不多，
-#                        但它偶尔会命中泛型代码里为了帮助推断而写的显式 cast。
-#   single_use_lifetimes 只用了一次的生命周期参数。
-#                        ⚠️ 已知会在 derive 宏展开出来的代码上误报，而 CI 是
-#                        -D warnings，那种误报出现在宏里、没地方写 #[expect]。
+# 按需打开的两条：
+#   trivial_casts        靠自动 coercion 就能完成的 cast
+#   single_use_lifetimes 只用了一次的生命周期参数（已知会在 derive 展开处误报）
 # trivial_casts = "warn"
 # single_use_lifetimes = "warn"
-# 仅 nightly（需要 #![feature(unqualified_local_imports)]）：要求本 crate 内部的
-# use 一律写成 self:: / super:: / crate:: 开头。它就是为 rustfmt 的
-# group_imports = "StdExternalCrate" 设计的——那个设置正好是本模板在用的，
-# 有了它「本 crate」那一组才不会漏掉裸路径的 import。
-# 钉死 nightly 的项目可以打开；channel 可能是 stable 的话别开。
+# 仅 nightly（需 #![feature(unqualified_local_imports)]）：本 crate 内部的 use
+# 一律写成 self:: / super:: / crate:: 开头，配合 rustfmt 的 group_imports。
 # unqualified_local_imports = "warn"
-# 库项目自动打开：强制公开 API 写文档注释（二进制项目生成为 "allow"）
+# 强制公开 API 写文档注释，仅库项目打开
 missing_docs = "{% if crate_type == 'lib' %}warn{% else %}allow{% endif %}"
 # 下面这条配套上面的 [package.metadata.docs.rs]，只对库项目生成{% if crate_type == "lib" %}
-# 自 1.80 起 cargo 会校验 cfg 名字：docsrs 不登记在这里的话，一旦按 docs.rs 那段的建议
-# 写 #[cfg_attr(docsrs, doc(cfg(...)))]，本地 cargo check 就会报 unexpected_cfgs，
-# 而 CI 是 -D warnings ——一条纯粹为了文档写的属性会把构建打红。
+# 登记 docsrs 这个 cfg 名，让 #[cfg_attr(docsrs, ...)] 不触发 unexpected_cfgs
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(docsrs)'] }
 # 以上仅 lib{% endif %}
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
-# cargo 组管的是 Cargo.toml 本身：通配符依赖、名字带 no- 前缀的 feature、
-# 发布到 crates.io 时缺元数据。它不看源码，几乎不增加 clippy 的耗时。
+# cargo 组检查 Cargo.toml 本身：通配符依赖、feature 命名、发布元数据
 cargo = { level = "warn", priority = -1 }
 
-# 手动加严：这几条 clippy 默认不开，但线上事故多半出在这里
+# 手动加严：以下几条 clippy 默认不开
 enum_glob_use = "deny"
-unwrap_used = "warn" # 不要随手 unwrap，改用 ? 或 expect("说明为什么不会失败")
+unwrap_used = "warn" # 改用 ? 或 expect("说明为什么不会失败")
 dbg_macro = "warn" # 调试用的 dbg! 不要带进提交
 todo = "warn"
 mem_forget = "deny"
-# 统一模块布局：用 foo.rs + foo/ 而不是 foo/mod.rs，免得一个仓库里两种风格混着来
+# 统一模块布局：用 foo.rs + foo/ 而不是 foo/mod.rs
 self_named_module_files = "warn"
-# 已经是 &str 还 .to_string()：写 .to_owned() 意图更清楚，也少一次格式化机器的开销
+# 对 &str 调 .to_string()，应写 .to_owned()
 str_to_string = "warn"
-# 只是想读一个文件却手写 File::open + read_to_string 的绕远路写法
+# 手写 File::open + read_to_string 读整个文件
 verbose_file_reads = "warn"
-# 和上面的 todo 成对，unimplemented!() 同样不该进主干
+# unimplemented!() 不应进主干
 unimplemented = "warn"
-# 优先用 #[expect(...)] 而不是 #[allow(...)]。区别是 expect 在「这条 lint 已经不再
-# 触发」时会反过来提醒你把它删掉，于是压制项不会随着代码演进悄悄沉淀成一堆死配置。
-# （需要 Rust 1.81+，本模板的 MSRV 高于它。）
-# 确实只能用 allow 的场合（比如压制的是条件编译下才出现的 lint），
-# 在那一处写 #[allow(clippy::allow_attributes)] 并说明原因。
+# 压制 lint 时用 #[expect(...)] 而不是 #[allow(...)]，不再触发时会提示删除
 allow_attributes = "warn"
 
-# 降噪：pedantic 里在业务代码中收益不高的几条。按需删掉即可恢复检查。
+# 降噪：pedantic 里在业务代码中收益不高的几条
 module_name_repetitions = "allow"
 must_use_candidate = "allow"
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
 
-# 降噪：cargo 组里这两条在本模板的默认状态下必然误伤，各有对应的替代手段。
+# 降噪：cargo 组里两条在默认状态下必然误伤的
 #
-# 这条要求 keywords / categories 齐全，而模板里这两项默认是注释着的（见 [package]）。
-# 真要发布到 crates.io 时，把那两行填好，再把这里改成 "warn"。
+# 要求 keywords / categories 齐全，而模板里这两项默认注释着（见 [package]）
 cargo_common_metadata = "allow"
-# 同一个 crate 出现多个版本。依赖一多几乎必然发生，而且多半不由你决定；
-# 这件事交给 deny.toml 的 [bans] multiple-versions 管，那边能逐个豁免并写明原因。
+# 同一个 crate 出现多个版本，改由 deny.toml 的 [bans] multiple-versions 管
 multiple_crate_versions = "allow"
 
-# 测试里用 unwrap/expect/panic 是常态，由 clippy.toml 的 allow-*-in-tests 统一放行，
-# 不需要再在源码里写 #![cfg_attr(test, allow(clippy::unwrap_used))]。
+# 测试里的 unwrap / expect / panic 由 clippy.toml 的 allow-*-in-tests 统一放行。
 
-# 文档里的死链是最容易悄悄积累的技术债：写的时候不报错，等有人点开文档才发现。
-# CI 靠 RUSTDOCFLAGS="-D warnings" 兜底，但声明在这里，本地 `cargo doc`
-# 和编辑器里同样生效。
+# 文档检查，本地 `cargo doc` 与编辑器里同样生效；CI 另有 RUSTDOCFLAGS="-D warnings"
 [workspace.lints.rustdoc]
 broken_intra_doc_links = "deny"
-# 没有 //! 头注释的 crate，在 docs.rs 上打开就是一片空白
+# 没有 //! 头注释的 crate 在 docs.rs 上是一片空白
 missing_crate_level_docs = "warn"
 private_intra_doc_links = "warn"
 invalid_html_tags = "warn"

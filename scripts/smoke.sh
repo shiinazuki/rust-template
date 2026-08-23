@@ -9,11 +9,8 @@
 #
 #   SMOKE_DOCKER=1 bash scripts/smoke.sh   # 顺便真的构建一次容器镜像（慢，默认关闭）
 #
-# 失败时会自动保留临时目录（否则连刚提示你去看的日志一起删了），跑通了才清理。
-#
-# ⚠️ 必须在模板仓库之外执行 cargo：模板根目录的 rust-toolchain.toml 里 channel 是
-#    `{{ toolchain }}`，不是合法工具链名，rustup 会在 cargo 启动前就报错。
-#    脚本因此先 cd 到临时目录，再用绝对路径指回模板。
+# 失败时保留临时目录（里面有各步骤的日志），跑通了才清理。
+# 模板根目录跑不了 cargo，所以脚本先 cd 到临时目录，再用绝对路径指回模板。
 set -uo pipefail
 
 template=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -23,9 +20,7 @@ full=0
 keep=0
 for arg in "$@"; do
     case "$arg" in
-        # 空参数按「没传」处理。模板 CI 里写的是 `bash scripts/smoke.sh $MODE`（不加引号，
-        # MODE 为空时展开成零个参数）；有人出于好意改成 "$MODE"，就会传进来一个空串，
-        # 落到下面的 *) 分支上把整条流水线判成「未知参数」。容忍它比依赖那处不加引号稳。
+        # 空参数按「没传」处理，容忍 CI 里写成 "$MODE" 传进来的空串
         "") ;;
         --full) full=1 ;;
         --keep) keep=1 ;;
@@ -33,8 +28,7 @@ for arg in "$@"; do
     esac
 done
 
-# Ctrl-C 打断时也要清理：共用的 target 目录动辄几百 MB，
-# 中途退出留下的临时目录不会有人记得删（除非 --keep 明确说了要留）。
+# Ctrl-C 打断时也清理临时目录（--keep 时保留）
 on_signal() {
     [ "$keep" -eq 1 ] || rm -rf "$workdir"
     exit 130
@@ -45,41 +39,29 @@ trap on_signal INT TERM
 export CARGO_TARGET_DIR="$workdir/.target"
 export CARGO_TERM_COLOR=always
 
-# CI 里会设 RUSTUP_TOOLCHAIN=stable 来绕开模板根目录那个非法的 rust-toolchain.toml。
-# 它的优先级高于一切，留着会把生成项目自己声明的 channel 一并盖掉——
-# 那样 toolchain=nightly 的组合就等于没测。这里显式解开。
+# 解开 CI 为绕过模板根目录而设的 RUSTUP_TOOLCHAIN，
+# 否则它会盖掉生成项目自己声明的 channel。
 unset RUSTUP_TOOLCHAIN
 
 # 每行一个组合：名字 kind toolchain ci docker async error logging license
 #
-# ⚠️ license 列写 `dual` 而不是 `MIT OR Apache-2.0`：行是靠 `set -- $row` 按空格拆的，
-#    带空格的值会被拆成三列。下面读取时再把 `dual` 翻译回完整的 SPDX 表达式。
-#
-# ⚠️ toolchain 那一列要两种都留着。stable 现在是模板的**默认值**（占了矩阵的大头，
-#    「一路回车」走的就是那条路），但 nightly 那两组不能删：nightly 的 clippy/rustfmt
-#    比 stable 严，生成的代码在它上面挂掉是很常见的事，而模板仍然把 nightly 列为
-#    可选项——没人验的选项等于坏的选项。
+# license 列写 `dual` 而不是 `MIT OR Apache-2.0`：行是靠 `set -- $row` 按空格拆的，
+# 带空格的值会被拆成三列，下面读取时再翻译回完整的 SPDX 表达式。
 matrix=(
     "minimal            bin stable  none   false false false false MIT"
-    # 全开组顺带把双协议也测了：post-script 的 LICENSE 分支与 Dockerfile 的
-    # image.licenses 标签都跟着它走
+    # 全开组顺带覆盖双协议（post-script 的 LICENSE 分支、Dockerfile 的 image.licenses 标签）
     "full               bin stable  github true  true  true  true  dual"
     "logging-only       bin stable  github false false false true  MIT"
-    # gitlab 平台这一组顺带把 async + error 一起开着：.gitlab-ci.yml 生成了没有、
-    # .github/ 有没有被整个裁掉，都靠它盯着
+    # gitlab 组：覆盖 .gitlab-ci.yml 的生成与 .github/ 的整体裁剪
     "async-error        bin stable  gitlab false true  true  false MIT"
     "lib-full           lib stable  github false false true  false Apache-2.0"
     "lib-minimal        lib stable  none   false false false false MIT"
-    # lib + async：tokio 在库项目里只被 #[tokio::test] 用到，该落在 [dev-dependencies]
-    # 而不是 [dependencies]（否则每个使用者都白拉一份）。这组盯的就是那个分支。
+    # lib + async：覆盖「tokio 落在 [dev-dependencies] 而不是 [dependencies]」那条分支
     "lib-async          lib stable  github false true  true  false MIT"
-    # 长名字专测组。rustfmt 的 fn_call_width 默认是 60（不是 max_width 的 100），
-    # 源码里凡是把 `{{ crate_name }}` 写进宏参数的地方，包名一长就会被 rustfmt 折行，
-    # 于是生成出来的项目开箱就过不了 fmt --check。短名字的组合永远测不到这一点。
-    # 写模板时的对策：先 `let x = <crate>::foo(...)`，再让断言只碰短变量名。
+    # 长包名专测组：rustfmt 的 fn_call_width 默认 60，包名一长就会在宏参数里折行，
+    # 生成的项目会过不了 fmt --check。
     "a-deliberately-long-package-name-for-rustfmt bin stable github false true true true MIT"
-    # 下面两组走 nightly：模板默认已经是 stable，但 nightly 仍是可选项，
-    # 而 nightly 的 clippy/rustfmt 更严，必须有人替使用者先撞一遍
+    # 两组 nightly：它的 clippy / rustfmt 比 stable 严
     "nightly-bin        bin nightly github false false true  false MIT"
     "nightly-lib        lib nightly github false false true  false MIT"
 )
@@ -88,7 +70,7 @@ if [ "$full" -eq 1 ]; then
     for a in false true; do for e in false true; do for l in false true; do
         matrix+=("bin-a$a-e$e-l$l bin stable github false $a $e $l MIT")
     done; done; done
-    # lib 这边也要把 async 排进去：tokio 在库项目里走的是 [dev-dependencies] 那条分支
+    # lib 这边也排进 async：它走的是 [dev-dependencies] 那条分支
     for a in false true; do for e in false true; do
         matrix+=("lib-a$a-e$e lib stable github false $a $e false MIT")
     done; done
@@ -96,13 +78,10 @@ if [ "$full" -eq 1 ]; then
     matrix+=("nightly-min  bin nightly github false false false false MIT")
     matrix+=("nightly-full bin nightly github true  true  true  true  MIT")
     matrix+=("nightly-lib  lib nightly github false false true  false MIT")
-    # CI 平台：上面的全排列清一色是 github，另外两种取值各补一组，
-    # 盯的是 .github/ 与 .gitlab-ci.yml 的裁剪有没有互相连坐。
+    # CI 平台：另外两种取值各补一组，覆盖 .github/ 与 .gitlab-ci.yml 的裁剪
     matrix+=("ci-gitlab  bin stable gitlab false false true true MIT")
     matrix+=("ci-none    bin stable none   false false true true MIT")
-    # 协议：post-script 的 LICENSE 处理和 README 徽章的转义都跟着它走。
-    # 只测 MIT 是不够的——协议名里带 `-` 的那两个才会踩到徽章的转义规则；
-    # 反过来 MIT 也不必单列，上面每一组用的都是 MIT。
+    # 协议：带 `-` 的那两个才会踩到徽章的转义规则（上面各组用的都是 MIT）
     matrix+=("lic-apache bin stable github false false true false Apache-2.0")
     matrix+=("lic-dual   bin stable github false false true false dual")
 fi
@@ -121,7 +100,7 @@ assert_layout() {
     }
 
     # --- 与开关无关，永远该在 ---------------------------------------------
-    for f in Cargo.toml README.md AGENTS.md justfile rust-toolchain.toml rustfmt.toml clippy.toml \
+    for f in Cargo.toml README.md CLAUDE.md justfile rust-toolchain.toml rustfmt.toml clippy.toml \
              deny.toml .taplo.toml .typos.toml cliff.toml release.toml bacon.toml \
              .config/nextest.toml .cargo/config.toml \
              .githooks/pre-commit .githooks/commit-msg .githooks/pre-push \
@@ -171,10 +150,7 @@ assert_layout() {
     fi
 
     # --- dependabot 的 docker ecosystem 必须跟着 Dockerfile 走 ---------------
-    # 没有 Dockerfile 却留着那一段的话，dependabot 每周都会报一次
-    # dependency_file_not_found——代码没问题，Actions 页面上却一直挂着红叉。
-    # 这条检查是那个 bug 的回归防线（它属于「文件内容」而不是「文件在不在」，
-    # 前面 12 项检查一条都盯不到）。
+    # 没有 Dockerfile 却留着那一段的话，dependabot 每周会报一次 dependency_file_not_found。
     if [ "$ci" = github ]; then
         if grep -q 'package-ecosystem: docker' .github/dependabot.yml; then
             if [ "$docker" != true ] || [ "$kind" != bin ]; then
@@ -195,8 +171,6 @@ assert_layout() {
     else gone src/telemetry.rs "logging=false 或库项目"; fi
 
     # --- 开源社区文件：模板不再生成，任何组合下都不该冒出来 ----------------
-    # 留着这几条是为了防回退——哪天有人把 SECURITY.md 之类又加回模板根目录，
-    # 它会悄悄进到**每一个**生成项目里（没有开关管着它了）。
     for f in SECURITY.md CODE_OF_CONDUCT.md CONTRIBUTING.md CODEOWNERS \
              .github/PULL_REQUEST_TEMPLATE.md .github/ISSUE_TEMPLATE .gitlab; do
         gone "$f" "社区文件已从模板移除"
@@ -213,10 +187,8 @@ assert_layout() {
         gone LICENSE-APACHE "已改名成 LICENSE，或不是选中的那个协议"
     fi
 
-    # README 的 license 徽章。shields.io 把 `-` 当字段分隔符，协议名里的 `-` 必须
-    # 转义成 `--`，否则整张徽章 404——而 404 的是一张图片，编译 / clippy / 测试
-    # 全都发现不了，只有点开 README 才看得出来。
-    # Apache-2.0 与 MIT OR Apache-2.0 都会踩到，MIT 不会：只测 MIT 是查不出来的。
+    # README 的 license 徽章：shields.io 把 `-` 当字段分隔符，
+    # 协议名里的 `-` 必须转义成 `--`，空格转成 %20，否则徽章 404。
     local badge expected
     badge=$(grep -o 'img\.shields\.io/badge/license-[^)]*' README.md)
     expected="img.shields.io/badge/license-$(printf '%s' "$license" |
@@ -230,9 +202,7 @@ assert_layout() {
     return "$bad"
 }
 
-# 有几项检查是靠 `command -v` 守卫的，工具缺了就只能跳过。把缺的先报出来——
-# 「静默跳过」正是最容易让一项检查长期形同虚设的方式：模板 CI 曾经漏装 cargo-deny，
-# 流水线一直是绿的，而依赖审计那一步其实一次都没跑过。
+# 有几项检查靠 `command -v` 守卫，工具缺了会跳过，这里先把缺的报出来
 missing_tools=""
 for t in cargo-nextest cargo-deny just taplo python3; do
     command -v "$t" >/dev/null 2>&1 || missing_tools="$missing_tools $t"
@@ -276,8 +246,7 @@ for row in "${matrix[@]}"; do
     ok=1
     cd "$workdir/$proj" || exit 1
 
-    # 1. 生成出来的代码必须本来就是 rustfmt 干净的：模板里排版错一个空行，
-    #    使用者第一次跑 CI 就会挂在 fmt --check 上。
+    # 1. 生成出来的代码必须本来就是 rustfmt 干净的
     if ! cargo +nightly fmt --all -- --check >"$workdir/$proj.fmt.log" 2>&1; then
         echo "  ✗ fmt --check 不通过（$workdir/$proj.fmt.log）"; ok=0
     fi
@@ -298,23 +267,18 @@ for row in "${matrix[@]}"; do
     if [ -f src/lib.rs ] && ! cargo test --doc --all-features >"$workdir/$proj.doc.log" 2>&1; then
         echo "  ✗ doctest 不通过（$workdir/$proj.doc.log）"; ok=0
     fi
-    # 5. 文档警告。`just lint` 和两套 CI 都跑这条（RUSTDOCFLAGS="-D warnings"），
-    #    但编译、clippy、测试统统看不见它：模板注释里写错一个 intra-doc 链接、
-    #    留一个裸 URL，要等使用者第一次跑 CI 才会红在一个跟他毫无关系的地方。
+    # 5. 文档警告，与 `just lint` 和两套 CI 的 RUSTDOCFLAGS="-D warnings" 对齐
     if ! RUSTDOCFLAGS="-D warnings" \
         cargo doc --no-deps --all-features --document-private-items \
         >"$workdir/$proj.rustdoc.log" 2>&1; then
         echo "  ✗ 文档警告（$workdir/$proj.rustdoc.log）"; ok=0
     fi
-    # 6. 依赖审计：某个开关引入的新依赖可能带着不在 deny.toml allow 列表里的协议，
-    #    那会让使用者第一次跑 CI 就失败，而且报错信息离「你选了哪个开关」很远。
+    # 6. 依赖审计：某个开关引入的新依赖可能带着不在 deny.toml allow 列表里的协议
     if command -v cargo-deny >/dev/null 2>&1 \
         && ! cargo deny check -A unmatched-bypass >"$workdir/$proj.deny.log" 2>&1; then
         echo "  ✗ cargo deny 不通过（$workdir/$proj.deny.log）"; ok=0
     fi
-    # 7. 留下来的 Cargo.lock 必须和 Cargo.toml 对得上。模板自带的 lock 只锁了根 crate，
-    #    某个开关加了依赖却没在 post-script 里删掉它的话，使用者第一次跑 CI（--locked）
-    #    就会挂，而本地不带 --locked 的构建完全看不出来。
+    # 7. 留下来的 Cargo.lock 必须和 Cargo.toml 对得上（CI 全程用 --locked）
     if [ -f Cargo.lock ] && ! cargo metadata --locked --format-version 1 >"$workdir/$proj.lock.log" 2>&1; then
         echo "  ✗ Cargo.lock 与 Cargo.toml 不一致（$workdir/$proj.lock.log）"; ok=0
     fi
@@ -322,8 +286,8 @@ for row in "${matrix[@]}"; do
     if command -v just >/dev/null 2>&1 && ! just --list >"$workdir/$proj.just.log" 2>&1; then
         echo "  ✗ justfile 解析失败（$workdir/$proj.just.log）"; ok=0
     fi
-    # 9. Markdown 表格中间不能出现空行——那会让表格直接断掉。
-    #    这是 liquid 条件块最容易踩的坑：标签一旦独占一行，被裁掉的分支就会留下空行。
+    # 9. Markdown 表格中间不能出现空行，否则表格会断掉
+    #    （liquid 标签独占一行时，被裁掉的分支就会留下空行）
     if command -v python3 >/dev/null 2>&1; then
         if ! python3 - README.md >"$workdir/$proj.md.log" 2>&1 <<'PY'
 import sys
@@ -362,19 +326,13 @@ PY
             echo "  ✗ 生成项目里有非法 TOML（$workdir/$proj.toml.log）"; ok=0
         fi
     fi
-    # 11. TOML 排版：生成项目的 CI 里有 `taplo fmt --check`，模板里的 TOML 一旦
-    #     排版不合规，使用者第一次跑 CI 就会红在一个跟他毫无关系的地方。
+    # 11. TOML 排版，与生成项目 CI 里的 `taplo fmt --check` 对齐
     if command -v taplo >/dev/null 2>&1 \
         && ! taplo fmt --check >"$workdir/$proj.taplo.log" 2>&1; then
         echo "  ✗ taplo fmt --check 不通过（$workdir/$proj.taplo.log）"; ok=0
     fi
     # 12. 生成项目里不该残留没被渲染的 liquid 占位符。
-    #     这是最廉价也最有效的一条：变量改名漏了一处、`{% raw %}` 忘了配对，
-    #     症状都是文件里明晃晃留着 `{{ ... }}`——而编译 / clippy / 测试统统发现不了，
-    #     因为它们多半藏在注释和文档里。
-    #
-    #     排除的这几个文件正是 cargo-generate.toml 里 `exclude` 的那几个：
-    #     它们本来就不做 liquid 替换，花括号属于 just / Tera / Actions 自己的语法。
+    #     排除的这几个文件就是 cargo-generate.toml 里 `exclude` 的那几个，
     #     改动 exclude 列表时记得同步这里。
     if grep -rIn -e '{{' -e '{%' . \
         --exclude-dir=target --exclude-dir=.git --exclude-dir=workflows \
@@ -383,16 +341,13 @@ PY
         >"$workdir/$proj.liquid.log" 2>&1; then
         echo "  ✗ 生成项目里残留未渲染的 liquid 占位符（$workdir/$proj.liquid.log）"; ok=0
     fi
-    # 13. 按开关断言「该有的文件在、不该有的文件不在」。
-    #     前面所有检查都只看「编不编得过」，而 conditional / ignore 写错的典型症状是
-    #     **少了一个文件**：代码照样编过，问题要等使用者去用那个功能时才暴露。
+    # 13. 按开关断言「该有的文件在、不该有的文件不在」
     if ! assert_layout "$kind" "$ci" "$docker" "$err" "$logging" "$license" \
         >"$workdir/$proj.layout.log" 2>&1; then
         echo "  ✗ 生成的文件清单和开关对不上（$workdir/$proj.layout.log）"; ok=0
     fi
-    # 14. 真正构建一次容器镜像。默认**关闭**（SMOKE_DOCKER=1 打开）：容器里是从零编译，
-    #     一组就要好几分钟，挂在每次 PR 上不划算。模板 CI 里只有每周的完整矩阵会打开它。
-    #     不测的话，Dockerfile 坏掉要等到某个使用者生成完项目、推上去跑 CI 才发现。
+    # 14. 真正构建一次容器镜像。默认关闭，用 SMOKE_DOCKER=1 打开
+    #     （模板 CI 里只有每周的完整矩阵会开）。
     if [ "${SMOKE_DOCKER:-0}" = "1" ] && [ -f Dockerfile ] && command -v docker >/dev/null 2>&1; then
         if ! DOCKER_BUILDKIT=1 docker build -t "smoke-$proj:test" . \
             >"$workdir/$proj.docker.log" 2>&1; then
@@ -418,8 +373,7 @@ echo "通过 $pass 组，失败 $fail 组"
 if [ "$fail" -gt 0 ]; then
     printf '失败的组合：%s\n' "${failed_names[*]}"
 fi
-# 有失败就必须保留：上面每条 ✗ 都指向 $workdir 里的一个日志文件，
-# 无条件 rm -rf 会把刚让你去看的东西一起删掉。跑通了才清理。
+# 有失败就保留现场：上面每条 ✗ 都指向 $workdir 里的一个日志文件
 if [ "$keep" -eq 1 ]; then
     echo "生成的项目保留在 $workdir"
 elif [ "$fail" -gt 0 ]; then

@@ -1,26 +1,14 @@
 //! 日志与追踪的初始化。
-//!
-//! 生产环境的几个要点，这里都按默认值配好了：
-//!
-//! 1. **过滤规则可在运行时调整**——用 `RUST_LOG` 就能改，不必重新编译、重新发版；
-//! 2. **日志走 stderr**，stdout 留给程序真正的输出，管道和重定向才不会串味；
-//! 3. **`RUST_LOG` 没设、设成空串、或写成非法指令时退回 `default_level`**，
-//!    而不是得到一个「进程正常启动、却一条日志都不打」的空 filter；
-//! 4. **`RUST_LOG` 把级别名拼错时会给一句提示**——这一类 `EnvFilter` 拦不住，见下面；
-//! 5. **颜色只在 stderr 真的是终端时才开**，见 [`ansi_enabled`]。
 
 use std::io::IsTerminal as _;
 
 use tracing_subscriber::{EnvFilter, filter::LevelFilter};
 
-/// 安装全局 subscriber。请在 `main` 的最开头调用一次。
+/// 安装全局 subscriber，在 `main` 的最开头调用一次。
 ///
-/// 过滤规则的优先级：环境变量 `RUST_LOG` > 传入的 `default_level`。
+/// 过滤规则优先取环境变量 `RUST_LOG`，其次取 `default_level`；日志写到 stderr。
 pub(crate) fn init(default_level: &str) {
-    // 兜底：解析不了就退回 info——日志初始化不该因为一个字符串把进程弄哑。
-    //
-    // 当前 `main.rs` 传进来的是字面量，走不到这条分支；它是给「以后改成从
-    // 命令行参数 / 配置文件 / 远端配置读级别」留的余地。
+    // `default_level` 解析不了时退回 info
     let default = default_level.parse().unwrap_or_else(|_| {
         eprintln!("无法解析日志级别 `{default_level}`，退回 info");
         tracing::Level::INFO.into()
@@ -28,10 +16,7 @@ pub(crate) fn init(default_level: &str) {
 
     warn_if_env_looks_like_a_typo();
 
-    // 这里刻意不写成「自己读 RUST_LOG 再 parse_lossy」：那样在 RUST_LOG 被设成
-    // 空串（`docker run -e RUST_LOG=`、`RUST_LOG=$未定义的变量` 都会产生它）
-    // 或写成非法指令时，会得到一个什么都不匹配的空 filter——进程照常起来，
-    // 但一条日志都不打，比直接失败更难查。默认指令保证了「最差也还是 default_level」。
+    // 以 default 为默认指令构建过滤器：RUST_LOG 为空或非法时仍按 default 放行
     let filter = EnvFilter::builder()
         .with_default_directive(default)
         .with_env_var(EnvFilter::DEFAULT_ENV)
@@ -45,43 +30,26 @@ pub(crate) fn init(default_level: &str) {
         .init();
 }
 
-/// 该不该给日志上色。
-///
-/// `tracing_subscriber::fmt` 默认**恒开** ANSI，它不看 stderr 是不是终端。于是
-/// `prog 2> app.log`、systemd / docker 收走的日志、CI 的构建日志里都会混进一堆
-/// `\x1b[2m` 转义序列——肉眼读着别扭，grep 和日志采集还得先清洗一遍。
-///
-/// 两个条件都满足才上色：
-///
-/// - stderr 是终端；
-/// - 没有设 `NO_COLOR`（<https://no-color.org> 那个跨语言约定，设成任何非空值即生效）。
+/// 判断日志是否上色：stderr 是终端、且未设置非空的 `NO_COLOR` 时返回 `true`。
 fn ansi_enabled() -> bool {
     let disabled_by_env = std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty());
     !disabled_by_env && std::io::stderr().is_terminal()
 }
 
-/// 提醒一种上面那层默认指令**兜不住**的写法：把级别名拼错。
+/// `RUST_LOG` 被写成单个裸词、且它不是日志级别时，打印一行提示。
 ///
-/// `EnvFilter` 的语法里，裸词是**目标名**：`RUST_LOG=inof` 会被理解成
-/// 「target `inof` 开到 TRACE」——它解析**成功**，于是默认指令不再生效，
-/// 本包的日志一条都不打，而且 `from_env_lossy` 不会有任何抱怨
-/// （它只在指令连语法都不合法时才出声，比如 `foo=bar`）。
-///
-/// 「拼错的级别名」和「真的只想看某个 crate」在语法上是同一样东西，分不开，
-/// 所以这里只打印一行说明、**不改变过滤行为**：写对的人多看一行，
-/// 写错的人少查半小时。
+/// 只提示，不改变过滤行为。
 fn warn_if_env_looks_like_a_typo() {
     let Ok(raw) = std::env::var(EnvFilter::DEFAULT_ENV) else {
         return;
     };
     let raw = raw.trim();
 
-    // 只管「整个值就是一个裸词」这种最常见的写法；带 `=` 或 `,` 的复杂表达式
-    // 是刻意在按模块细分，交给 EnvFilter 自己判断。
+    // 空值和带 `=` / `,` 的按模块细分写法交给 EnvFilter 自己判断
     if raw.is_empty() || raw.contains('=') || raw.contains(',') {
         return;
     }
-    // 能解析成级别就是正常用法（名字、`off`、0-5 的数字都算）。
+    // 能解析成级别（名字、`off`、0-5 的数字）即为正常用法
     if raw.parse::<LevelFilter>().is_ok() {
         return;
     }
@@ -89,10 +57,3 @@ fn warn_if_env_looks_like_a_typo() {
     eprintln!("提示：RUST_LOG=`{raw}` 不是日志级别，按 EnvFilter 的语法它是一个「目标名」，");
     eprintln!("      即只放行名为 {raw} 的模块。想调级别请写 error / warn / info / debug / trace");
 }
-
-// 上线到需要日志采集的环境时，把上面的 fmt 换成机器可读的 JSON：
-//     tracing_subscriber::fmt().json().flatten_event(true)...
-// 需要在 Cargo.toml 里给 tracing-subscriber 打开 "json" feature。
-//
-// 接 OpenTelemetry / Jaeger 则再叠一层 layer，用 registry + with() 组合：
-//     tracing_subscriber::registry().with(filter).with(fmt_layer).with(otel_layer).init();

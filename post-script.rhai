@@ -1,24 +1,10 @@
 // cargo-generate 生成后钩子（cargo-generate.toml 的 [hooks] post）。
 //
 // 运行时机：模板展开完成之后、文件被移动到目标目录之前，工作目录是临时的模板副本。
-// 这个顺序是有意为之——脚本报错时不会在用户的目标目录里留下一半成品。
 //
-// ⚠️ 因此这里**不做** `git init`：此刻还在临时目录里，初始化的仓库不会跟到目标位置。
-//    cargo-generate 会在最终目录 `git init`，但**不会**替你提交——生成完之后
-//    所有文件都还是 untracked 状态。首次提交要自己来，下面的提示里列了命令。
-// ⚠️ 这里也**不跑** `cargo fmt`：模板里的源码本来就是 rustfmt 干净的，而在临时目录
-//    触发 cargo 会顺带把 rust-toolchain.toml 声明的整条工具链拉下来（几百 MB，
-//    还可能因离线而失败）。真要格式化，生成后跑 `just fmt` 即可。
-// ⚠️ 这里同样**不调用 rustup 检查组件**，尽管那是很自然的想法。原因是 Rhai 的
-//    `system::command` 受 cargo-generate 的命令确认机制管辖：
-//      - 交互式生成时，每执行一条外部命令都会弹一次 y/n 确认；
-//      - `--silent`（脚本 / CI 里生成）时直接报错中止：
-//          Cannot prompt for system command confirmation in silent mode.
-//          Use --allow-commands if you want to allow the template to run system commands
-//    也就是说，钩子里只要出现一条 system::command，所有非交互生成都必须额外带上
-//    `--allow-commands`，否则就得给模板包一层 try/catch 把检查悄悄跳过——两者都不划算。
-//    组件检查因此挪到了 `just doctor`：在真正的项目目录里跑，随时可重跑，
-//    不受生成期的限制，也能顺带把 cargo 工具一起查了。
+// 这里不做 `git init`（此刻还在临时目录）、不跑 `cargo fmt`（会顺带拉整条工具链）、
+// 也不调 rustup 检查组件（Rhai 的 system::command 会让所有非交互生成都必须带
+// `--allow-commands`）。组件检查改由 `just doctor` 负责。
 
 let license = variable::get("license");
 let toolchain = variable::get("toolchain");
@@ -31,29 +17,23 @@ let logging = variable::get("logging");
 let crate_type = variable::get("crate_type");
 let is_bin = crate_type == "bin";
 
-// logging 是应用层的事：安装全局 subscriber 不该由库来做。
-// 库项目选了它也不会生成 telemetry.rs，这里明说一声，免得用户以为是 bug。
+// 库项目选了 logging 也不会生成 telemetry.rs，下面据此给出说明
 let ignored_for_lib = !is_bin && logging;
 
-// docker 同理：库没有可执行入口，Dockerfile / .dockerignore / docker.just 由
-// cargo-generate.toml 的 [conditional.'crate_type == "lib"'] 一并 ignore 掉了。
-// 下面所有和 Docker 有关的提示都必须看这个变量，不能只看用户选了什么——
-// 否则会出现「提示你去跑 just docker-build，但那个配方根本不存在」。
+// 库项目的 Dockerfile / .dockerignore / docker.just 由 cargo-generate.toml 的
+// [conditional.'crate_type == "lib"'] 一并 ignore 掉了，
+// 下面所有 Docker 相关的提示都以这两个变量为准。
 let docker_generated = docker && is_bin;
 let docker_ignored_for_lib = docker && !is_bin;
 
-// repo-owner 里带 `/` 是 GitLab 的 group/subgroup 写法，占位符的 regex 特意放行了它。
-// 但域名是按 ci 推导的：ci 不是 gitlab 时会拼成 https://github.com/组/子组/项目，
-// 而 GitHub 没有子组这个概念——那是一个必然 404 的地址，还会跟着 cargo publish
-// 进 crates.io。regex 拦不住这一点（它看不到 ci 选了什么），只能在这里说一声。
+// 检测「repo-owner 用了 GitLab 的 group/subgroup 写法，但 CI 平台不是 gitlab」，
+// 这种组合拼出的 repository 地址在 GitHub 上是 404。
 let owner = variable::get("repo-owner");
 let owner_path_on_github = owner.contains("/") && ci != "gitlab";
 
 // --- 1. 按用户选择的 License 收拾 LICENSE 文件 -----------------------------
 //
-// 模板里同时放着 LICENSE-MIT 和 LICENSE-APACHE：
-//   - 选单一 License   -> 删掉另一个，剩下的那个改名成 LICENSE（GitHub / crates.io 的惯例）
-//   - 选 MIT OR Apache -> 两个都留着，Rust 生态双协议项目的标准做法
+// 选单一 License 时删掉另一个并改名成 LICENSE；选 MIT OR Apache 时两个都留着。
 
 if license == "MIT" {
     file::delete("LICENSE-APACHE");
@@ -65,17 +45,15 @@ if license == "MIT" {
 
 // --- 2. 换上生成项目自己的 README ------------------------------------------
 //
-// 仓库根目录的 README.md 是「怎么用这个模板」的说明，对生成出来的项目没有意义；
-// 真正要给项目用的是 _README.md（做过变量替换）。详见 cargo-generate.toml 里的注释。
+// README.md 是模板自己的说明，删掉；_README.md 是给项目用的，改名顶上。
 
 file::delete("README.md");
 file::rename("_README.md", "README.md");
 
 // --- 3. 依赖有变动时丢弃模板自带的 Cargo.lock ------------------------------
 //
-// 模板里的 Cargo.lock 只锁了根 crate 一个包。一旦某个开关往 Cargo.toml 里加了依赖，
-// 这份 lock 就对不上了——而 CI 全程用 `--locked`，会直接失败。
-// 与其留一个必然过期的文件，不如删掉，让 cargo 首次构建时重新解析。
+// 模板自带的 lock 只锁了根 crate 一个包，开关加了依赖就对不上，删掉让 cargo 重新解析。
+
 let adds_dependencies = async_runtime || error_handling || (is_bin && logging);
 
 let lock_regenerated = false;

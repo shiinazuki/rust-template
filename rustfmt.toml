@@ -1,27 +1,24 @@
-# ⚠️ 本文件包含 unstable 选项，必须用 nightly 的 rustfmt 才会生效：
-#       cargo +nightly fmt --all
-#    stable 的 rustfmt 会静默忽略它们（不报错，但也不格式化），
-#    所以 justfile 和 CI 里的格式化命令都固定走 nightly。
+# rustfmt 配置。带 unstable 标记的选项只有 nightly 的 rustfmt 认，
+# 因此格式化统一走 `just fmt`。
 
-# style_edition 决定格式化风格的版本（2024 起取代了 edition 的这部分职责）
+# 格式化风格的版本
 style_edition = "2024"
 edition = "2024"
 
 max_width = 100
-comment_width = 100 # unstable：注释的折行宽度，和下面的 wrap_comments 成对
+comment_width = 100 # unstable：注释的折行宽度
 newline_style = "Unix"
 
 # --- 注释与文档 ---------------------------------------------------------
 wrap_comments = true # unstable：超长注释自动折行
-format_code_in_doc_comments = true # unstable：文档注释里的示例代码也格式化
+format_code_in_doc_comments = true # unstable：格式化文档注释里的示例代码
 doc_comment_code_block_width = 90 # unstable
 normalize_doc_attributes = true # unstable：#[doc = "..."] 归一成 /// 形式
 
 # --- 字符串与字面量 -----------------------------------------------------
 format_strings = true # unstable：超长字符串自动折行
 hex_literal_case = "Upper" # stable：0xFF 而不是 0xff
-# 同一类的字面量归一化，但仍是 unstable（#6471）。取值 Preserve / Always /
-# IfNoPostfix / Never，打开后 `1.` 会被写成 `1.0`。默认 Preserve，按口味启用：
+# unstable（#6471）：字面量小数尾零归一化，取值 Preserve / Always / IfNoPostfix / Never
 # float_literal_trailing_zero = "Always"
 
 # --- import 组织 --------------------------------------------------------

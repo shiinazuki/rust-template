@@ -4,10 +4,8 @@
 #   cargo generate --git https://github.com/<owner>/rust-template --name my-app
 #   cargo generate --git ... --name my-lib --lib      # 生成库项目
 #
-# 交互式会依次询问：项目简介 / GitHub 用户名 / 工具链 / 协议 / CI / Docker /
-# async / 错误处理 / 日志。
-# 非交互可以全部用 --define 指定，例如 --define toolchain=stable；
-# --silent 模式下**所有**占位符都必须给全，漏一个就会直接失败。
+# 交互式会依次询问：项目简介 / 仓库所有者 / 工具链 / 协议 / CI / Docker /
+# async / 错误处理 / 日志；非交互用 --define 逐个指定，--silent 下必须给全。
 #
 # --bin（默认）生成 src/main.rs，--lib 生成 src/lib.rs + tests/，
 # 由下面的 [conditional.'crate_type == ...'] 控制。
@@ -17,38 +15,30 @@
 cargo_generate_version = ">=0.23.0"
 
 # ---------------------------------------------------------------------------
-# exclude：文件照常复制到生成项目，但**不做** liquid 变量替换。
-#          （其它模板引擎沿用 cookiecutter 叫法时称为 copy_without_render，
-#            cargo-generate 没有这个键，等价能力就是这里的 exclude。）
-# ignore ：文件**根本不进入**生成项目，见下面的 ignore 段。
-# 两者匹配的都是「去掉 .liquid 后缀之后」的路径，别弄混。
+# exclude：文件照常复制到生成项目，但不做 liquid 变量替换
+# ignore ：文件根本不进入生成项目，见下面的 ignore 段
+# 两者匹配的都是「去掉 .liquid 后缀之后」的路径。
 # ---------------------------------------------------------------------------
 exclude = [
   # --- 花括号属于别的模板语言，必须躲开 liquid ---------------------------
   "cliff.toml", # git-cliff 的 Tera 模板
-  # 只排除 workflows：Actions 的 ${{ ... }} 会被 liquid 当成占位符吃掉。
-  # .github 下的另一个文件 dependabot.yml 反而**需要**渲染（docker 那段是按开关
-  # 生成的），所以不能整个目录一刀切。
+  # 只排除 workflows：Actions 的 ${{ ... }} 会被 liquid 吃掉；
+  # 同目录的 dependabot.yml 需要渲染（docker 那段按开关生成），不能整个目录排除。
   ".github/workflows/**",
   ".gitlab-ci.yml", # GitLab CI 的 $VARIABLE / 规则表达式
   "justfile", # just 自己的 {{ 变量 }} 插值
   "docker.just", # 同上，just 的插值
   "release.toml", # cargo-release 的 {{version}} / {{crate_name}}
-  # pre-push 钩子里用 `{{ project-name }}` 判断是不是模板仓库本身，
-  # 这段字面量必须原样保留，不能被替换成真实包名
+  # 钩子里用 `{{ project-name }}` 判断是不是模板仓库本身，字面量要原样保留
   ".githooks/**",
-  "README.md", # 模板仓库自己的说明文档，里面全是占位符示例
-  "scripts/**", # 模板自测脚本，里面有 shell 的 ${...} 与 cargo-generate 参数
-  "template.just", # 模板仓库自己的 just 配方（just 的 {{ 变量 }} 插值）
+  "README.md", # 模板仓库自己的说明文档
+  "scripts/**", # 模板自测脚本，含 shell 的 ${...} 与 cargo-generate 参数
+  "template.just", # 模板仓库自己的 just 配方
 
-  # --- 二进制与非文本资源：一旦被 liquid 处理就会损坏 ---------------------
-  # cargo-generate 对二进制内容没有可靠的自动豁免，模板里但凡放了图标、字体、
-  # 测试夹具，都必须在这里点名。下面这组是预防性的通配，目录现在为空也无妨——
-  # 等你真的往 assets/ 丢一张 logo.png 时不需要再想起改这里。
-  #
-  # ⚠️ 注意反面：LICENSE-MIT / LICENSE-APACHE 里的 {{ authors }} 和
-  #    {{ "now" | date: "%Y" }} 是**有意**要被渲染的，所以绝不能把 LICENSE*
-  #    加进这个列表。「凡是不确定就 exclude」在这里是错的。
+  # --- 二进制与非文本资源：被 liquid 处理会损坏 --------------------------
+  # 预防性通配，目录现在为空也无妨。
+  # 注意 LICENSE-MIT / LICENSE-APACHE 里的 {{ authors }} 和 {{ "now" | date: "%Y" }}
+  # 是要被渲染的，不能加进这个列表。
   "*.png",
   "*.jpg",
   "*.jpeg",
@@ -76,39 +66,31 @@ exclude = [
   "tests/snapshots/**",
 ]
 
-# 只对模板仓库自己有意义、不该出现在生成项目里的文件。
-#
-# 注意 template-ci.yaml：它是**模板自己的** CI（矩阵生成项目再跑一遍检查），
-# 生成出来的项目不需要它。虽然 `.github/**` 在上面的 exclude 里（不做变量替换），
-# 但 exclude 只影响「渲不渲染」，要让文件彻底不进生成项目必须写在这里。
+# 只对模板仓库自己有意义、不进生成项目的文件。
+# template-ci.yaml 是模板自己的 CI：虽然 `.github/**` 已在 exclude 里，
+# 但 exclude 只影响渲不渲染，要彻底排除必须写在这里。
 ignore = ["CHANGELOG.md", ".github/workflows/template-ci.yaml", "template.just", "scripts/"]
 
-# 关于两个 README：
-#   README.md   模板仓库自己的说明（怎么用这个模板），在上面的 exclude 里，
-#               生成后由 post-script 删掉
+# 两个 README 的分工：
+#   README.md   模板仓库自己的说明，在 exclude 里，生成后由 post-script 删掉
 #   _README.md  生成项目要用的 README，正常做变量替换，post-script 把它改名成 README.md
 #
-# 为什么不用 cargo-generate 的 `README.md.liquid` 自动改名机制？因为 exclude / ignore
-# 的匹配发生在 `.liquid` 后缀被去掉之后，`exclude = ["README.md"]` 会把
-# `README.md.liquid` 一起排除掉，导致生成项目里的 README 全是没替换的占位符。
+# 不用 `README.md.liquid` 自动改名机制：exclude / ignore 的匹配发生在 `.liquid`
+# 后缀去掉之后，`exclude = ["README.md"]` 会把它一起排除掉。
 
 [hooks]
 # 生成后收尾：整理 LICENSE、把 _README.md 顶替成 README.md、按需删 Cargo.lock、
 # 检查 nightly 组件是否齐全、打印下一步提示。
-# （其它模板引擎叫 post_script；cargo-generate 的键就是 [hooks] 下的 pre / post / init。）
 post = ["post-script.rhai"]
 
 # ---------------------------------------------------------------------------
 # 占位符
 #
-# ⚠️ 项目名与作者**不在**这里：
-#      project-name  来自 --name（或交互输入），并自动派生 crate_name（snake_case）
-#      authors / username  由 cargo-generate 从 git / cargo 配置里读出来
-#    这些是内置变量，再定义一遍反而会让用户被问两次。直接在模板里 {{ authors }} 即可。
-#    完整内置列表见 https://cargo-generate.github.io/cargo-generate/templates/builtin_placeholders.html
+# 项目名与作者不在这里：project-name 来自 --name（并派生 snake_case 的 crate_name），
+# authors / username 由 cargo-generate 从 git / cargo 配置里读，都是内置变量。
+# 完整列表见 https://cargo-generate.github.io/cargo-generate/templates/builtin_placeholders.html
 #
-# ⚠️ 只有这里（顶层 [placeholders]）定义的变量才能驱动下面的 [conditional.*]。
-#    写在 conditional 里的占位符可以在模板文件中使用，但不能再去控制别的 conditional。
+# 只有顶层 [placeholders] 定义的变量才能驱动下面的 [conditional.*]。
 # ---------------------------------------------------------------------------
 
 [placeholders.description]
@@ -120,29 +102,16 @@ default = "A Rust project"
 type = "string"
 prompt = "仓库所有者：GitHub / GitLab 的用户名或组织名（用于 repository 字段）"
 default = "your-username"
-# 校验规则要同时容得下两个平台：
-#   GitHub  字母 / 数字 / 连字符，最长 39 位
-#   GitLab  还允许下划线、点，以及 `group/subgroup` 这样的子组路径
-# 输错了会当场重问，而不是生成一个指向 404 的 repository 链接。
+# 同时容得下两个平台：GitHub 是字母 / 数字 / 连字符，最长 39 位；
+# GitLab 还允许下划线、点，以及 `group/subgroup` 这样的子组路径。
 regex = "^[A-Za-z0-9][A-Za-z0-9._/-]{0,98}$"
 
-# ⚠️ 没有单独问「托管在哪个平台」：域名由下面的 ci 选项推导（gitlab -> gitlab.com，
-#    其余 -> github.com），见 Cargo.toml / Dockerfile / _README.md 里按 ci 分支的那几处。多问一个占位符不值得——CI 平台和代码托管平台在现实里
-#    几乎总是同一个。例外是 ci = none 又托管在 GitLab：生成完手工改一下 repository 即可。
+# 没有单独问「托管在哪个平台」：域名由下面的 ci 选项推导（gitlab -> gitlab.com，
+# 其余 -> github.com）。ci = none 又托管在 GitLab 时，生成完手工改 repository 即可。
 
-# ⚠️ 默认是 stable，这是有意的：生成出来的骨架里**没有任何** #![feature(...)]，
-#    唯一真正需要 nightly 的是 rustfmt（rustfmt.toml 用了 unstable 选项），
-#    而那一条已经和 channel 解耦了——justfile 的 fmt_toolchain 变量会在 channel
-#    是 stable 时自动去用单独装的那份 nightly rustfmt。
-#    也就是说默认选 nightly 换不来任何能力，只会带来三样代价：
-#      - 滚动 nightly 每天都在变，某天的编译器 ICE 或新 clippy lint 会让 CI
-#        无缘无故变红，而这跟你写的代码毫无关系；
-#      - `just msrv` / CI 的 msrv job 在 nightly 项目上不适用，自动转成 just nll，
-#        等于 MSRV 声明没人验证；
-#      - nightly 的借用检查器（Polonius）比 stable 宽，容易写出「这边过、那边不过」
-#        的代码（见 rust-toolchain.toml 与 just nll）。
-#    真的需要 #![feature(...)] 时再选 nightly，并做好随时把 channel 钉成
-#    nightly-YYYY-MM-DD 的准备——那是**项目**该做的决定，模板不替你钉。
+# 默认 stable：生成的骨架里没有任何 #![feature(...)]，唯一需要 nightly 的
+# rustfmt 已经和 channel 解耦（见 justfile 的 fmt_toolchain）。
+# 真的需要 #![feature(...)] 时再选 nightly。
 [placeholders.toolchain]
 type = "string"
 prompt = "Rust 工具链（写入 rust-toolchain.toml 的 channel）"
@@ -172,12 +141,8 @@ prompt = "引入 tokio 异步运行时？（同时开启 clippy 的阻塞 API �
 default = false
 
 # --- 应用骨架开关 -----------------------------------------------------------
-# 这两个开关决定生成哪些源码模块。它们各自独立，可以任意组合；
-# 关掉时对应的文件根本不会出现，不会留下一堆注释掉的死代码。
-#
-# ⚠️ 这里刻意没有「命令行参数骨架」：clap 的用法随项目差别太大（子命令、
-#    配置文件合并、shell 补全……），模板给的那点 derive 样板留下来只会被推倒重写。
-#    真要命令行时 `cargo add clap --features derive,env` 现写更快。
+# 决定生成哪些源码模块，各自独立可任意组合；关掉时对应文件不会出现。
+# 没有「命令行参数骨架」：需要时 `cargo add clap --features derive,env` 现写。
 
 [placeholders.error_handling]
 type = "bool"
@@ -195,22 +160,18 @@ default = false
 # ---------------------------------------------------------------------------
 
 [conditional.'crate_type == "lib"']
-# 库项目没有可执行入口，Dockerfile / 容器编排一并去掉。
-# telemetry 同理：安装全局 subscriber 是**应用**的职责，库只管定义错误类型、
-# 发出 tracing 事件，不该替调用方决定日志往哪儿写、按什么格式写。
+# 库项目没有可执行入口，Dockerfile 与 telemetry（安装全局 subscriber 是应用的职责）一并去掉
 ignore = ["src/main.rs", "src/telemetry.rs", "Dockerfile", ".dockerignore", "docker.just"]
 
-# bin 项目**同样**生成 src/lib.rs 与 tests/：这是 Rust 里的主流布局
-# （`main.rs` 薄薄一层负责解析参数与收口错误，逻辑全在 lib 那侧），
-# 也是唯一能让集成测试 / benchmark / doctest 够得着业务代码的做法。
-# 所以这里没有 [conditional.'crate_type == "bin"'] ——bin 不需要裁掉任何东西。
+# bin 项目同样生成 src/lib.rs 与 tests/，不需要裁掉任何东西，
+# 所以这里没有 [conditional.'crate_type == "bin"']。
 
 # ---------------------------------------------------------------------------
 # 按 CI 平台裁剪
 # ---------------------------------------------------------------------------
 
 [conditional.'ci != "github"']
-# .github/ 下只剩 GitHub 专有的东西（workflows + dependabot 配置），整个目录跟着走。
+# .github/ 下只剩 GitHub 专有的 workflows 与 dependabot 配置，整个目录去掉
 ignore = [".github"]
 
 [conditional.'ci != "gitlab"']

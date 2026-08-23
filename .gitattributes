@@ -1,9 +1,9 @@
-# 统一入库时的换行与差异呈现，避免 Windows 协作者把整个文件的 CRLF 提交进来。
+# 统一入库时的换行与差异呈现。
 
 # 默认：文本文件自动识别，入库一律 LF
 * text=auto eol=lf
 
-# 明确的二进制类型，不做换行转换，也不要尝试做行级 diff
+# 明确的二进制类型，不做换行转换，也不做行级 diff
 *.png  binary
 *.jpg  binary
 *.jpeg binary
@@ -19,14 +19,10 @@
 *.gz   binary
 *.wasm binary
 
-# 机器生成、评审时无需逐行看的文件：
-# linguist-generated 让 GitHub 的 PR 页面默认折叠它们（需要时仍可展开）。
-#
-# ⚠️ 刻意**不加** `-diff`：那会让 git 把文件当二进制，本地 `git diff Cargo.lock`
-#    只输出一句 "Binary files differ"。依赖版本变更恰恰是最该被看见的东西
-#    ——供应链攻击就是从一次没人细看的 lock 更新开始的。
+# 机器生成的文件：linguist-generated 让 GitHub 的 PR 页面默认折叠它们。
+# 不加 `-diff`，保证 `git diff Cargo.lock` 仍逐行可读。
 Cargo.lock   linguist-generated=true
 CHANGELOG.md linguist-generated=true
 
-# Rust 源码：让 `git diff` 的 hunk 头显示所在的 fn / impl，读 diff 时省事很多
+# 让 `git diff` 的 hunk 头显示所在的 fn / impl
 *.rs diff=rust

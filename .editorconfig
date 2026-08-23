@@ -1,5 +1,5 @@
 # https://editorconfig.org
-# 统一不同编辑器 / IDE 的基础排版，配合 rustfmt 使用（rustfmt 只管 .rs）
+# 统一不同编辑器 / IDE 的基础排版（.rs 的排版由 rustfmt 负责）
 root = true
 
 [*]
@@ -12,9 +12,6 @@ indent_size = 4
 max_line_length = 100
 
 [*.rs]
-# 和上面的 [*] 一致，写出来是为了和下面 2 空格的那组形成对照。
-# 注意别写成 [*.{rs}]：EditorConfig 的花括号是「逗号分隔的多选」语法，
-# 只有一项、没有逗号时多数实现按字面量处理，那一段等于谁也匹配不上。
 indent_size = 4
 
 [*.{toml,yaml,yml,json,md}]
@@ -24,9 +21,7 @@ indent_size = 2
 # Markdown 里行尾两个空格是强制换行，不能删
 trim_trailing_whitespace = false
 
-# justfile 本体，以及被 import 进来的 docker.just / template.just。
-# 两条都要写：`[justfile]` 匹配不到 `*.just`，漏掉后者的话导入的配方会按 [*] 的规则走，
-# 和主文件不一致。
+# justfile 本体与被 import 的 docker.just / template.just，两条都要写
 [justfile]
 indent_size = 4
 

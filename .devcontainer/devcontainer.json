@@ -2,11 +2,8 @@
 // 说明见 https://containers.dev/
 {
   "name": "{{ project-name }}",
-  // 官方 Rust 镜像，自带 rustup / cargo / git / 常用编译依赖。
-  // 具体用哪个工具链由仓库里的 rust-toolchain.toml 决定，见下面的 postCreateCommand。
-  //
-  // trixie = Debian 13，和 Dockerfile / .gitlab-ci.yml 里的基础镜像保持同一个大版本。
-  // 上一代 bookworm（Debian 12）常规支持已于 2026-07-11 结束，新项目不该再从它起步。
+  // 官方 Rust 镜像，自带 rustup / cargo / git / 常用编译依赖；
+  // trixie = Debian 13，与 Dockerfile / .gitlab-ci.yml 的基础镜像同一个大版本。
   "image": "mcr.microsoft.com/devcontainers/rust:1-trixie",
 
   "features": {
@@ -14,14 +11,12 @@
     "ghcr.io/guiyomh/features/just:0": {}
   },
 
-  // 容器建好之后跑一次：按 rust-toolchain.toml 装工具链，再装配套 cargo 工具。
-  // 用 binstall 直接下预编译二进制，比源码编译快一个数量级。
+  // 容器建好后跑一次：按 rust-toolchain.toml 装工具链，再用 binstall 装配套 cargo 工具
   "postCreateCommand": "rustup show active-toolchain || rustup toolchain install && cargo install cargo-binstall && just install-tools",
 
   "customizations": {
     "vscode": {
-      // 只作用于容器 / Codespaces 里的 VS Code；仓库根目录不放 .vscode/，
-      // 编辑器的本地配置交给各人自己管
+      // 只作用于容器 / Codespaces 里的 VS Code，仓库根目录不放 .vscode/
       "extensions": [
         "rust-lang.rust-analyzer",
         "tamasfe.even-better-toml",
@@ -33,6 +28,6 @@
     }
   },
 
-  // 容器内不要用 root 干活：文件属主会和宿主机对不上，而且没必要。
+  // 容器内不用 root 干活
   "remoteUser": "vscode"
 }

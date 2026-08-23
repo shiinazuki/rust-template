@@ -1,38 +1,33 @@
 # typos 拼写检查配置：https://github.com/crate-ci/typos
-# 本地：typos           查看问题
-#       typos --write-changes   自动修正
+# 本地：typos                    查看问题
+#       typos --write-changes    自动修正
 
 [default]
-# 刻意不设 locale。默认的 "en" 只查真正的拼写错误；
-# 一旦设成 "en-us"，英式拼写也会被判错（Centre→Center、Colour→Color、
-# Behaviour→Behavior），而人名、球队位置、第三方数据文件里这类写法完全正常。
-# 确实要把项目文案统一成美式英语时再打开。
+# 打开后英式拼写（Colour / Behaviour 等）也会被判错，默认不设
 # locale = "en-us"
 
 # 匹配到这些正则的内容不做拼写检查
 extend-ignore-re = [
-  # 连续 24 个字符以上的 base64 / base64url / hex / 密钥 / 哈希。
-  # 随机字符串里必然会撞出 "Yhe"、"Nly" 这种看着像拼错单词的片段。
+  # 24 个字符以上的 base64 / hex / 密钥 / 哈希
   "[A-Za-z0-9+/=_-]{24,}",
-  # 行尾加 `// spellchecker:disable-line` 可以单独跳过某一行
+  # 行尾加 `// spellchecker:disable-line` 单独跳过某一行
   "(?Rm)^.*(#|//)\\s*spellchecker:disable-line$",
 ]
 
-# 项目里的专有名词、缩写、人名等，写在这里避免误报。
-# 格式是 "被识别成拼写错误的词" = "希望替换成的词"，两边写成一样即表示放行。
+# 专有名词、缩写、人名的放行名单。
+# 格式为 "被识别成拼写错误的词" = "希望替换成的词"，两边写成一样即表示放行。
 [default.extend-words]
 # ba = "ba"
 
 [files]
 extend-exclude = [
-  "CHANGELOG.md", # 由 git-cliff 从提交信息生成，改不了
+  "CHANGELOG.md", # 由 git-cliff 生成
   "Cargo.lock",
   "target/",
   "vendors/",
   "*.svg",
   "*.lock",
-  # 测试夹具 / 第三方数据文件：内容不是给人读的英文，查拼写没有意义。
-  # 按项目实际情况增删，例如：
+  # 测试夹具 / 第三方数据文件按需追加，例如：
   # "fixtures/",
   # "assets/",
 ]

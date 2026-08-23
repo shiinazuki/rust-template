@@ -201,7 +201,7 @@ cargo add clap --features derive,env
 | `Dockerfile` / `.dockerignore` | 多阶段构建 + distroless 运行镜像，可选生成 |
 | `.config/nextest.toml` | 测试运行器配置（CI profile + JUnit + 超时 + 测试分组示例） |
 | `.cargo/config.toml` | cargo 项目级配置：网络重试、依赖解析策略，以及链接器 / 并行前端 / 镜像源的开关 |
-| `AGENTS.md` | 给 AI 编码助手的项目约定（会跟着渲染，按 async / 错误处理开关裁剪） |
+| `CLAUDE.md` | 给 AI 编码助手的项目约定（会跟着渲染，按 async / 错误处理开关裁剪） |
 | `.githooks/` | Git 钩子（commit-msg 校验提交信息 / pre-push 跑 `just ci`），`just hooks` 启用 |
 | `.devcontainer/` | Dev Container / Codespaces 配置 |
 | `.editorconfig` / `.gitattributes` / `.gitignore` | 编辑器与 git 的基础约定 |

@@ -9,9 +9,8 @@ stages:
   - release
 
 default:
-  # 用官方 rust 镜像作底；真正的版本由仓库里的 rust-toolchain.toml 决定，
-  # 下面每个 job 起手都会 `rustup toolchain install` 按声明装好。
-  # trixie = Debian 13。bookworm（Debian 12）常规支持已于 2026-07-11 结束。
+  # 官方 rust 镜像作底，真正的版本由仓库里的 rust-toolchain.toml 决定。
+  # trixie = Debian 13。
   image: rust:1-slim-trixie
   interruptible: true
   retry:
@@ -22,26 +21,21 @@ default:
 
 variables:
   CARGO_TERM_COLOR: always
-  # CI 是一次性环境，增量编译只会拖慢速度并撑大缓存
+  # CI 是一次性环境，关掉增量编译
   CARGO_INCREMENTAL: "0"
   RUST_BACKTRACE: "1"
-  # GitLab 的 cache 只能缓存工程目录下的路径，所以把 CARGO_HOME 挪进来。
-  #
-  # ⚠️ 刻意不叫 `.cargo`：那是项目级 cargo 配置目录的名字（config.toml 要入库），
-  #    哪天你加了这个目录，缓存会把它覆盖掉。
+  # GitLab 只能缓存工程目录下的路径，所以把 CARGO_HOME 挪进来。
+  # 不叫 `.cargo`：那是项目级 cargo 配置目录的名字，会被缓存覆盖掉。
   CARGO_HOME: $CI_PROJECT_DIR/.cargo-home
-  # ⚠️ 和上面这行配套：cargo 1.88 起会自动 GC 全局缓存（.crate 3 个月、解压出来的
-  #    源码 1 个月没访问就删）。CARGO_HOME 一旦挪进工程目录并被 GitLab 缓存收着，
-  #    这个 GC 就可能在刚恢复完缓存之后把内容删掉一部分——下一条流水线于是又要
-  #    重新下载，缓存等于白做。CI 是一次性环境，本来也不需要它清理。
+  # 关掉 cargo 的全局缓存自动 GC，避免它把刚恢复的缓存内容删掉
   CARGO_CACHE_AUTO_CLEAN_FREQUENCY: never
   GIT_SUBMODULE_STRATEGY: recursive
 
 # 两份缓存，key 不同，互不牵连：
-#   - 工具（cargo-nextest 等）几乎不变，用固定 key，装一次全局复用；
-#   - 编译产物跟着 Cargo.lock 走，依赖一变就该重建。
+#   - 工具（cargo-nextest 等）几乎不变，用固定 key；
+#   - 编译产物跟着 Cargo.lock 走。
 #
-# 以 `.` 开头的是 GitLab 的隐藏 job，只作模板用，不会真的被调度执行。
+# 以 `.` 开头的是 GitLab 的隐藏 job，只作模板用，不会被调度执行。
 .cargo-cache:
   cache:
     - key: cargo-tools-v1
@@ -57,11 +51,8 @@ variables:
         - target/
       policy: pull-push
 
-# 各 job 共用的准备动作。
-#
-# ⚠️ 这里定义的 install_tools 是本文件最关键的一处优化：原来每个 job 都 `cargo install`
-#    从源码编译 nextest / llvm-cov / deny，一条流水线要白烧十几分钟。现在改成
-#    「缓存里有就跳过，没有就用 cargo-binstall 下预编译二进制」，从分钟级降到秒级。
+# 各 job 共用的准备动作，其中 install_tools 的策略是
+# 「缓存里有就跳过，没有就用 cargo-binstall 下预编译二进制」。
 .rust-setup:
   before_script:
     - apt-get update -qq && apt-get install -y -qq --no-install-recommends git curl ca-certificates
@@ -86,7 +77,7 @@ variables:
           return 0
         fi
         echo "需要安装:$missing"
-        # cargo-binstall 自己只在第一条流水线上编译一次，之后从 .cargo-home/bin 缓存里来
+        # cargo-binstall 只在第一条流水线上编译一次，之后从 .cargo-home/bin 缓存里来
         command -v cargo-binstall >/dev/null 2>&1 || cargo install --locked cargo-binstall
         # shellcheck disable=SC2086
         cargo binstall --no-confirm --locked $missing
@@ -104,19 +95,13 @@ workflow:
 # ---------------------------------------------------------------------------
 lint:
   stage: check
-  # extends 是 GitLab 原生的复用机制，天然支持多个父模板并做深合并。
-  # 不要退回 YAML 锚点的 `<<: *a` + `<<: *b`——同一个 mapping 里出现两个 `<<`
-  # 是非法 YAML（duplicate merge key），解析器会直接报错。
+  # 用 extends 而不是 YAML 锚点：同一个 mapping 里出现两个 `<<` 是非法 YAML
   extends:
     - .cargo-cache
     - .rust-setup
   script:
-    # rustfmt.toml 用了 unstable 选项，stable 的 rustfmt 会静默忽略，必须走 nightly 的 rustfmt。
-    #
-    # ⚠️ 不能写死 `+nightly`：channel 一旦钉成日期版本（nightly-2026-08-18），
-    #    `+nightly` 指的是另一条「最新 nightly」工具链，和本地 `just fmt` 用的不是
-    #    同一个 rustfmt，排版可能不一致——「本地 check 过、CI 挂」就是这么来的。
-    #    规则与 justfile 的 fmt_toolchain 变量一致。
+    # 按 rust-toolchain.toml 的 channel 推导格式化工具链，规则与 justfile 的
+    # fmt_toolchain 变量一致（rustfmt.toml 用了 unstable 选项，必须走 nightly 的 rustfmt）。
     - |
       channel=$(grep -m1 '^channel' rust-toolchain.toml | sed -E 's/.*"([^"]+)".*/\1/')
       case "$channel" in
@@ -124,8 +109,8 @@ lint:
         nightly*)
           FMT_TOOLCHAIN="$channel"
           ;;
-        # stable / 具体版本号：额外装一份 nightly 的 rustfmt。
-        # --allow-downgrade：某天的 nightly 偶尔缺 rustfmt，让 rustup 自动退回到有的那天。
+        # stable / 具体版本号：额外装一份 nightly 的 rustfmt，
+        # --allow-downgrade 让 rustup 在当天缺组件时自动退回
         *)
           FMT_TOOLCHAIN=nightly
           rustup toolchain install nightly --allow-downgrade --profile minimal --component rustfmt
@@ -133,7 +118,7 @@ lint:
       esac
     - install_tools typos-cli taplo-cli
     - cargo "+$FMT_TOOLCHAIN" fmt --all -- --check
-    # rustfmt 不管 .toml，项目里十来个 TOML 配置靠 taplo 保持排版一致（规则见 .taplo.toml）
+    # rustfmt 不管 .toml，TOML 排版由 taplo 保证（规则见 .taplo.toml）
     - taplo fmt --check
     - typos
     - cargo clippy --locked --all-targets --all-features -- -D warnings
@@ -149,10 +134,8 @@ test:
     - .rust-setup
   script:
     - install_tools cargo-nextest cargo-llvm-cov
-    # 刻意没有 `cargo check --all-targets`：lint job 的 clippy 已经是它的严格超集，
-    # 而 llvm-cov 会带 `-C instrument-coverage` 换个 target 目录重编一遍，用不上它。
+    # 这里没有单独的 `cargo check`：lint job 的 clippy 已是它的超集。
     # 分两步：先只跑测试收集数据（--no-report），再从同一份数据出两种报告。
-    # 比跑两遍测试省一半时间，也保证 lcov 和终端里看到的百分比是同一次运行的结果。
     - cargo llvm-cov --no-report nextest --locked --profile ci --all-features
     - cargo llvm-cov report --lcov --output-path lcov.info
     - cargo llvm-cov report --summary-only
@@ -181,7 +164,7 @@ deny:
     - cargo deny check -A unmatched-bypass
 
 # ---------------------------------------------------------------------------
-# 特性组合检查：只跑 --all-features 会漏掉「单独开某个 feature 编不过」
+# 特性组合检查：覆盖「只开某一个 feature 编不过」这类问题
 # ---------------------------------------------------------------------------
 hack:
   stage: check
@@ -193,20 +176,10 @@ hack:
     - cargo hack --locked --feature-powerset --depth 2 --no-dev-deps check
 
 # ---------------------------------------------------------------------------
-# 「这份代码在比当前工具链更保守的环境里也编得过吗」——按 rust-toolchain.toml 的
-# channel 分两条路走（与 GitHub 那套 build.yaml 的 msrv job 一致）：
-#
-#   stable  → 验证 Cargo.toml 里声明的最低版本真的能编译。
-#   nightly → MSRV 检查不适用（nightly 项目可能用 #![feature(...)]，那种代码在任何
-#             stable 上都编不过），改跑一次「借用检查器兜底」：还是同一条 nightly，
-#             只把借用检查器换回 stable 那套。
-#
-# ⚠️ nightly 为什么非补这一步不可：2026-08-06 起 nightly 默认启用了新一代借用检查器
-#    Polonius，它比 stable 的 NLL 接受更多合法程序。和 #![feature(...)] 不同的是，
-#    这个差异**没有任何显式标记**——没有属性、没有 lint、连 warning 都没有，很容易
-#    写出一段只有 nightly 编得过的代码而毫无察觉。`-Zpolonius=off` 让 nightly 用回
-#    NLL，把这类代码就地拦下。等 Polonius 进了 stable（官方计划 2026 年底），
-#    这一步连同注释一起删掉即可。
+# 按 rust-toolchain.toml 的 channel 分两条路（与 GitHub 那套 build.yaml 的 msrv job 一致）：
+#   stable  → 验证 Cargo.toml 里声明的最低版本真的能编译
+#   nightly → MSRV 检查不适用，改用 `-Zpolonius=off` 把借用检查器换回 stable 的 NLL，
+#             拦下只有 nightly 编得过的代码
 # ---------------------------------------------------------------------------
 msrv:
   stage: check
@@ -219,10 +192,8 @@ msrv:
       version=$(grep -m1 '^rust-version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/' || true)
       if [ "${channel#nightly}" != "$channel" ]; then
         echo "工具链是 ${channel}：MSRV 检查不适用，改跑 NLL 兜底检查"
-        # 换个 target 目录：RUSTFLAGS 一变，产物就和其它 job 共用的 target/ 互不通用，
-        # 混在一起只会让两边反复全量重编。放在 target/ 之下仍然被 .cargo-cache 收着。
-        # ⚠️ RUSTFLAGS 是整体**覆盖** .cargo/config.toml 里的 rustflags，不是追加；
-        #    以后在那边加了编译参数，记得同步到这一行。
+        # 换个 target 目录，避免和其它 job 共用的 target/ 互相顶掉；
+        # RUSTFLAGS 整体覆盖 .cargo/config.toml 里的 rustflags，在那边加参数时要同步这里。
         export CARGO_TARGET_DIR=target/nll
         RUSTFLAGS=-Zpolonius=off cargo check --locked --all-targets --all-features
         exit 0
@@ -235,13 +206,10 @@ msrv:
       cargo "+$version" check --locked --all-targets --all-features
 
 # ---------------------------------------------------------------------------
-# 公开 API 的破坏性变更检查（只对**纯库**项目有意义，与 GitHub 那套的 semver job 对齐）。
-# 以「上一个 v* tag」为基线：加了 pub 字段、改了函数签名、删了导出项都会被指出来，
-# 并告诉你这次该抬 minor 还是 major。仓库还没打过 tag 时自动跳过。
-#
-# ⚠️ 判断条件是「有 src/lib.rs 且**没有** src/main.rs」：bin 项目同样有 lib target，
-#    但那是给自己的 main.rs 和集成测试用的内部库，不对外承诺 API，
-#    改签名不该被判成破坏性变更。要同时对外发布库和命令行时，把 main.rs 那半条删掉。
+# 公开 API 的破坏性变更检查（与 GitHub 那套的 semver job 对齐）。
+# 以上一个 v* tag 为基线，指出该抬 minor 还是 major；没有 tag 时自动跳过。
+# 判断条件是「有 src/lib.rs 且没有 src/main.rs」：bin 项目的 lib target 是内部库，
+# 不参与检查；要同时对外发布库和命令行时，把 main.rs 那半条删掉。
 # ---------------------------------------------------------------------------
 semver:
   stage: check
@@ -266,8 +234,7 @@ semver:
 # 以下只在 v* tag 上跑
 # ---------------------------------------------------------------------------
 
-# 先把 tag 指向的 commit 从零验证一遍——「分支 CI 曾经通过」和「这个 tag 能用」
-# 不是一回事。刻意不带缓存：发布产物不该建立在可被写入的缓存之上。
+# 把 tag 指向的 commit 从零验证一遍，不带缓存
 verify-tag:
   stage: check
   extends: .rust-setup
@@ -279,7 +246,7 @@ verify-tag:
     - cargo nextest run --locked --all-targets --all-features
     - if [ -f src/lib.rs ]; then cargo test --locked --doc --all-features; fi
     - cargo deny check -A unmatched-bypass
-    # tag 名必须和 Cargo.toml 里的版本一致，否则发出去的 v1.2.3 里装的是 1.2.2
+    # 校验 tag 名与 Cargo.toml 里的版本一致
     - |
       version=$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')
       if [ "v$version" != "$CI_COMMIT_TAG" ]; then
@@ -295,8 +262,7 @@ changelog:
   needs: [verify-tag]
   variables:
     GIT_DEPTH: 0 # git-cliff 需要完整历史才能算出版本区间
-    # cliff.toml 里的提交链接按平台推导：不设这个变量的话 remote.gitlab.* 是空的，
-    # 模板会退回 GitHub 分支，生成一份链接全指向 https://github.com// 的 CHANGELOG。
+    # cliff.toml 按这个变量拼 GitLab 的提交链接，不设的话会退回 GitHub 分支
     GITLAB_REPO: $CI_PROJECT_PATH
   script:
     - install_tools git-cliff
@@ -306,8 +272,7 @@ changelog:
       - CHANGES.md
 
 # 编译 Linux 二进制并作为构建产物挂出来。
-#
-# 想让它直接出现在 Release 页面的下载列表里，需要先传到 GitLab 的通用软件包库，
+# 想让它出现在 Release 页面的下载列表里，需要先传到 GitLab 的通用软件包库，
 # 再在下面的 release job 里用 assets:links 引用，例如：
 #   curl --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file "$BIN" \
 #     "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/$PKG/$CI_COMMIT_TAG/$PKG"
@@ -318,9 +283,7 @@ build-binary:
   extends: .rust-setup
   needs: [verify-tag]
   script:
-    # lib 项目没有可执行文件，target/release/<包名> 根本不存在，cp 会失败，
-    # 连带 needs 它的 release job 一起不跑——发版就卡死在这里。
-    # （GitHub 那边等价的判断是 release.yaml 里 verify job 传出的 is_bin。）
+    # lib 项目没有可执行文件，跳过，避免 cp 失败连带 release job 不跑
     - |
       if [ ! -f src/main.rs ]; then
         echo "没有 bin target，跳过二进制构建"
@@ -345,17 +308,8 @@ release:
       artifacts: true
     - job: build-binary
       artifacts: true
-  # 钉到版本 tag 而不是 `:latest`。
-  #
-  # 这里**不是**供应链问题：镜像由 GitLab 官方发布在自家 registry 上，和跑流水线的
-  # 是同一方；GitHub 那边「第三方 action 一律 commit hash 钉死」防的是外部作者账号
-  # 被攻破（2025 年 tj-actions 事件），风险来源不同。
-  #
-  # 钉死的理由是**可复现性**：`:latest` 会在你没改任何东西的情况下换掉，而这是发版
-  # 路径上的最后一步——它出问题的时机必然是「正要发版」。升级时手工改这一行即可
-  # （GitLab 这边没有 dependabot 那样的现成机制）。
-  #
-  # 想更严就换成 digest（真正不可变，代价是可读性和手工更新成本）：
+  # 镜像钉到版本 tag 而不是 `:latest`，保证发版路径可复现；升级时手工改这一行。
+  # 想更严就换成 digest：
   #   registry.gitlab.com/gitlab-org/release-cli@sha256:3f52d526f48e8d10625c722fa6d6423ee82aadeae1b1aa91f07b62551d96dacf
   image: registry.gitlab.com/gitlab-org/release-cli:v0.24.0
   script:

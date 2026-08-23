@@ -1,18 +1,15 @@
 # Clippy 的行为配置（lint 的开关在 Cargo.toml 的 [lints.clippy] 里）。
 
-# 测试代码里 unwrap / expect / panic 是常态，统一在这里放行，
-# 就不需要在每个源文件顶部写 #![cfg_attr(test, allow(clippy::unwrap_used))]。
-# 注意：这几项同时覆盖单元测试和 tests/ 下的集成测试。
+# 放行测试代码里的 unwrap / expect / panic / dbg，单元测试和 tests/ 都覆盖
 allow-unwrap-in-tests = true
 allow-expect-in-tests = true
 allow-panic-in-tests = true
 allow-dbg-in-tests = true
 
-# 1.0 之前不必为了 API 兼容性而束手束脚，允许 clippy 提出会破坏公开 API 的建议。
-# 发布 1.0 之后建议改回 true。
+# 允许 clippy 提出会破坏公开 API 的建议；发布 1.0 之后建议改回 true
 avoid-breaking-exported-api = false
 
-# 这些词在文档注释里出现时不要报 doc_markdown（需要反引号包裹）
+# 这些词出现在文档注释里时不报 doc_markdown
 doc-valid-idents = [
   "..", # 保留 clippy 的默认列表
   "gRPC",
@@ -21,7 +18,7 @@ doc-valid-idents = [
   "WebAssembly",
 ]
 
-# 常用阈值，按项目习惯调整（注释掉即使用 clippy 默认值）
+# 常用阈值，注释掉即使用 clippy 默认值
 # too-many-arguments-threshold = 7
 # type-complexity-threshold = 250
 # cognitive-complexity-threshold = 25
@@ -29,16 +26,10 @@ doc-valid-idents = [
 # ---------------------------------------------------------------------------
 # 异步运行时下的阻塞 API 禁令
 #
-# 下面这段由 cargo-generate 按生成时的 `async_runtime` 开关决定是注释还是生效：
-# 选了 tokio 就直接启用，禁止在 async 上下文里误用 std 的阻塞式文件 / 进程 API
-# （一次同步 read 就能把整个 runtime 的一个 worker 线程钉死）。
-#
-# ⚠️ CI 使用 `-D warnings`：启用后任何一处同步文件操作都会让构建失败，
-#    包括测试和 build.rs 里的。确有需要时在那一处写
-#    #[expect(clippy::disallowed_types, reason = "说明为什么这里必须同步")]。
-#
-# ⚠️ 这里的 liquid 标签一律挂在注释行行尾（「注释锚定」写法），好处是本文件在模板
-#    仓库里同时也是合法 TOML，编辑器与 check-toml 钩子都不会误报。
+# 禁止在 async 上下文里误用 std 的阻塞式文件 / 进程 API，由生成时的
+# async_runtime 开关决定这段是启用还是注释掉。
+# CI 用 `-D warnings`，确有必要时在那一处写
+# #[expect(clippy::disallowed_types, reason = "...")]。
 # ---------------------------------------------------------------------------
 
 # 下面这段是否生效，由生成时的 async_runtime 开关决定{% if async_runtime %}
@@ -73,8 +64,7 @@ disallowed-methods = [
   { path = "std::fs::write", replacement = "tokio::fs::write" },
 ]
 # 确有必要时在那一处写 #[expect(clippy::disallowed_types, reason = "...")]{% else %}
-# 本项目没有引入 async runtime，禁令默认关闭。
-# 以后接入 tokio 时，把下面两行的注释去掉并按需补全路径即可：
+# 本项目没有引入 async runtime，禁令关闭。接入 tokio 后去掉注释并按需补全路径：
 #
 # disallowed-types = [
 #   { path = "std::fs::File", replacement = "tokio::fs::File" },
