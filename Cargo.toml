@@ -220,7 +220,7 @@ dbg_macro = "warn" # 调试用的 dbg! 不要带进提交
 todo = "warn"
 mem_forget = "deny"
 # 统一模块布局：用 foo/mod.rs 而不是 foo.rs + foo/
-mod_module_files = "warn"
+self_named_module_files = "warn"
 # 对 &str 调 .to_string()，应写 .to_owned()
 str_to_string = "warn"
 # 手写 File::open + read_to_string 读整个文件
