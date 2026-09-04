@@ -89,18 +89,14 @@ jobs:
           persist-credentials: false
       - name: Install Rust (版本由 rust-toolchain.toml 固定)
         run: rustup show active-toolchain || rustup toolchain install
-      # 按 rust-toolchain.toml 的 channel 推导格式化工具链，规则与 justfile 的
-      # fmt_toolchain 变量一致（rustfmt.toml 用了 unstable 选项，必须走 nightly 的 rustfmt）。
+      # 规则同 justfile 的 fmt_toolchain
       - name: Resolve rustfmt toolchain
         run: |
           channel=$(grep -m1 '^channel' rust-toolchain.toml | sed -E 's/.*"([^"]+)".*/\1/')
           case "$channel" in
-            # channel 本身是 nightly（含日期版本）：用它自己，components 里已带 rustfmt
             nightly*)
               fmt="$channel"
               ;;
-            # stable / 具体版本号：额外装一份 nightly 的 rustfmt，
-            # --allow-downgrade 让 rustup 在当天缺组件时自动退回
             *)
               fmt=nightly
               rustup toolchain install nightly --allow-downgrade --profile minimal --component rustfmt
@@ -108,7 +104,7 @@ jobs:
           esac
           echo "FMT_TOOLCHAIN=$fmt" >> "$GITHUB_ENV"
       - name: Install cargo tools
-        uses: taiki-e/install-action@ba47c86ac325773530516bb756137ac718732518 # v2.86.5
+        uses: taiki-e/install-action@e67fa11c4b9316fa714ddf0abed07a0c3143b95b # v2.87.4
         with:
           tool: typos,taplo-cli
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -160,7 +156,7 @@ jobs:
       - name: Install Rust (版本由 rust-toolchain.toml 固定)
         run: rustup show active-toolchain || rustup toolchain install
       - name: Install cargo tools
-        uses: taiki-e/install-action@ba47c86ac325773530516bb756137ac718732518 # v2.86.5
+        uses: taiki-e/install-action@e67fa11c4b9316fa714ddf0abed07a0c3143b95b # v2.87.4
         with:
           tool: cargo-nextest,cargo-llvm-cov
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -213,7 +209,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install cargo-deny
-        uses: taiki-e/install-action@ba47c86ac325773530516bb756137ac718732518 # v2.86.5
+        uses: taiki-e/install-action@e67fa11c4b9316fa714ddf0abed07a0c3143b95b # v2.87.4
         with:
           tool: cargo-deny
       - name: Check dependencies (advisories / licenses / bans / sources)
@@ -231,7 +227,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install zizmor
-        uses: taiki-e/install-action@ba47c86ac325773530516bb756137ac718732518 # v2.86.5
+        uses: taiki-e/install-action@e67fa11c4b9316fa714ddf0abed07a0c3143b95b # v2.87.4
         with:
           tool: zizmor
       # actionlint 不在 install-action 的支持列表里（Go 写的，crates.io 上没有同名包），
@@ -317,7 +313,6 @@ jobs:
       - name: Check with the stable borrow checker (NLL)
         if: steps.msrv.outputs.mode == 'nll'
         env:
-          # RUSTFLAGS 整体覆盖 .cargo/config.toml 里的 rustflags，在那边加参数时要同步这里
           RUSTFLAGS: -Zpolonius=off
         run: cargo check --locked --all-targets --all-features
 
@@ -337,7 +332,7 @@ jobs:
       - name: Install Rust (版本由 rust-toolchain.toml 固定)
         run: rustup show active-toolchain || rustup toolchain install
       - name: Install cargo-hack
-        uses: taiki-e/install-action@ba47c86ac325773530516bb756137ac718732518 # v2.86.5
+        uses: taiki-e/install-action@e67fa11c4b9316fa714ddf0abed07a0c3143b95b # v2.87.4
         with:
           tool: cargo-hack
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -375,7 +370,7 @@ jobs:
           fi
       - name: Install cargo-semver-checks
         if: steps.baseline.outputs.rev != ''
-        uses: taiki-e/install-action@ba47c86ac325773530516bb756137ac718732518 # v2.86.5
+        uses: taiki-e/install-action@e67fa11c4b9316fa714ddf0abed07a0c3143b95b # v2.87.4
         with:
           tool: cargo-semver-checks
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2

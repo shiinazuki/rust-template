@@ -17,7 +17,7 @@ pkg := `grep -m1 '^name' Cargo.toml | sed -E 's/.*"(.*)".*/\1/'`
 
 # 格式化该用哪条工具链，按 rust-toolchain.toml 的 channel 推导：
 #   nightly / nightly-YYYY-MM-DD  -> 就用它自己
-#   stable / 1.85.0 之类          -> 退回 nightly（just install-tools 会装那份 rustfmt）
+#   stable / 具体版本号           -> 退回 nightly（just install-tools 会装那份 rustfmt）
 # 读不到 rust-toolchain.toml 时落到 nightly。
 fmt_toolchain := ```
     channel=$(grep -m1 '^channel' rust-toolchain.toml 2>/dev/null | sed -E 's/.*"([^"]+)".*/\1/')
@@ -67,7 +67,7 @@ check: _generated-only
 
 [group('dev')]
 [doc('运行程序，额外参数原样透传：just run -- --help（仅 bin 项目）')]
-run *args:
+run *args: _generated-only
     #!/usr/bin/env bash
     set -euo pipefail
     if [ ! -f src/main.rs ]; then
@@ -78,20 +78,20 @@ run *args:
 
 # rustfmt 管 .rs，taplo 管 .toml（配置见 .taplo.toml），两条一起跑
 [group('dev')]
-[doc('格式化代码与 TOML（rustfmt.toml 用到 unstable 选项，必须走 nightly 的 rustfmt）')]
+[doc('格式化代码与 TOML')]
 fmt: _generated-only
     cargo +{{ fmt_toolchain }} fmt --all
     taplo fmt
 
 [group('dev')]
 [doc('自动修复 clippy 能修的问题并格式化')]
-fix:
+fix: _generated-only
     cargo clippy --all-targets --all-features --fix --allow-dirty --allow-staged
     just fmt
 
 [group('dev')]
 [doc('启动后台实时监控 (bacon)')]
-dev:
+dev: _generated-only
     bacon
 
 [group('dev')]
@@ -101,7 +101,7 @@ doc: _generated-only
 
 [group('dev')]
 [doc('跑 benchmark（benches/ 下有 target 时才有意义，profile.bench 已配好优化）')]
-bench *args:
+bench *args: _generated-only
     cargo bench --all-features {{ args }}
 
 # 用 profiling profile 采样：优化等级与 release 一致，但保留符号。
@@ -109,7 +109,7 @@ bench *args:
 #     cargo build --profile profiling && samply record ./target/profiling/<包名>
 [group('dev')]
 [doc('采样生成火焰图 flamegraph.svg（仅 bin 项目；需要 cargo-flamegraph）')]
-flamegraph *args:
+flamegraph *args: _generated-only
     #!/usr/bin/env bash
     set -euo pipefail
     # 库项目没有 bin target，改用 --bench / --example 做性能分析
@@ -123,9 +123,11 @@ flamegraph *args:
 # 只清本项目。
 [group('dev')]
 [doc('清理编译产物与本地生成的报告')]
-clean:
+clean: _generated-only
     cargo clean
-    rm -f lcov.info junit.xml flamegraph.svg perf.data perf.data.old
+    # 与 .gitignore 里那几类本地产物对齐
+    rm -rf coverage
+    rm -f lcov.info junit.xml flamegraph.svg profile.json perf.data* *.profraw *.profdata
 
 # ---------------------------------------------------------------------------
 # 检查
@@ -154,12 +156,12 @@ test: _generated-only
 
 [group('check')]
 [doc('生成覆盖率报告（lcov.info）')]
-coverage:
+coverage: _generated-only
     cargo llvm-cov nextest --all-features --lcov --output-path lcov.info
 
 [group('check')]
 [doc('生成 HTML 覆盖率报告并在浏览器里打开')]
-coverage-html:
+coverage-html: _generated-only
     cargo llvm-cov nextest --all-features --html --open
 
 [group('check')]
@@ -170,7 +172,7 @@ audit: _generated-only
 # 与 CI 的 hack job 等价：逐个 feature 组合做检查，--depth 2 限制组合爆炸
 [group('check')]
 [doc('遍历 feature 幂集做检查（需要 cargo-hack）')]
-hack:
+hack: _generated-only
     cargo hack --feature-powerset --depth 2 --no-dev-deps check
 
 # 不放进 `just ci`，两套 CI 里也没有对应的 job：cargo-machete 靠扫源码里的符号判断，
@@ -178,13 +180,13 @@ hack:
 # [package.metadata.cargo-machete] ignored = [...] 放行。
 [group('check')]
 [doc('找出声明了却没被用到的依赖（需要 cargo-machete）')]
-unused:
+unused: _generated-only
     cargo machete
 
 # 同样不放进 `just ci`：要和已发布的版本比对，本地没网或没发布过时没意义。
 [group('check')]
 [doc('检查公开 API 有没有破坏性变更（仅纯库项目；需要 cargo-semver-checks）')]
-semver:
+semver: _generated-only
     #!/usr/bin/env bash
     set -euo pipefail
     # bin 项目的 lib target 只服务于自己的 main.rs 与集成测试，不参与 semver 检查；
@@ -198,7 +200,7 @@ semver:
 # nightly 项目上 MSRV 检查不适用，自动转去跑 `just nll`。
 [group('check')]
 [doc('验证 Cargo.toml 里声明的 MSRV 真的能编译（nightly 项目改跑 nll）')]
-msrv:
+msrv: _generated-only
     #!/usr/bin/env bash
     set -euo pipefail
     channel=$(grep -m1 '^channel' rust-toolchain.toml | sed -E 's/.*"([^"]+)".*/\1/')
@@ -220,7 +222,7 @@ msrv:
 # CI 的 msrv job 每次都会跑它。
 [group('check')]
 [doc('用 stable 的借用检查器（NLL）编一遍，拦下只有 nightly 编得过的代码')]
-nll:
+nll: _generated-only
     #!/usr/bin/env bash
     set -euo pipefail
     channel=$(grep -m1 '^channel' rust-toolchain.toml | sed -E 's/.*"([^"]+)".*/\1/')
@@ -228,8 +230,7 @@ nll:
         echo "工具链是 ${channel}，本来用的就是 NLL，无需检查"
         exit 0
     fi
-    # 换个 target 目录，避免和平时 `just check` 的产物互相顶掉。
-    # RUSTFLAGS 会整体覆盖 .cargo/config.toml 里的 rustflags，在那边加参数时要同步这一行。
+    # 换个 target 目录，避免和平时 `just check` 的产物互相顶掉
     CARGO_TARGET_DIR=target/nll RUSTFLAGS=-Zpolonius=off \
         cargo check --locked --all-targets --all-features
 
@@ -272,11 +273,28 @@ ice:
     echo ""
     echo "清理：rm -f rustc-ice-*.txt"
 
+# 确认 Cargo.lock 与 Cargo.toml 对得上。
+#
+# 下面 lint / test 用的命令不带 --locked，依赖对不上时它们会顺手改写 Cargo.lock 再继续，
+# 于是本地全绿、推上去 CI 却用提交里那份旧 lock 失败（CI 与 Dockerfile 全程 --locked）。
+[private]
+_lock-fresh: _generated-only
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! cargo metadata --locked --format-version 1 >/dev/null 2>&1; then
+        {
+            echo "✗ Cargo.lock 与 Cargo.toml 对不上（或还没生成）。"
+            echo "  CI 与 Dockerfile 全程用 --locked，这样推上去会直接失败。"
+            echo "  跑 just bootstrap 重新生成，并把 Cargo.lock 一起提交。"
+        } >&2
+        exit 1
+    fi
+
 # 覆盖 CI 里的 lint / test / deny 三个 job。
 # 不含 hack / msrv / nll，它们各自是独立配方，CI 上照常会跑。
 [group('check')]
 [doc('本地跑一遍 CI 的主要检查（lint / test / audit）')]
-ci: lint test audit
+ci: _lock-fresh lint test audit
 
 # ---------------------------------------------------------------------------
 # 依赖维护
@@ -284,13 +302,13 @@ ci: lint test audit
 
 [group('deps')]
 [doc('按 Cargo.toml 的版本约束升级 Cargo.lock')]
-update:
+update: _generated-only
     cargo update
     cargo deny check -A unmatched-bypass
 
 [group('deps')]
 [doc('列出可升级的依赖（需要 cargo-outdated）')]
-outdated:
+outdated: _generated-only
     cargo outdated --root-deps-only --exit-code 1
 
 [group('deps')]
@@ -346,7 +364,7 @@ release level="patch": ci
 # 单独用它发版时请自己先跑一次 `just ci`。
 [group('release')]
 [doc('真正执行发版（跳过预演；请确保刚跑过 just release 或 just ci）')]
-release-execute level="patch":
+release-execute level="patch": _generated-only
     cargo release {{ level }} --execute
 
 # ---------------------------------------------------------------------------

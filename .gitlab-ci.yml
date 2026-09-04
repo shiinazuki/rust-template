@@ -100,17 +100,13 @@ lint:
     - .cargo-cache
     - .rust-setup
   script:
-    # 按 rust-toolchain.toml 的 channel 推导格式化工具链，规则与 justfile 的
-    # fmt_toolchain 变量一致（rustfmt.toml 用了 unstable 选项，必须走 nightly 的 rustfmt）。
+    # 规则同 justfile 的 fmt_toolchain
     - |
       channel=$(grep -m1 '^channel' rust-toolchain.toml | sed -E 's/.*"([^"]+)".*/\1/')
       case "$channel" in
-        # channel 本身是 nightly（含日期版本）：components 里已经带了 rustfmt
         nightly*)
           FMT_TOOLCHAIN="$channel"
           ;;
-        # stable / 具体版本号：额外装一份 nightly 的 rustfmt，
-        # --allow-downgrade 让 rustup 在当天缺组件时自动退回
         *)
           FMT_TOOLCHAIN=nightly
           rustup toolchain install nightly --allow-downgrade --profile minimal --component rustfmt
@@ -173,7 +169,10 @@ hack:
     - .rust-setup
   script:
     - install_tools cargo-hack
-    - cargo hack --locked --feature-powerset --depth 2 --no-dev-deps check
+    # 不能加 --locked：--no-dev-deps 会临时删掉 [dev-dependencies]，依赖图一变
+    # cargo 就要改 Cargo.lock，而 --locked 禁止改动，直接 101 退出。
+    # 「lock 是最新的」由 lint / test / msrv 那几个 job 的 --locked 保证。
+    - cargo hack --feature-powerset --depth 2 --no-dev-deps check
 
 # ---------------------------------------------------------------------------
 # 按 rust-toolchain.toml 的 channel 分两条路（与 GitHub 那套 build.yaml 的 msrv job 一致）：
@@ -192,8 +191,7 @@ msrv:
       version=$(grep -m1 '^rust-version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/' || true)
       if [ "${channel#nightly}" != "$channel" ]; then
         echo "工具链是 ${channel}：MSRV 检查不适用，改跑 NLL 兜底检查"
-        # 换个 target 目录，避免和其它 job 共用的 target/ 互相顶掉；
-        # RUSTFLAGS 整体覆盖 .cargo/config.toml 里的 rustflags，在那边加参数时要同步这里。
+        # 换个 target 目录，避免和其它 job 共用的 target/ 互相顶掉
         export CARGO_TARGET_DIR=target/nll
         RUSTFLAGS=-Zpolonius=off cargo check --locked --all-targets --all-features
         exit 0
@@ -241,8 +239,24 @@ verify-tag:
   rules:
     - if: $CI_COMMIT_TAG =~ /^v/
   script:
-    - install_tools cargo-nextest cargo-deny
+    - install_tools cargo-nextest cargo-deny typos-cli taplo-cli
+    # 与上面的 lint job 同一套检查，发版这条路径上不能比日常流水线松
+    - |
+      channel=$(grep -m1 '^channel' rust-toolchain.toml | sed -E 's/.*"([^"]+)".*/\1/')
+      case "$channel" in
+        nightly*)
+          FMT_TOOLCHAIN="$channel"
+          ;;
+        *)
+          FMT_TOOLCHAIN=nightly
+          rustup toolchain install nightly --allow-downgrade --profile minimal --component rustfmt
+          ;;
+      esac
+    - cargo "+$FMT_TOOLCHAIN" fmt --all -- --check
+    - taplo fmt --check
+    - typos
     - cargo clippy --locked --all-targets --all-features -- -D warnings
+    - RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --all-features --document-private-items
     - cargo nextest run --locked --all-targets --all-features
     - if [ -f src/lib.rs ]; then cargo test --locked --doc --all-features; fi
     - cargo deny check -A unmatched-bypass

@@ -21,9 +21,8 @@ jobs:
     name: verify tagged commit
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # 顺便把「这仓库有没有 bin target」告诉下面的 binaries job。
-    # 不能在 binaries 上直接写 `if: hashFiles('src/main.rs') != ''`：
-    # job 级的 `if:` 在 checkout 之前求值，hashFiles 恒为空串，job 会被静默跳过。
+    # 顺便把「这仓库有没有 bin target」告诉下面的 binaries job：
+    # binaries 上不能写 job 级的 `if: hashFiles(...)`，理由见 build.yaml 的 detect job。
     outputs:
       is_bin: ${{ steps.probe.outputs.is_bin }}
     steps:
@@ -42,18 +41,14 @@ jobs:
           fi
       - name: Install Rust (版本由 rust-toolchain.toml 固定)
         run: rustup show active-toolchain || rustup toolchain install
-      # 按 rust-toolchain.toml 的 channel 推导格式化工具链，规则与 justfile 的
-      # fmt_toolchain 变量一致（rustfmt.toml 用了 unstable 选项，必须走 nightly 的 rustfmt）。
+      # 规则同 justfile 的 fmt_toolchain
       - name: Resolve rustfmt toolchain
         run: |
           channel=$(grep -m1 '^channel' rust-toolchain.toml | sed -E 's/.*"([^"]+)".*/\1/')
           case "$channel" in
-            # channel 本身是 nightly（含日期版本）：用它自己，components 里已带 rustfmt
             nightly*)
               fmt="$channel"
               ;;
-            # stable / 具体版本号：额外装一份 nightly 的 rustfmt，
-            # --allow-downgrade 让 rustup 在当天缺组件时自动退回
             *)
               fmt=nightly
               rustup toolchain install nightly --allow-downgrade --profile minimal --component rustfmt
@@ -61,15 +56,22 @@ jobs:
           esac
           echo "FMT_TOOLCHAIN=$fmt" >> "$GITHUB_ENV"
       - name: Install cargo tools
-        uses: taiki-e/install-action@ba47c86ac325773530516bb756137ac718732518 # v2.86.5
+        uses: taiki-e/install-action@e67fa11c4b9316fa714ddf0abed07a0c3143b95b # v2.87.4
         with:
-          tool: cargo-nextest,cargo-deny,typos
+          tool: cargo-nextest,cargo-deny,typos,taplo-cli
+      # 与 build.yaml 的 lint job 同一套检查，发版这条路径上不能比日常 CI 松
       - name: Check code format
         run: cargo "+$FMT_TOOLCHAIN" fmt --all -- --check
+      - name: Check TOML format
+        run: taplo fmt --check
       - name: Check spelling
         run: typos
       - name: Lint rust sources
         run: cargo clippy --locked --all-targets --all-features -- -D warnings
+      - name: Check documentation
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --locked --no-deps --all-features --document-private-items
       - name: Run tests
         run: cargo nextest run --locked --all-targets --all-features
       - name: Run doc tests
@@ -109,7 +111,7 @@ jobs:
           fetch-depth: 0 # git-cliff 需要完整历史才能算出版本区间
           persist-credentials: false
       - name: Generate a changelog
-        uses: orhun/git-cliff-action@f50e11560dce63f7c33227798f90b924471a88b5 # v4.8.0
+        uses: orhun/git-cliff-action@3d96a18cc4ec17e9dc69ddcc424ccafaf1f78ce2 # v4.9.0
         id: git-cliff
         with:
           config: cliff.toml
@@ -119,7 +121,7 @@ jobs:
           OUTPUT: CHANGES.md
           GITHUB_REPO: ${{ github.repository }}
       - name: Create release
-        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           body: ${{ steps.git-cliff.outputs.content }}
           # 预发布版本（v1.2.3-rc.1）自动标记成 pre-release

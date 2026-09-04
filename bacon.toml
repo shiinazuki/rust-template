@@ -41,19 +41,19 @@ command = ["cargo", "doc", "--no-deps", "--all-features", "--open"]
 need_stdout = false
 on_success = "back" # 打开一次就退回上一个任务
 
-# 直接运行程序，改代码自动重启；只对 bin 项目生成{% if crate_type == "bin" %}
+# 直接运行程序，改代码自动重启；需要 bin target{% if crate_type == "bin" %}
 [jobs.run]
 command = ["cargo", "run", "--all-features"]
 need_stdout = true
 allow_warnings = true
 background = false
-# 以上仅 bin{% endif %}
+# 在 bacon 面板里按 r 切到它{% endif %}
 
 [keybindings]
 c = "job:check-all"
 l = "job:clippy-all"
 t = "job:nextest"
 d = "job:doc"
-# r 只在 bin 项目里绑定{% if crate_type == "bin" %}
+# r 切到 run 任务；需要 bin target{% if crate_type == "bin" %}
 r = "job:run"
-# 以上仅 bin{% endif %}
+# 键位可以自由改，值写成 job:<任务名>{% endif %}

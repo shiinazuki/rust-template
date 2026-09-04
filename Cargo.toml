@@ -12,25 +12,11 @@ version = "0.1.0"
 edition = "2024"
 # MSRV（最低支持版本）：低于它 cargo 直接报错，resolver 选依赖版本、clippy 给建议时也按它取舍。
 # `just msrv` 和 CI 的 msrv job 负责验证它属实。
-rust-version = "1.88"
+rust-version = "1.94"
 license = "{{ license }}"
 # 仓库地址，域名按 ci 选项推导（ci = none 时按 github 处理）。
 repository = "https://{% if ci == 'gitlab' %}gitlab.com{% else %}github.com{% endif %}/{{ repo-owner }}/{{ project-name }}"
 authors = ["{{ authors }}"]
-
-# --- 供所有成员继承的依赖版本 ---------------------------------------------
-# 版本号统一在这里定，成员里只写 `foo = { workspace = true }`。
-[workspace.dependencies]
-# 版本目录：成员引用后才真正生效{% if async_runtime %}
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
-# tokio 的 feature 在此统一收口{% endif %}{% if logging and crate_type == "bin" %}
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-# env-filter 提供 RUST_LOG 那套运行时可调的过滤语法{% endif %}{% if error_handling %}
-thiserror = "2"
-# thiserror 用来定义领域错误类型{% endif %}{% if error_handling and crate_type == "bin" %}
-anyhow = "1"
-# anyhow 只给应用层用，见 src/main.rs{% endif %}
 
 [package]
 name = "{{ project-name }}"
@@ -70,13 +56,13 @@ exclude = [
   "rust-toolchain.toml",
 ]
 
-# docs.rs 的文档构建参数，仅库项目生成{% if crate_type == "lib" %}
-# all-features 让藏在 optional feature 后的 API 也进文档，
-# --cfg docsrs 供 #[cfg_attr(docsrs, doc(cfg(...)))] 标注 feature 需求。
+# docs.rs 的文档构建参数，只有库项目需要{% if crate_type == "lib" %}
 [package.metadata.docs.rs]
+# 让藏在 optional feature 后的 API 也进文档
 all-features = true
+# 供 #[cfg_attr(docsrs, doc(cfg(...)))] 标注 feature 需求
 rustdoc-args = ["--cfg", "docsrs"]
-# 以上仅 lib{% endif %}
+# 全部字段见 https://docs.rs/about/metadata{% endif %}
 
 # 全部字段见 https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -91,8 +77,30 @@ rustdoc-args = ["--cfg", "docsrs"]
 # # optional = true 的依赖会自动生成同名 feature；想改名用 dep: 前缀显式转发：
 # # serde = ["dep:serde", "dep:serde_json"]
 
+# ---------------------------------------------------------------------------
+# 依赖
+#
+# 版本只在下面的 [workspace.dependencies] 里写一次，[dependencies] / [dev-dependencies]
+# 以及将来拆出的子 crate 都只写 `foo = { workspace = true }` 继承它。
+#
+# 依赖登记进版本目录之后，`cargo add foo` 会自动写成继承形式，第二步不必手写。
+# 命令行别带版本号：`cargo add foo@1.2` 会退回具体版本，哪怕它和目录里的一模一样。
+# ---------------------------------------------------------------------------
+
+[workspace.dependencies]
+# 版本目录：成员引用后才真正生效{% if async_runtime %}
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+# rt-multi-thread 提供多线程运行时，macros 提供 #[tokio::main] / #[tokio::test]{% endif %}{% if logging and crate_type == "bin" %}
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# env-filter 提供 RUST_LOG 那套运行时可调的过滤语法{% endif %}{% if error_handling %}
+thiserror = "2"
+# thiserror 用来定义领域错误类型{% endif %}{% if error_handling and crate_type == "bin" %}
+anyhow = "1"
+# anyhow 只给应用层用，见 src/main.rs{% endif %}
+
 [dependencies]
-# 本 crate 的运行时依赖写在这一段（到下一个 [ ] 表头为止），版本继承自 [workspace.dependencies]{% if async_runtime and crate_type == "bin" %}
+# 本 crate 的运行时依赖写在这一段（到下一个 [ ] 表头为止）{% if async_runtime and crate_type == "bin" %}
 tokio = { workspace = true }
 # 入口是 #[tokio::main]，见 src/main.rs{% endif %}{% if logging and crate_type == "bin" %}
 tracing = { workspace = true }
@@ -202,10 +210,10 @@ closure_returning_async_block = "warn"
 # unqualified_local_imports = "warn"
 # 强制公开 API 写文档注释，仅库项目打开
 missing_docs = "{% if crate_type == 'lib' %}warn{% else %}allow{% endif %}"
-# 下面这条配套上面的 [package.metadata.docs.rs]，只对库项目生成{% if crate_type == "lib" %}
+# 配套上面的 [package.metadata.docs.rs]，同样只有库项目有{% if crate_type == "lib" %}
 # 登记 docsrs 这个 cfg 名，让 #[cfg_attr(docsrs, ...)] 不触发 unexpected_cfgs
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(docsrs)'] }
-# 以上仅 lib{% endif %}
+# check-cfg 的写法见 https://doc.rust-lang.org/rustc/check-cfg.html{% endif %}
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }

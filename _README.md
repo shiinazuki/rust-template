@@ -102,18 +102,20 @@ just ice
 `Cargo.toml` 里的 `rust-version` 声明了最低支持版本，它只是下限，用更新的 stable
 或 nightly 编译都没问题。
 
-默认取 `1.88` 而不是 edition 2024 的地板值 1.85：配上 `resolver = "3"` 与
-`.cargo/config.toml` 的 `incompatible-rust-versions = "fallback"`，依赖的新版本一旦把
-`rust-version` 抬到你的 MSRV 以上，resolver 会一声不吭地退回旧版本，而安全补丁往往就在
-新版本里。`time` 的 RUSTSEC-2026-0009 补在 0.3.47（要求 rustc 1.88）：
+默认取 `1.94`——大致是当前 stable 往回数 4 个版本（约半年），而不是 edition 2024 的
+地板值 1.85。配上 `resolver = "3"` 与 `.cargo/config.toml` 的
+`incompatible-rust-versions = "fallback"`，依赖的新版本一旦把 `rust-version` 抬到你的
+MSRV 以上，resolver 会一声不吭地退回旧版本，而安全补丁往往就在新版本里。
+`time` 的 RUSTSEC-2026-0009 补在 0.3.47（要求 rustc 1.88）：
 
 | `rust-version` | resolver 选中的 `time` | `just audit` |
 | --- | --- | --- |
 | `1.85` | 0.3.45（有漏洞） | FAILED |
-| `1.88` | 0.3.55 | 通过 |
+| `1.94` | 0.3.55 | 通过 |
 
 两种情况下 `cargo build` 都一路绿灯，只有 `just audit` 能发现。要支持更老的 rustc 就往下调，
-再撞上同类问题时优先抬 `rust-version`，而不是在 `deny.toml` 里 ignore 掉告警。
+但别低到某个依赖的地板以下；再撞上同类问题时优先抬 `rust-version`，而不是在 `deny.toml`
+里 ignore 掉告警。
 {% if toolchain == "stable" %}
 `just msrv` 和 CI 的 msrv job 会真的用那个版本编译一遍来验证声明属实。
 {% else %}

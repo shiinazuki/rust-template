@@ -5,8 +5,7 @@
 #   环境变量（RUSTFLAGS / CARGO_*） > 本文件 > ~/.cargo/config.toml > cargo 内置默认值
 #
 # 环境变量里的 `RUSTFLAGS` 会整体替换下面 `[build] rustflags` / `[target.*] rustflags`。
-# 项目里显式设了 RUSTFLAGS 的地方：justfile 的 `nll` 配方、CI 的 msrv job
-# （GitHub 与 GitLab 各一处）；在这里启用 rustflags 时要同步过去。
+# 在这里启用 rustflags 时，要同步项目里显式设了 RUSTFLAGS 的地方（搜 `RUSTFLAGS=`）。
 
 [net]
 # 网络请求的重试次数
@@ -72,7 +71,7 @@ incompatible-rust-versions = "fallback"
 # ---------------------------------------------------------------------------
 # 链接器
 #
-# 各平台现状（截至 2026 年）：
+# 各平台的链接器现状：
 #   x86_64-unknown-linux-gnu   rustc 1.90 起默认 rust-lld，无需配置
 #                              （退回系统链接器：-Clinker-features=-lld）
 #   aarch64-unknown-linux-gnu  换 mold 或显式开 lld 有明显收益
@@ -93,8 +92,7 @@ incompatible-rust-versions = "fallback"
 # 并行前端（仅 nightly）
 #
 # `-Zthreads=N` 并行化 rustc 的解析、类型检查、借用检查，干净构建通常能省 20%~30%。
-# 打开后要把同样的参数补进 justfile 的 nll 配方与 CI 的 msrv job，
-# 线程数超过 8 基本没有额外收益。
+# 打开后要同步那几处显式设了 RUSTFLAGS 的地方（见文件开头），线程数超过 8 基本没有额外收益。
 # ---------------------------------------------------------------------------
 
 # [build]

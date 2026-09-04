@@ -40,8 +40,14 @@ fi
 
 # --- Rust 源码 --------------------------------------------------------------
 if touched '\.rs$'; then
-    # rustfmt.toml 用了 unstable 选项，必须走 nightly 的 rustfmt
-    run "cargo +nightly fmt --check" cargo +nightly fmt --all -- --check
+    # 规则同 justfile 的 fmt_toolchain
+    channel=$(grep -m1 '^channel' rust-toolchain.toml 2>/dev/null |
+        sed -E 's/.*"([^"]+)".*/\1/' || true)
+    case "$channel" in
+        nightly*) fmt_toolchain=$channel ;;
+        *) fmt_toolchain=nightly ;;
+    esac
+    run "cargo +$fmt_toolchain fmt --check" cargo "+$fmt_toolchain" fmt --all -- --check
     run "cargo clippy" cargo clippy --all-targets --all-features -- -D warnings
 fi
 
@@ -54,7 +60,7 @@ fi
 # --- 依赖 -------------------------------------------------------------------
 # 只在依赖图可能变了的时候跑
 if touched '(Cargo\.(toml|lock)|deny\.toml)$'; then
-    run "cargo deny check" cargo deny check
+    run "cargo deny check" cargo deny check -A unmatched-bypass
 fi
 
 # --- 拼写 -------------------------------------------------------------------

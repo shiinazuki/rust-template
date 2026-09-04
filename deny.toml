@@ -182,9 +182,8 @@ include-archives = false
 #   blake3            .github/workflows/*.py  发版脚本；c/test.py 测 C 实现
 #   curve25519-dalek  tests/build_tests.sh    检查各 feature 组合能否编过
 #
-# 项目没用到其中某个依赖时会报 `warning[unmatched-bypass]`，所以所有调用点都写成
-# `cargo deny check -A unmatched-bypass`（justfile 的 audit / ci、两套 CI、
-# scripts/smoke.sh）。
+# 项目没用到其中某个依赖时会报 `warning[unmatched-bypass]`，所以每个
+# `cargo deny check` 调用点都带上 `-A unmatched-bypass`。
 [[bans.build.bypass]]
 name = "libc"
 allow-globs = ["etc/*.py"]
@@ -211,7 +210,7 @@ allow-globs = ["tests/build_tests.sh"]
 scope = "workspace"
 level = "deny"
 # 给没声明 rust-version 的 crate 用的兜底版本，打开时要与 Cargo.toml 的 rust-version 一致
-# rust-version = "1.88"
+# rust-version = "1.94"
 
 # 按 crate 禁用具体 feature
 # [[bans.features]]

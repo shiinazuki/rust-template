@@ -26,13 +26,11 @@ doc-valid-idents = [
 # ---------------------------------------------------------------------------
 # 异步运行时下的阻塞 API 禁令
 #
-# 禁止在 async 上下文里误用 std 的阻塞式文件 / 进程 API，由生成时的
-# async_runtime 开关决定这段是启用还是注释掉。
-# CI 用 `-D warnings`，确有必要时在那一处写
-# #[expect(clippy::disallowed_types, reason = "...")]。
-# ---------------------------------------------------------------------------
+# 禁止误用 std 的阻塞式文件 / 进程 API，改用 tokio 的对应项。CI 用 `-D warnings`，
+# 确有必要时在那一处写 #[expect(clippy::disallowed_types, reason = "...")]。
+# ---------------------------------------------------------------------------{% if async_runtime %}
 
-# 下面这段是否生效，由生成时的 async_runtime 开关决定{% if async_runtime %}
+# 每条把 std 的路径映射到 tokio 的替代品
 disallowed-types = [
   { path = "std::fs::DirBuilder", replacement = "tokio::fs::DirBuilder" },
   { path = "std::fs::DirEntry", replacement = "tokio::fs::DirEntry" },
@@ -63,7 +61,8 @@ disallowed-methods = [
   { path = "std::fs::symlink_metadata", replacement = "tokio::fs::symlink_metadata" },
   { path = "std::fs::write", replacement = "tokio::fs::write" },
 ]
-# 确有必要时在那一处写 #[expect(clippy::disallowed_types, reason = "...")]{% else %}
+# 新增禁令按同样的 { path, replacement } 写{% else %}
+
 # 本项目没有引入 async runtime，禁令关闭。接入 tokio 后去掉注释并按需补全路径：
 #
 # disallowed-types = [

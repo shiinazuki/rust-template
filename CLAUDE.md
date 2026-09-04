@@ -99,7 +99,7 @@ The ban does not distinguish async from sync context—tests and `build.rs` are 
 {% endif %}
 ## Dependency Management
 
-- Declare versions once in the root `Cargo.toml` under `[workspace.dependencies]`; member manifests only write `dep_name = { workspace = true }`.
+- Declare versions once in the root `Cargo.toml` under `[workspace.dependencies]`; member manifests only write `dep_name = { workspace = true }`. The two tables sit next to each other, and once a version is listed in the first, a bare `cargo add <dep>` writes the inheriting form into the second on its own. Do not pass a version on the command line — `cargo add <dep>@1.2` writes a concrete version instead, even when it matches the catalog entry.
 - **Run `just audit` (`cargo-deny`) after touching dependencies.** It checks advisories, licenses, banned crates, and wildcard versions.
 - Never edit `Cargo.lock` by hand. CI and Docker builds run with `--locked`.
 - Check whether the standard library already covers it before adding a dependency—`[bans.std-replacements]` in `deny.toml` rejects crates that `std` has absorbed (e.g. `lazy_static` vs `std::sync::LazyLock`).
