@@ -356,8 +356,21 @@ Use --allow-commands if you want to allow the template to run system commands
 
 | 位置 | 形式 | 谁来更新 |
 | --- | --- | --- |
-| workflow 里的 action | commit hash + `# vX.Y.Z` 注释 | 生成项目里由 dependabot 每周更新；模板仓库自己要手动跑 `just template-update` |
+| workflow 里的 action | commit hash + `# vX.Y.Z` 注释 | dependabot 每周一提 PR，模板仓库与生成项目都一样 |
 | `Cargo.toml` 里可选依赖的版本 | caret 版本 | 手动，改动很少 |
+
+`.github/dependabot.yml` 会跟着模板一起进生成项目，但它同时也管着模板仓库自己，
+所以模板这边的 action 版本一样有 dependabot 盯着，不必手动跟。`just template-update`
+只是在你想手工更新时告诉你怎么查 hash。
+
+⚠️ 手工改过 action 版本之后，dependabot 那条尚未合并的 PR 会变成冲突状态，而且它的目标
+版本可能已经旧于你刚写进去的版本——那种 PR 直接关掉（`@dependabot close`），别合，
+否则是降级。
+
+⚠️ dependabot 的 **cargo 规则在模板仓库自身上必然失败**，Dependabot 页面上每周会看到一条
+错误，这是预期行为：模板的 `Cargo.toml` 里 `name = "{{ project-name }}"` 不是合法包名，
+`cargo metadata` 直接报 `invalid character` 退出。这条规则要留给生成出来的项目用，而
+`dependabot.yml` 是同一份文件，没法只在模板这边关掉，忽略那条错误即可。
 
 action 用 hash 而不是 tag，因为 tag 可变：上游账号被攻破就能把 `v3` 指向恶意提交
 （2025 年 tj-actions 事件）。代价是不会自动跟进上游修复，所以 dependabot 的
