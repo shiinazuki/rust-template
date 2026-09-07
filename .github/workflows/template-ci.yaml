@@ -46,7 +46,7 @@ jobs:
           rustup toolchain install nightly --allow-downgrade --profile minimal \
             --component rustfmt,clippy,rust-src,llvm-tools
       - name: Install tools
-        uses: taiki-e/install-action@e67fa11c4b9316fa714ddf0abed07a0c3143b95b # v2.87.4
+        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2.87.5
         with:
           # cargo-deny 不能漏：smoke.sh 的依赖审计那一步由 `command -v cargo-deny`
           # 守卫，装不上就会静默跳过。
@@ -79,7 +79,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install tools
-        uses: taiki-e/install-action@e67fa11c4b9316fa714ddf0abed07a0c3143b95b # v2.87.4
+        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2.87.5
         with:
           tool: taplo-cli,typos
       - name: Check TOML format
@@ -96,7 +96,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install zizmor
-        uses: taiki-e/install-action@e67fa11c4b9316fa714ddf0abed07a0c3143b95b # v2.87.4
+        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2.87.5
         with:
           tool: zizmor
       # actionlint 不在 install-action 的支持列表里（Go 写的，crates.io 上没有同名包），
@@ -136,7 +136,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install shellcheck
-        uses: taiki-e/install-action@e67fa11c4b9316fa714ddf0abed07a0c3143b95b # v2.87.4
+        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2.87.5
         with:
           tool: shellcheck
       # .githooks/ 一并覆盖：它们会在每个使用者机器上执行
