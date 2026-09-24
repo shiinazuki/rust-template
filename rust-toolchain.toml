@@ -1,27 +1,23 @@
-# 固定构建 / 测试 / clippy 使用的工具链版本，进入本目录时 rustup 自动安装并切换。
-# 它优先于 rustup 的全局默认工具链（`rustup default`）。
+# 本项目使用的工具链，rustup 在本目录下自动安装并切换（优先于 `rustup default`）。
 #
 # channel 可选：
-#   "stable"             跟随最新 stable（模板默认）
-#   "nightly"            滚动更新的最新 nightly，可用 #![feature(...)]
-#   "nightly-2026-08-01" 钉死到某一天的 nightly，撞上编译器 ICE 时往前退几天（见 `just ice`）
-#   "1.94.0"             锁死到某个具体版本
+#   "stable"             最新 stable
+#   "nightly"            最新 nightly，可用 #![feature(...)]
+#   "nightly-2026-08-01" 指定日期的 nightly（撞上编译器 ICE 时往前退几天，见 `just ice`）
+#   "1.94.0"             指定版本
 #
-# 用 nightly 时，`just nll` / CI 的 msrv job 会换回 stable 的 NLL 借用检查器
-# （`-Zpolonius=off`）复验一遍，防止写出只有 Polonius 才接受的代码。
+# 用 nightly 时，`just nll` 会用 stable 的 NLL 借用检查器再编一遍。
 [toolchain]
 channel = "{{ toolchain }}"
-# profile = "minimal" 只装 rustc / cargo / rust-std，其余组件在这里点名：
-#   rustfmt / clippy      格式化与 lint
-#   rust-src              rust-analyzer 解析标准库
+# minimal profile 之外要装的组件（rust-src 供 rust-analyzer 解析标准库）
 components = ["rustfmt", "clippy", "rust-src"]
 profile = "minimal"
 
 # 可选组件，按需加进上面的 components：
 #   llvm-tools-preview  覆盖率用，`just coverage` 会按需安装，不必写在这里
-#   rust-analyzer       rustup 分发的 LSP 服务端，用于让 LSP 版本与工具链严格对齐
+#   rust-analyzer       与工具链版本一致的 rust-analyzer
 #   miri                检测未定义行为，跑 `cargo +nightly miri test`（仅 nightly）
 #   rustc-dev           编写 clippy / rustc 插件时需要
 
-# 交叉编译目标，留空表示只装当前平台；点名后 rustup 会连同标准库一起装好：
+# 交叉编译目标，rustup 会装好对应的标准库（默认只有当前平台）
 # targets = ["x86_64-unknown-linux-musl", "aarch64-apple-darwin"]

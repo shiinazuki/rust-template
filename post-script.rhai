@@ -1,10 +1,5 @@
-// cargo-generate 生成后钩子（cargo-generate.toml 的 [hooks] post）。
-//
-// 运行时机：模板展开完成之后、文件被移动到目标目录之前，工作目录是临时的模板副本。
-//
-// 这里不做 `git init`（此刻还在临时目录）、不跑 `cargo fmt`（会顺带拉整条工具链）、
-// 也不调 rustup 检查组件（Rhai 的 system::command 会让所有非交互生成都必须带
-// `--allow-commands`）。组件检查改由 `just doctor` 负责。
+// cargo-generate 的生成后钩子：模板展开后、移到目标目录前运行，工作目录是临时副本。
+// 不调用外部命令：用了 system::command，非交互生成都必须带 --allow-commands。
 
 let license = variable::get("license");
 let toolchain = variable::get("toolchain");
@@ -20,20 +15,15 @@ let is_bin = crate_type == "bin";
 // 库项目选了 logging 也不会生成 telemetry.rs，下面据此给出说明
 let ignored_for_lib = !is_bin && logging;
 
-// 库项目的 Dockerfile / .dockerignore / docker.just 由 cargo-generate.toml 的
-// [conditional.'crate_type == "lib"'] 一并 ignore 掉了，
-// 下面所有 Docker 相关的提示都以这两个变量为准。
+// 库项目选了 docker 也不生成 Docker 文件
 let docker_generated = docker && is_bin;
 let docker_ignored_for_lib = docker && !is_bin;
 
-// 检测「repo-owner 用了 GitLab 的 group/subgroup 写法，但 CI 平台不是 gitlab」，
-// 这种组合拼出的 repository 地址在 GitHub 上是 404。
+// repo-owner 用了 GitLab 的子组写法，但仓库域名是 github.com
 let owner = variable::get("repo-owner");
 let owner_path_on_github = owner.contains("/") && ci != "gitlab";
 
-// --- 1. 按用户选择的 License 收拾 LICENSE 文件 -----------------------------
-//
-// 选单一 License 时删掉另一个并改名成 LICENSE；选 MIT OR Apache 时两个都留着。
+// --- 1. 单协议时只留一份并改名成 LICENSE，双协议两份都留 --------------------
 
 if license == "MIT" {
     file::delete("LICENSE-APACHE");
@@ -43,16 +33,12 @@ if license == "MIT" {
     file::rename("LICENSE-APACHE", "LICENSE");
 }
 
-// --- 2. 换上生成项目自己的 README ------------------------------------------
-//
-// README.md 是模板自己的说明，删掉；_README.md 是给项目用的，改名顶上。
+// --- 2. 用 _README.md 替换模板自己的 README.md ------------------------------
 
 file::delete("README.md");
 file::rename("_README.md", "README.md");
 
-// --- 3. 依赖有变动时丢弃模板自带的 Cargo.lock ------------------------------
-//
-// 模板自带的 lock 只锁了根 crate 一个包，开关加了依赖就对不上，删掉让 cargo 重新解析。
+// --- 3. 模板自带的 Cargo.lock 只有根 crate，开关加了依赖时删掉 ---------------
 
 let adds_dependencies = async_runtime || error_handling || (is_bin && logging);
 

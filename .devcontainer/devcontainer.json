@@ -2,8 +2,7 @@
 // 说明见 https://containers.dev/
 {
   "name": "{{ project-name }}",
-  // 官方 Rust 镜像，自带 rustup / cargo / git / 常用编译依赖；
-  // trixie = Debian 13，与 Dockerfile / .gitlab-ci.yml 的基础镜像同一个大版本。
+  // 官方 Rust 开发镜像（Debian 13，与 Dockerfile / GitLab CI 一致）
   "image": "mcr.microsoft.com/devcontainers/rust:1-trixie",
 
   "features": {
@@ -16,7 +15,7 @@
 
   "customizations": {
     "vscode": {
-      // 只作用于容器 / Codespaces 里的 VS Code，仓库根目录不放 .vscode/
+      // 只作用于容器里的 VS Code
       "extensions": [
         "rust-lang.rust-analyzer",
         "tamasfe.even-better-toml",

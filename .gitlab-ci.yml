@@ -1,16 +1,12 @@
-# GitLab CI —— 与 .github/workflows/ 等价的一套流水线。
-# 生成项目时选 `ci = gitlab` 才会保留本文件（选 github 则保留 .github/）。
-#
-# 结构：lint / test / deny / hack / msrv / semver / minimal-versions 并行，各自调用 justfile 里的同名配方；
-#       打 v* tag 时额外跑 release（先从零验证一遍，再建 Release）。
+# GitLab CI：检查类 job 并行，各自调用 justfile 里的同名配方；
+# 打 v* tag 时从零验证一遍，再创建 Release。
 
 stages:
   - check
   - release
 
 default:
-  # 官方 rust 镜像作底，真正的版本由仓库里的 rust-toolchain.toml 决定。
-  # trixie = Debian 13。
+  # 工具链版本由 rust-toolchain.toml 决定
   image: rust:1-slim-trixie
   interruptible: true
   retry:
@@ -24,17 +20,13 @@ variables:
   # CI 是一次性环境，关掉增量编译
   CARGO_INCREMENTAL: "0"
   RUST_BACKTRACE: "1"
-  # GitLab 只能缓存工程目录下的路径，所以把 CARGO_HOME 挪进来。
-  # 不叫 `.cargo`：那是项目级 cargo 配置目录的名字，会被缓存覆盖掉。
+  # 放在工程目录下才能被缓存；不能叫 .cargo（项目级 cargo 配置目录）
   CARGO_HOME: $CI_PROJECT_DIR/.cargo-home
-  # 关掉 cargo 的全局缓存自动 GC，避免它把刚恢复的缓存内容删掉
+  # 不自动清理恢复出来的全局缓存
   CARGO_CACHE_AUTO_CLEAN_FREQUENCY: never
 
-# 两份缓存，key 都带 job 名，并行的 job 互不覆盖：
-#   - 工具（cargo-nextest 等）几乎不变，key 里只有 job 名；
-#   - 编译产物跟着 Cargo.lock 走。
-#
-# 以 `.` 开头的是 GitLab 的隐藏 job，只作模板用，不会被调度执行。
+# 按 job 名区分的两份缓存：安装的工具，以及随 Cargo.lock 变化的依赖与编译产物。
+# 以 . 开头的隐藏 job 只供 extends 引用。
 .cargo-cache:
   cache:
     - key: cargo-tools-$CI_JOB_NAME-v1
@@ -51,8 +43,7 @@ variables:
         - target/
       policy: pull-push
 
-# 各 job 共用的准备动作，其中 install_tools 的策略是
-# 「缓存里有就跳过，没有就用 cargo-binstall 下预编译二进制」。
+# 各 job 共用的准备动作。install_tools 跳过缓存里已有的工具，其余用 cargo-binstall 安装
 .rust-setup:
   before_script:
     - apt-get update -qq && apt-get install -y -qq --no-install-recommends git curl ca-certificates
@@ -64,7 +55,7 @@ variables:
       install_tools() {
         missing=""
         for crate in "$@"; do
-          # 少数 crate 的二进制名和包名不一致，这里做个映射
+          # 包名到二进制名的映射
           case "$crate" in
             typos-cli) bin=typos ;;
             taplo-cli) bin=taplo ;;
@@ -77,7 +68,7 @@ variables:
           return 0
         fi
         echo "需要安装:$missing"
-        # cargo-binstall 在本 job 的工具缓存为空时编译一次，之后从 .cargo-home/bin 缓存里来
+        # 工具缓存为空时先编译 cargo-binstall
         command -v cargo-binstall >/dev/null 2>&1 || cargo install --locked cargo-binstall
         # shellcheck disable=SC2086
         cargo binstall --no-confirm --locked $missing
@@ -91,14 +82,12 @@ workflow:
     - if: $CI_PIPELINE_SOURCE == "web"
 
 # ---------------------------------------------------------------------------
-# 下面各 job 调用 justfile 里的同名配方，检查规则只在 justfile 里维护。
-# GitLab 会设 CI=true，justfile 据此给 cargo 命令自动加上 --locked。
+# 下面各 job 调用 justfile 里的同名配方，CI 环境下 cargo 命令自动带 --locked
 # ---------------------------------------------------------------------------
 
 # 格式化 / 拼写 / clippy / 文档：不跑测试，失败得最快
 lint:
   stage: check
-  # 用 extends 而不是 YAML 锚点：同一个 mapping 里出现两个 `<<` 是非法 YAML
   extends:
     - .cargo-cache
     - .rust-setup
@@ -139,7 +128,7 @@ deny:
     - install_tools just cargo-deny
     - just audit
 
-# 特性组合检查：覆盖「只开某一个 feature 编不过」这类问题；没声明 feature 时配方直接跳过
+# 逐个检查 feature 组合，没声明 feature 时跳过
 hack:
   stage: check
   extends:
@@ -149,8 +138,7 @@ hack:
     - install_tools just cargo-hack
     - just hack
 
-# stable 项目用 Cargo.toml 里声明的 rust-version 编一遍；nightly 项目改用
-# `-Zpolonius=off` 换回 stable 的 NLL 借用检查器编一遍。分支判断在 msrv 配方里。
+# stable 项目按 rust-version 编译，nightly 项目改用 NLL 借用检查器编译
 msrv:
   stage: check
   extends:
@@ -160,8 +148,7 @@ msrv:
     - install_tools just
     - just msrv
 
-# 公开 API 的破坏性变更检查：以上一个 v* tag 为基线，
-# 不是纯库项目或还没有 tag 时配方直接跳过
+# 纯库项目：以上一个 v* tag 为基线检查公开 API 的破坏性变更
 semver:
   stage: check
   extends:
@@ -173,7 +160,7 @@ semver:
     - install_tools just cargo-semver-checks
     - just semver
 
-# 依赖版本下限检查：直接依赖取 Cargo.toml 允许的最低版本再编译 lib，不是纯库项目时配方直接跳过
+# 纯库项目：直接依赖取约束允许的最低版本编译 lib
 minimal-versions:
   stage: check
   extends:
@@ -187,7 +174,7 @@ minimal-versions:
 # 以下只在 v* tag 上跑
 # ---------------------------------------------------------------------------
 
-# 把 tag 指向的 commit 从零验证一遍，不带缓存
+# 从零验证 tag 指向的 commit，不带缓存
 verify-tag:
   stage: check
   extends: .rust-setup
@@ -195,9 +182,8 @@ verify-tag:
     - if: $CI_COMMIT_TAG =~ /^v/
   script:
     - install_tools just cargo-nextest cargo-deny typos-cli taplo-cli
-    # 与上面的 lint / test / deny 同一套检查，发版这条路径上不能比日常流水线松
     - just ci
-    # 校验 tag 名与 Cargo.toml 里的版本一致
+    # tag 与 Cargo.toml 的版本一致
     - |
       version=$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')
       if [ "v$version" != "$CI_COMMIT_TAG" ]; then
@@ -213,7 +199,7 @@ changelog:
   needs: [verify-tag]
   variables:
     GIT_DEPTH: 0 # git-cliff 需要完整历史才能算出版本区间
-    # cliff.toml 按这个变量拼 GitLab 的提交链接，不设的话会退回 GitHub 分支
+    # cliff.toml 据此拼 GitLab 的提交链接
     GITLAB_REPO: $CI_PROJECT_PATH
   script:
     - install_tools git-cliff
@@ -222,9 +208,8 @@ changelog:
     paths:
       - CHANGES.md
 
-# 编译 Linux 二进制并作为构建产物挂出来。
-# 想让它出现在 Release 页面的下载列表里，需要先传到 GitLab 的通用软件包库，
-# 再在下面的 release job 里用 assets:links 引用，例如：
+# 编译 Linux 二进制并挂成 job 产物。要在 Release 页面提供下载，先传到通用软件包库，
+# 再在 release job 里用 assets:links 引用：
 #   curl --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file "$BIN" \
 #     "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/$PKG/$CI_COMMIT_TAG/$PKG"
 build-binary:
@@ -234,7 +219,7 @@ build-binary:
   extends: .rust-setup
   needs: [verify-tag]
   script:
-    # lib 项目没有可执行文件，跳过，避免 cp 失败连带 release job 不跑
+    # lib 项目没有二进制，只留一个空的 dist/
     - |
       if [ ! -f src/main.rs ]; then
         echo "没有 bin target，跳过二进制构建"
@@ -259,10 +244,7 @@ release:
       artifacts: true
     - job: build-binary
       artifacts: true
-  # release 关键字由镜像里的 glab 执行（需要 glab 1.58+；release-cli 已弃用）。
-  # 镜像钉到版本 tag 而不是 `:latest`，保证发版路径可复现；升级时手工改这一行。
-  # 想更严就换成 digest：
-  #   registry.gitlab.com/gitlab-org/cli@sha256:79223ad3fa6e3c3226119ac5d0b73e55f1b909e6d5bbf8469726480723b63ba8
+  # release 关键字由镜像里的 glab 执行（需要 1.58+），版本需手工升级
   image: registry.gitlab.com/gitlab-org/cli:v1.119.0
   script:
     - echo "creating release for $CI_COMMIT_TAG"

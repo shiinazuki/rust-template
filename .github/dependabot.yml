@@ -13,7 +13,7 @@ updates:
       default-days: 7
     open-pull-requests-limit: 5
     commit-message:
-      # 与 conventional commits 对齐，cliff.toml 会把 chore(deps) 从 CHANGELOG 中过滤掉
+      # 提交信息为 chore(deps): ...，CHANGELOG 会过滤掉
       prefix: "chore"
       include: scope
     groups:
@@ -23,9 +23,7 @@ updates:
           - minor
           - patch
 
-  # GitHub Actions 自身的版本。
-  # workflow 里的 action 全部用 commit hash 钉死，这条规则每周把 hash 连同后面的
-  # `# vX.Y.Z` 注释一起更新。
+  # workflow 里用 commit hash 钉死的 action，连同 `# vX.Y.Z` 注释一起更新
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
@@ -41,8 +39,7 @@ updates:
         patterns:
           - "*"
 
-  # 容器基础镜像那一段，只有生成了 Dockerfile 的项目才有，
-  # 否则 dependabot 每周会报一次 dependency_file_not_found。{% if docker and crate_type == "bin" %}
+  # 容器基础镜像，只在生成了 Dockerfile 时存在{% if docker and crate_type == "bin" %}
   - package-ecosystem: docker
     directory: "/"
     schedule:

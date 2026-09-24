@@ -9,10 +9,9 @@ on:
       - main
   workflow_dispatch: # 允许在 Actions 页面手动触发
 
-# 本文件只负责 push / PR 上的持续检查，发布流程在 release.yaml 里。
-# 分开是为了让缓存只服务于 CI，发布流程从零构建。
+# push / PR 上的检查，发布流程在 release.yaml 里。
 #
-# 同一分支/PR 连续推送时取消上一次尚未跑完的 run
+# 同一 PR 连续推送时取消上一次未跑完的 run
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -28,11 +27,7 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  # 探测仓库里有哪些 target，供后面的 job 做条件判断。
-  #
-  # 单独开一个 job 是因为 job 级的 `if:` 在 checkout 之前求值，那时
-  # `hashFiles('src/lib.rs')` 恒为空串；先 checkout 再用 outputs 传结论才可靠。
-  # （步骤级的 `if: hashFiles(...)` 没有这个问题。）
+  # 探测仓库布局，供后面 job 级的 `if:` 使用（job 级 if 在 checkout 前求值，用不了 hashFiles）
   detect:
     name: detect targets
     runs-on: ubuntu-latest
@@ -48,16 +43,13 @@ jobs:
       - name: Probe repository layout
         id: probe
         run: |
-          # 判断这里是不是模板仓库本身：模板仓库的 Cargo.toml 还是 liquid 占位符，
-          # 任何 cargo 命令都会失败，所以下面所有 cargo 相关的 job 都跳过。
-          # 模板自身的检查见 template-ci.yaml。
+          # 模板仓库本身（Cargo.toml 含 liquid 标签）跳过所有 cargo 相关的 job
           if grep -q '{%' Cargo.toml 2>/dev/null; then
             is_template=true
           else
             is_template=false
           fi
-          # 是 is_lib_only 而不是 is_lib：bin 项目也有 src/lib.rs，但那是内部库，
-          # 不对外承诺 API，不跑 semver 检查。
+          # 纯库项目（bin 项目也有 src/lib.rs）
           if [ -f src/lib.rs ] && [ ! -f src/main.rs ]; then
             is_lib_only=true
           else
@@ -74,8 +66,7 @@ jobs:
             echo "::notice::检测到这是模板仓库本身（Cargo.toml 里还是 liquid 占位符），跳过所有 cargo 相关的 job。模板自身的检查见 template-ci.yaml。"
           fi
 
-  # 下面各 job 调用 justfile 里的同名配方，检查规则只在 justfile 里维护。
-  # CI 环境里 justfile 会给 cargo 命令自动加上 --locked。
+  # 下面各 job 调用 justfile 里的同名配方，CI 环境下 cargo 命令自动带 --locked
 
   # 格式化 / 拼写 / clippy / 文档：不跑测试，失败得最快
   lint:
@@ -87,7 +78,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # 后续步骤不需要推东西回仓库，不保留凭据
           persist-credentials: false
       - name: Install Rust (版本由 rust-toolchain.toml 固定)
         run: rustup show active-toolchain || rustup toolchain install
@@ -108,8 +98,7 @@ jobs:
       fail-fast: false
       matrix:
         platform: [ubuntu-latest]
-        # 默认只跑一个平台；代码碰了路径分隔符、换行、文件权限、进程 API 或 FFI 时，
-        # 把下面这行放开跑多平台。
+        # 需要多平台测试时换成下面这行
         # platform: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.platform }}
     timeout-minutes: 30
@@ -138,11 +127,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       # - name: Install Protoc
       #   uses: arduino/setup-protoc@v3
-      # 这里没有单独的 `cargo check`：lint job 的 clippy 已是它的超集。
-      # 只测 debug；要提前拦 release-only 的编译错误，补一条
-      # `cargo check --locked --release --all-targets --all-features`。
-      #
-      # NEXTEST_PROFILE=ci 用 .config/nextest.toml 里的 ci profile：不 fail-fast、失败重试、输出 JUnit
+      # ci profile 见 .config/nextest.toml：不 fail-fast、失败重试、输出 JUnit
       - name: Run tests with coverage
         env:
           NEXTEST_PROFILE: ci
@@ -186,8 +171,7 @@ jobs:
       - name: Check dependencies (advisories / licenses / bans / sources)
         run: just audit
 
-  # stable 项目用 Cargo.toml 里声明的 rust-version 编一遍；nightly 项目改用
-  # `-Zpolonius=off` 换回 stable 的 NLL 借用检查器编一遍。分支判断在 msrv 配方里。
+  # stable 项目按 rust-version 编译，nightly 项目改用 NLL 借用检查器编译
   msrv:
     name: msrv / nll
     needs: [detect]
@@ -208,8 +192,7 @@ jobs:
       - name: Check MSRV / NLL
         run: just msrv
 
-  # 特性组合检查：把 [features] 的幂集逐个 check 一遍，
-  # 覆盖「只开某一个 feature 编不过」这类问题。没声明 feature 时配方直接跳过。
+  # 逐个检查 feature 组合，没声明 feature 时跳过
   hack:
     name: feature powerset
     needs: [detect]
@@ -230,8 +213,7 @@ jobs:
       - name: Check feature powerset
         run: just hack
 
-  # 公开 API 的破坏性变更检查（只对纯库项目跑，判断见 detect job）。
-  # 以上一个 v* tag 为基线，指出该抬 minor 还是 major；没有 tag 时配方直接跳过。
+  # 纯库项目：以上一个 v* tag 为基线检查公开 API 的破坏性变更
   semver:
     name: semver-checks
     needs: [detect]
@@ -253,8 +235,7 @@ jobs:
       - name: Check for API breakage
         run: just semver
 
-  # 依赖版本下限检查（只对纯库项目跑）：直接依赖取 Cargo.toml 允许的最低版本再编译 lib，
-  # 防止下游用户解析到的旧版本缺少本库用到的 API。
+  # 纯库项目：直接依赖取约束允许的最低版本编译 lib
   minimal-versions:
     name: minimal versions
     needs: [detect]
@@ -275,9 +256,7 @@ jobs:
       - name: Check minimal versions
         run: just minimal-versions
 
-  # 容器镜像构建验证（只在生成项目时选了 Docker 才有这个 job）：只构建、不推送，
-  # 用来发现 Dockerfile 什么时候坏掉。
-  # CI 上 BuildKit 的 cache mount 恒为空，每次都从零编译依赖；提速方案见 Dockerfile 顶部。
+  # 有 Dockerfile 时构建镜像，不推送（CI 上 cache mount 为空，依赖从零编译）
   docker:
     name: docker build
     needs: [detect]
@@ -288,7 +267,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # 走 env 而不是把 ${{ }} 直接拼进 run，防脚本注入
+      # 表达式经 env 传入，不直接拼进 run
       - name: Build image
         env:
           DOCKER_BUILDKIT: "1"

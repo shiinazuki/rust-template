@@ -1,10 +1,7 @@
 name: audit
 
-# 定时跑依赖安全公告检查：代码没动，风险也会变。
-# push / PR 上的检查由 build.yaml 的 deny job 覆盖，这里补的是时间维度。
-#
-# 仓库连续 60 天没有提交时，GitHub 会自动停用定时 workflow，
-# 需要在 Settings → Actions 里重新启用。
+# 每天检查依赖的安全公告（push / PR 上由 build.yaml 的 deny job 检查）。
+# 仓库 60 天没有提交时 GitHub 会停用定时 workflow，需要在 Actions 页面重新启用。
 on:
   schedule:
     - cron: "0 2 * * *" # 每天 UTC 02:00（北京时间 10:00）
@@ -25,8 +22,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # 模板仓库自身的 Cargo.toml 还是 liquid 占位符，cargo-deny 解析不了，
-      # 所以先探测再决定是否跳过。判断依据与 build.yaml 的 detect job 一致。
       - name: Is this the template repo itself?
         id: probe
         run: |

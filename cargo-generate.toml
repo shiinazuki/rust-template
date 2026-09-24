@@ -1,14 +1,9 @@
 # cargo-generate 模板配置：https://cargo-generate.github.io/cargo-generate/
 #
-# 用法：
 #   cargo generate --git https://github.com/<owner>/rust-template --name my-app
 #   cargo generate --git ... --name my-lib --lib      # 生成库项目
 #
-# 交互式会依次询问：项目简介 / 仓库所有者 / 工具链 / 协议 / CI / Docker /
-# async / 错误处理 / 日志；非交互用 --define 逐个指定，--silent 下必须给全。
-#
-# --bin（默认）生成 src/main.rs，--lib 生成 src/lib.rs + tests/，
-# 由下面的 [conditional.'crate_type == ...'] 控制。
+# 非交互生成时用 --define 指定下面的占位符，--silent 下必须给全。
 
 [template]
 # choices 的 { value, label } 写法需要 0.24
@@ -22,23 +17,20 @@ cargo_generate_version = ">=0.24.0"
 exclude = [
   # --- 花括号属于别的模板语言，必须躲开 liquid ---------------------------
   "cliff.toml", # git-cliff 的 Tera 模板
-  # 只排除 workflows：Actions 的 ${{ ... }} 会被 liquid 吃掉；
-  # 同目录的 dependabot.yml 需要渲染（docker 那段按开关生成），不能整个目录排除。
+  # Actions 的 ${{ ... }}（dependabot.yml 需要渲染，所以只排除 workflows）
   ".github/workflows/**",
   ".gitlab-ci.yml", # GitLab CI 的 $VARIABLE / 规则表达式
   "justfile", # just 自己的 {{ 变量 }} 插值
   "docker.just", # 同上，just 的插值
   "release.toml", # cargo-release 的 {{version}} / {{crate_name}}
-  # 钩子里用 `{{ project-name }}` 判断是不是模板仓库本身，字面量要原样保留
+  # 钩子里的 `{{ project-name }}` 要原样保留
   ".githooks/**",
   "README.md", # 模板仓库自己的说明文档
   "scripts/**", # 模板自测脚本，含 shell 的 ${...} 与 cargo-generate 参数
   "template.just", # 模板仓库自己的 just 配方
 
   # --- 二进制与非文本资源：被 liquid 处理会损坏 --------------------------
-  # 预防性通配，目录现在为空也无妨。
-  # 注意 LICENSE-MIT / LICENSE-APACHE 里的 {{ authors }} 和 {{ "now" | date: "%Y" }}
-  # 是要被渲染的，不能加进这个列表。
+  # LICENSE-* 里的作者与年份需要渲染，不能加进来。
   "*.png",
   "*.jpg",
   "*.jpeg",
@@ -66,30 +58,21 @@ exclude = [
   "tests/snapshots/**",
 ]
 
-# 只对模板仓库自己有意义、不进生成项目的文件。
-# template-ci.yaml 是模板自己的 CI：虽然 `.github/**` 已在 exclude 里，
-# 但 exclude 只影响渲不渲染，要彻底排除必须写在这里。
+# 只属于模板仓库、不进入生成项目的文件
 ignore = ["CHANGELOG.md", ".github/workflows/template-ci.yaml", "template.just", "scripts/"]
 
-# 两个 README 的分工：
-#   README.md   模板仓库自己的说明，在 exclude 里，生成后由 post-script 删掉
-#   _README.md  生成项目要用的 README，正常做变量替换，post-script 把它改名成 README.md
-#
-# 不用 `README.md.liquid` 自动改名机制：exclude / ignore 的匹配发生在 `.liquid`
-# 后缀去掉之后，`exclude = ["README.md"]` 会把它一起排除掉。
+# README.md 是模板自己的说明，_README.md 是生成项目的 README，由 post-script 替换。
+# 不能用 README.md.liquid：匹配发生在去掉 .liquid 后缀之后，会被 exclude 的 README.md 排除。
 
 [hooks]
-# 生成后收尾：整理 LICENSE、把 _README.md 顶替成 README.md、按需删 Cargo.lock、
-# 打印下一步提示。
+# 生成后整理 LICENSE、README 与 Cargo.lock，并打印下一步提示
 post = ["post-script.rhai"]
 
 # ---------------------------------------------------------------------------
 # 占位符
 #
-# 项目名与作者不在这里：project-name 来自 --name（并派生 snake_case 的 crate_name），
-# authors / username 由 cargo-generate 从 git / cargo 配置里读，都是内置变量。
-# 完整列表见 https://cargo-generate.github.io/cargo-generate/templates/builtin_placeholders.html
-#
+# project-name / crate_name / authors 等是内置变量，不在这里定义：
+# https://cargo-generate.github.io/cargo-generate/templates/builtin_placeholders.html
 # 只有顶层 [placeholders] 定义的变量才能驱动下面的 [conditional.*]。
 # ---------------------------------------------------------------------------
 
@@ -102,15 +85,11 @@ default = "A Rust project"
 type = "string"
 prompt = "仓库所有者：GitHub / GitLab 的用户名或组织名（用于 repository 字段）"
 default = "your-username"
-# 同时容得下两个平台：GitHub 是字母 / 数字 / 连字符，最长 39 位；
-# GitLab 还允许下划线、点，以及 `group/subgroup` 这样的子组路径。
+# 兼容 GitHub 用户名与 GitLab 的 group/subgroup 路径
 regex = "^[A-Za-z0-9][A-Za-z0-9._/-]{0,98}$"
 
-# 没有单独问「托管在哪个平台」：域名由下面的 ci 选项推导（gitlab -> gitlab.com，
-# 其余 -> github.com）。ci = none 又托管在 GitLab 时，生成完手工改 repository 即可。
+# 仓库域名由 ci 选项推导：gitlab -> gitlab.com，其余 -> github.com
 
-# 默认 stable：生成的骨架里没有任何 #![feature(...)]，rustfmt 也只用 stable 选项。
-# 真的需要 #![feature(...)] 时再选 nightly。
 [placeholders.toolchain]
 type = "string"
 prompt = "Rust 工具链（写入 rust-toolchain.toml 的 channel）"
@@ -151,9 +130,7 @@ type = "bool"
 prompt = "引入 tokio 异步运行时？（同时开启 clippy 的阻塞 API 禁令）"
 default = false
 
-# --- 应用骨架开关 -----------------------------------------------------------
-# 决定生成哪些源码模块，各自独立可任意组合；关掉时对应文件不会出现。
-# 没有「命令行参数骨架」：需要时 `cargo add clap --features derive,env` 现写。
+# --- 源码骨架开关：关掉时对应文件不生成 ------------------------------------
 
 [placeholders.error_handling]
 type = "bool"
@@ -171,18 +148,14 @@ default = false
 # ---------------------------------------------------------------------------
 
 [conditional.'crate_type == "lib"']
-# 库项目没有可执行入口，Dockerfile 与 telemetry（安装全局 subscriber 是应用的职责）一并去掉
+# 库项目不生成可执行入口、Docker 与 telemetry
 ignore = ["src/main.rs", "src/telemetry.rs", "Dockerfile", ".dockerignore", "docker.just"]
-
-# bin 项目同样生成 src/lib.rs 与 tests/，不需要裁掉任何东西，
-# 所以这里没有 [conditional.'crate_type == "bin"']。
 
 # ---------------------------------------------------------------------------
 # 按 CI 平台裁剪
 # ---------------------------------------------------------------------------
 
 [conditional.'ci != "github"']
-# .github/ 下只剩 GitHub 专有的 workflows 与 dependabot 配置，整个目录去掉
 ignore = [".github"]
 
 [conditional.'ci != "gitlab"']

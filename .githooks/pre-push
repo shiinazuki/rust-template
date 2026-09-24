@@ -4,8 +4,7 @@
 # 安装：just hooks        临时跳过：git push --no-verify
 set -euo pipefail
 
-# 模板仓库自身跑不了 cargo，直接放行。
-# 本文件不做 liquid 变量替换，下面这个占位符必须原样保留。
+# 模板仓库本身直接放行（本文件不做 liquid 替换，占位符原样保留）
 if grep -qF '{{ project-name }}' Cargo.toml 2>/dev/null; then
     exit 0
 fi

@@ -1,15 +1,12 @@
 name: template-ci
 
-# 模板仓库自己的 CI：按矩阵生成项目，再逐个跑一遍完整检查。
-# 本文件在 cargo-generate.toml 的 ignore 列表里，不会进入生成的项目。
-#
-# 模板仓库根目录跑不了 cargo，「改完模板还能不能生成出可用项目」只能靠真生成一次来验证。
+# 模板仓库自己的 CI（不进入生成项目）：按矩阵生成项目并逐个跑完整检查
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
-  # 每周跑一次完整矩阵：上游的 clippy / rustfmt / 依赖都在变
+  # 每周跑一次完整矩阵
   schedule:
     - cron: "0 3 * * 1"
   workflow_dispatch:
@@ -24,9 +21,7 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
-  # 模板根目录的 rust-toolchain.toml 里 channel 还是占位符，在这个目录下跑任何
-  # cargo/rustup 命令都会失败。RUSTUP_TOOLCHAIN 优先级高于 rust-toolchain.toml，
-  # 用它绕过去；scripts/smoke.sh 会在真正生成项目前把这个变量解开。
+  # 模板根目录的 channel 是占位符，用 RUSTUP_TOOLCHAIN 覆盖；smoke.sh 进入生成项目前会解除它
   RUSTUP_TOOLCHAIN: stable
 
 jobs:
@@ -38,8 +33,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # 矩阵里有 toolchain=nightly 的组合，这里用 --allow-downgrade 一次性把
-      # 组件装齐，免得后面 rustup 现装时撞上缺组件的 nightly。
+      # --allow-downgrade：选组件齐全的最近一版 nightly
       - name: Install Rust
         run: |
           rustup toolchain install stable --profile minimal --component rustfmt,clippy,rust-src
@@ -48,13 +42,8 @@ jobs:
       - name: Install tools
         uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5 # v2.87.19
         with:
-          # smoke.sh 在生成的项目里跑 just lint / test / audit，缺哪个工具就直接失败
           tool: cargo-generate,cargo-nextest,cargo-deny,just,taplo-cli,typos
-      # PR / push 上跑默认矩阵（10 组）；定时任务与手动触发跑完整矩阵（19 组），
-      # 并用 SMOKE_DOCKER=1 真正构建一次容器镜像。
-      #
-      # 写成显式分支而不是 `bash scripts/smoke.sh $MODE`：后者不加引号会触发
-      # shellcheck 的 SC2086，而同一条流水线里的 actionlint 会调 shellcheck。
+      # PR / push 跑默认矩阵；定时与手动触发跑完整矩阵并构建容器镜像
       - name: Run smoke matrix
         env:
           MODE: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '--full' || '' }}
@@ -66,9 +55,7 @@ jobs:
             bash scripts/smoke.sh
           fi
 
-  # 模板仓库自身的文件卫生：
-  #   taplo  —— 模板里十几个 TOML 必须同时是合法 TOML（即「liquid 标签只能锚在注释行行尾」）
-  #   typos  —— 拼错的词会原样复制进每一个生成出来的项目
+  # 模板文件本身的 TOML 格式与拼写（taplo 同时校验 liquid 标签没有破坏 TOML 语法）
   hygiene:
     name: toml & spelling
     runs-on: ubuntu-latest
@@ -98,6 +85,5 @@ jobs:
         uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5 # v2.87.19
         with:
           tool: shellcheck
-      # .githooks/ 一并覆盖：它们会在每个使用者机器上执行
       - name: Check shell scripts
         run: shellcheck scripts/*.sh .githooks/*

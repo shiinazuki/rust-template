@@ -1,34 +1,30 @@
-# 项目命令入口。`just` 列出全部命令，`just --list` 同理。
-#
-# Docker 相关命令拆在 docker.just 里，可选加载（文件不存在时 `import?` 静默跳过）
+# 项目命令入口，`just` 列出全部命令。
+
+# Docker 相关命令（没选 Docker 时文件不存在，静默跳过）
 import? 'docker.just'
-# 模板仓库自己的维护配方，生成出来的项目里没有这个文件
+# 模板仓库自己的维护配方，生成的项目里没有
 import? 'template.just'
 
-#
-# 从 git remote 推导「托管平台 + owner/repo」，git-cliff 用它生成 changelog 里的提交链接。
-# GitHub 用 GITHUB_REPO，GitLab 用 GITLAB_REPO，两者要分开识别。
+# 从 origin remote 推导托管平台与 owner/repo，供 git-cliff 拼提交链接
 origin_url := `git remote get-url origin 2>/dev/null || true`
-# git@host:owner/repo.git 与 https://host/owner/repo.git 两种写法都剥成 owner/repo
+# git@host:owner/repo.git 与 https://host/owner/repo.git 都剥成 owner/repo
 repo_slug := `git remote get-url origin 2>/dev/null | sed -E -e 's,^[^/@]+@[^:]+:,,' -e 's,^[a-z]+://[^/]+/,,' -e 's,\.git$,,' || true`
 repo_host := if origin_url =~ 'gitlab' { "gitlab" } else { if origin_url =~ 'github' { "github" } else { "" } }
-# 包名（本文件不做 liquid 替换，只能从 Cargo.toml 里读）
+# 包名
 pkg := `grep -m1 '^name' Cargo.toml | sed -E 's/.*"(.*)".*/\1/'`
 
-# rust-toolchain.toml 声明的 channel。两套 CI 与 git 钩子都调用本文件的配方，不再各自解析。
+# rust-toolchain.toml 声明的 channel
 channel := `grep -m1 '^channel' rust-toolchain.toml 2>/dev/null | sed -E 's/.*"([^"]+)".*/\1/' || true`
 
-# CI 环境（GitHub / GitLab 都会设 CI）里给 cargo 命令加 --locked；本地由 `just ci` 的 _lock-fresh 把关
+# 设了 CI 环境变量时给 cargo 命令加 --locked；本地由 _lock-fresh 检查
 locked := if env("CI", "") == "" { "" } else { "--locked" }
 
 # 列出所有可用命令
 default:
     @just --list --unsorted
 
-# 「你在模板仓库里，这里跑不了 cargo」的统一闸门，被下面几条常用配方依赖。
-#
-# 判断依据是 Cargo.toml 里还有没有 liquid 标签。用 `{%` 而不是 `{{`：
-# 后者是 just 自己的插值语法。
+# 在模板仓库里（Cargo.toml 含 liquid 标签）时报错退出。
+# 匹配 `{%` 而不是 `{{`：后者是 just 的插值语法。
 [private]
 _generated-only:
     #!/usr/bin/env bash
@@ -70,7 +66,6 @@ run *args: _generated-only
     fi
     cargo run --all-features {{ args }}
 
-# rustfmt 管 .rs，taplo 管 .toml（配置见 .taplo.toml），两条一起跑
 [group('dev')]
 [doc('格式化代码与 TOML')]
 fmt: _generated-only
@@ -94,27 +89,24 @@ doc: _generated-only
     cargo doc --no-deps --all-features --open
 
 [group('dev')]
-[doc('跑 benchmark（benches/ 下有 target 时才有意义，profile.bench 已配好优化）')]
+[doc('跑 benchmark')]
 bench *args: _generated-only
     cargo bench --all-features {{ args }}
 
-# 用 profiling profile 采样：优化等级与 release 一致，另带完整调试信息。
-# macOS 上 cargo-flamegraph 走 dtrace，需要 sudo；也可以换 samply：
+# 用 profiling profile 采样。macOS 上需要 sudo（dtrace），也可以换 samply：
 #     cargo build --profile profiling && samply record ./target/profiling/<包名>
 [group('dev')]
 [doc('采样生成火焰图 flamegraph.svg（仅 bin 项目；需要 cargo-flamegraph）')]
 flamegraph *args: _generated-only
     #!/usr/bin/env bash
     set -euo pipefail
-    # 库项目没有 bin target，改用 --bench / --example 做性能分析
     if [ ! -f src/main.rs ]; then
         echo "没有 bin target，跳过火焰图（库项目请用 --bench / --example）"
         exit 0
     fi
     cargo flamegraph --profile profiling --bin {{ pkg }} {{ args }}
 
-# 在 ~/.cargo/config.toml 里设了共享 build.target-dir 时，改用 `cargo clean -p <包名>`
-# 只清本项目。
+# 共享 target-dir 时改用 `cargo clean -p <包名>`，只清本项目
 [group('dev')]
 [doc('清理编译产物与本地生成的报告')]
 clean: _generated-only
@@ -127,9 +119,8 @@ clean: _generated-only
 # 检查
 # ---------------------------------------------------------------------------
 
-# 两套 CI 的 lint job 直接跑这条，最后一条把 rustdoc 的警告也升级成错误
 [group('check')]
-[doc('格式化检查 / TOML 排版 / clippy / 拼写检查 / 文档警告（CI 的 lint job 跑的就是它）')]
+[doc('格式化 / TOML / clippy / 拼写 / 文档检查（CI 的 lint job）')]
 lint: _generated-only
     cargo fmt --all -- --check
     taplo fmt --check
@@ -152,8 +143,7 @@ doctest: _generated-only
         cargo test {{ locked }} --doc --all-features
     fi
 
-# 跑一遍测试，从同一份数据出 lcov 与汇总；CI 的 test job 另设 NEXTEST_PROFILE=ci。
-# 想给覆盖率设下限，在最后一条后面加 --fail-under-lines N（N 是百分比）。
+# 要设覆盖率下限，在最后一条后面加 --fail-under-lines N（百分比）
 [group('check')]
 [doc('跑测试并生成覆盖率报告（lcov.info + 终端汇总）')]
 coverage: _generated-only _llvm-tools
@@ -167,7 +157,7 @@ coverage: _generated-only _llvm-tools
 coverage-html: _generated-only _llvm-tools
     cargo llvm-cov nextest --all-features --html --open
 
-# cargo-llvm-cov 需要的 llvm-tools 组件不在 rust-toolchain.toml 里，由覆盖率配方按需安装
+# cargo-llvm-cov 需要的组件，按需安装
 [private]
 _llvm-tools:
     rustup component add llvm-tools-preview
@@ -177,9 +167,7 @@ _llvm-tools:
 audit: _generated-only
     cargo deny check -A unmatched-bypass
 
-# CI 的 hack job 跑的就是它。--depth 2 限制组合爆炸。
-# 不能加 --locked：--no-dev-deps 会临时删掉 [dev-dependencies]，依赖图一变就要改 Cargo.lock。
-# 没有 [features] 也没有 optional 依赖时幂集只有一种组合，等于一次 cargo check，直接跳过。
+# --depth 2 限制组合数。不能加 --locked：--no-dev-deps 会改变依赖图，进而改写 Cargo.lock
 [group('check')]
 [doc('遍历 feature 幂集做检查（没有 feature 时跳过；需要 cargo-hack）')]
 hack: _generated-only
@@ -192,22 +180,18 @@ hack: _generated-only
     fi
     cargo hack --feature-powerset --depth 2 --no-dev-deps check
 
-# 不放进 `just ci`，两套 CI 里也没有对应的 job：cargo-machete 靠扫源码里的符号判断，
-# 只在宏里用到的依赖会被误报。误报时在 Cargo.toml 里加
-# [package.metadata.cargo-machete] ignored = [...] 放行。
+# 只在宏里用到的依赖会被误报，在 Cargo.toml 的 [package.metadata.cargo-machete] 里放行
 [group('check')]
 [doc('找出声明了却没被用到的依赖（需要 cargo-machete）')]
 unused: _generated-only
     cargo machete
 
-# 不放进 `just ci`：没有发过版（没有 v* tag）时无从比较。CI 的 semver job 跑的就是它。
 [group('check')]
 [doc('以最近的 v* tag 为基线检查公开 API 破坏性变更（仅纯库项目；需要 cargo-semver-checks）')]
 semver: _generated-only
     #!/usr/bin/env bash
     set -euo pipefail
-    # bin 项目的 lib target 只服务于自己的 main.rs 与集成测试，不参与 semver 检查；
-    # 项目确实要同时发布库和命令行时，把这段判断删掉。
+    # 同时对外发布库和命令行的 bin 项目，去掉这里的 main.rs 条件
     if [ ! -f src/lib.rs ] || [ -f src/main.rs ]; then
         echo "不是纯库项目，跳过 semver 检查"
         exit 0
@@ -219,9 +203,7 @@ semver: _generated-only
     echo "基线版本：$tag"
     cargo semver-checks --baseline-rev "$tag"
 
-# 把直接依赖解析到版本约束允许的最低版本（间接依赖仍取最新）再编译 lib，
-# 验证 Cargo.toml 里写的下限真的可用。解析要用 nightly cargo 的 -Zdirect-minimal-versions，
-# 结束后恢复原来的 Cargo.lock。CI 的 minimal-versions job 跑的就是它。
+# 直接依赖解析到约束允许的最低版本（间接依赖仍取最新）再编译，结束后恢复 Cargo.lock
 [group('check')]
 [doc('用依赖声明的最低版本编译 lib（仅纯库项目；需要 nightly 工具链）')]
 minimal-versions: _generated-only
@@ -243,9 +225,8 @@ minimal-versions: _generated-only
     cargo "+$nightly" update -Zdirect-minimal-versions
     CARGO_TARGET_DIR=target/minimal-versions cargo check --lib --all-features
 
-# nightly 项目上 MSRV 检查不适用，自动转去跑 `just nll`。CI 的 msrv job 跑的就是它。
 [group('check')]
-[doc('验证 Cargo.toml 里声明的 MSRV 真的能编译（nightly 项目改跑 nll）')]
+[doc('验证 Cargo.toml 声明的 MSRV 能编译（nightly 项目改跑 nll）')]
 msrv: _generated-only
     #!/usr/bin/env bash
     set -euo pipefail
@@ -262,9 +243,6 @@ msrv: _generated-only
     rustup toolchain install "$version" --profile minimal
     cargo "+$version" check --locked --all-targets --all-features
 
-# 用同一条 nightly 编译，但把借用检查器从 Polonius 换回 stable 的 NLL，
-# 拦下只有 nightly 编得过的代码。不放进 `just ci`（换 RUSTFLAGS 等于一次全量重编），
-# CI 的 msrv job 每次都会跑它。
 [group('check')]
 [doc('用 stable 的借用检查器（NLL）编一遍，拦下只有 nightly 编得过的代码')]
 nll: _generated-only
@@ -274,11 +252,10 @@ nll: _generated-only
         echo "工具链是 {{ channel }}，本来用的就是 NLL，无需检查"
         exit 0
     fi
-    # 换个 target 目录，避免和平时 `just check` 的产物互相顶掉
+    # 单独的 target 目录，不和平时的产物互相覆盖
     CARGO_TARGET_DIR=target/nll RUSTFLAGS=-Zpolonius=off \
         cargo check --locked --all-targets --all-features
 
-# 从 rustc-ice-*.txt 里摘出三处关键信息：panic 消息、产生它的编译器版本、query stack。
 [group('check')]
 [doc('解读 rustc-ice-*.txt：哪一版编译器崩的、崩在哪、下一步怎么办')]
 ice:
@@ -317,10 +294,7 @@ ice:
     echo ""
     echo "清理：rm -f rustc-ice-*.txt"
 
-# 确认 Cargo.lock 与 Cargo.toml 对得上。
-#
-# 下面 lint / test 用的命令不带 --locked，依赖对不上时它们会顺手改写 Cargo.lock 再继续，
-# 于是本地全绿、推上去 CI 却用提交里那份旧 lock 失败（CI 与 Dockerfile 全程 --locked）。
+# 检查 Cargo.lock 与 Cargo.toml 是否一致（本地的 lint / test 不带 --locked，会顺手改写它）
 [private]
 _lock-fresh: _generated-only
     #!/usr/bin/env bash
@@ -334,8 +308,7 @@ _lock-fresh: _generated-only
         exit 1
     fi
 
-# 覆盖 CI 里的 lint / test / deny 三个 job。
-# 不含 hack / msrv / nll / minimal-versions，它们各自是独立配方，CI 上照常会跑。
+# 不含 hack / msrv / semver / minimal-versions，它们在 CI 上单独跑
 [group('check')]
 [doc('本地跑一遍 CI 的主要检查（lint / test / audit）')]
 ci: _lock-fresh lint test audit
@@ -349,8 +322,7 @@ ci: _lock-fresh lint test audit
 update: _generated-only && audit
     cargo update
 
-# 只预演不写 Cargo.lock。约束内能升的显示为 Updating，
-# 要改 Cargo.toml 里的约束才能升的在行尾标 (available: vX.Y.Z)。
+# 约束内可升的显示为 Updating，要放宽约束才能升的在行尾标 (available: vX.Y.Z)
 [group('deps')]
 [doc('列出可升级的依赖（不改 Cargo.lock）')]
 outdated: _generated-only
@@ -368,8 +340,7 @@ changelog:
     # --offline: 只用 owner/repo 拼链接，不去调平台 API
     just _cliff --offline -o CHANGELOG.md
 
-# 内部配方：把 CHANGELOG 生成到指定版本，供 release.toml 的 pre-release-hook 调用。
-# cargo-release 预演时也会调用它（环境变量 DRY_RUN=true），这时不写文件。
+# 供 release.toml 的 pre-release-hook 调用；cargo-release 预演时（DRY_RUN=true）不写文件
 [private]
 _changelog-for version:
     #!/usr/bin/env bash
@@ -378,10 +349,10 @@ _changelog-for version:
         exit 0
     fi
     just _cliff --offline --tag "v{{ version }}" -o CHANGELOG.md
-    # cargo-release 只提交已跟踪的文件，首次发版生成的 CHANGELOG.md 要先纳入跟踪
+    # 首次生成的 CHANGELOG.md 要先纳入跟踪，才会进发版提交
     git add CHANGELOG.md
 
-# 内部配方：带上正确的平台变量调用 git-cliff，两个 changelog 配方共用
+# 按托管平台设好 GITHUB_REPO / GITLAB_REPO 再调用 git-cliff
 [private]
 _cliff *args:
     #!/usr/bin/env bash
@@ -398,18 +369,15 @@ _cliff *args:
     fi
 
 [group('release')]
-[doc('发版预演：跑全套检查 + 干跑一遍，看清楚会改什么。level: patch|minor|major')]
+[doc('发版预演：跑全套检查并干跑 cargo release。level: patch|minor|major')]
 release level="patch": ci
-    # 先干跑一遍确认改动符合预期，再真正执行
     cargo release {{ level }}
     @echo ""
     @echo "以上是预演结果。确认无误后执行："
     @echo "    just release-execute {{ level }}"
 
-# 这条不依赖 `ci`：正常流程是先 `just release` 预演（那一步已经跑过全套检查）。
-# 单独用它发版时请自己先跑一次 `just ci`。
 [group('release')]
-[doc('真正执行发版（跳过预演；请确保刚跑过 just release 或 just ci）')]
+[doc('执行发版（不跑检查，先用 just release 预演）')]
 release-execute level="patch": _generated-only
     cargo release {{ level }} --execute
 
@@ -417,8 +385,6 @@ release-execute level="patch": _generated-only
 # 初始化
 # ---------------------------------------------------------------------------
 
-# 刚 cargo generate 出来之后跑的第一条命令：生成 Cargo.lock（CI 与 Dockerfile
-# 全程用 --locked，缺了它第一次推送就会失败）并启用 git 钩子。
 [group('setup')]
 [doc('首次拉起项目：生成 Cargo.lock、启用 git 钩子')]
 bootstrap: _generated-only
@@ -450,9 +416,7 @@ doctor:
         missing=1
     }
 
-    # 校验 rust-toolchain.toml 是否还说了算：rustup 的目录 override 和
-    # RUSTUP_TOOLCHAIN 环境变量优先级都比它高，且完全静默。
-    # `rustup show active-toolchain` 会把生效原因写在括号里。
+    # 检查生效的工具链是否来自 rust-toolchain.toml（rustup 在括号里注明来源）
     active=$(rustup show active-toolchain 2>/dev/null || true)
     if [ -n "$active" ]; then
         echo "  实际生效的工具链: ${active}"
@@ -566,8 +530,7 @@ install-tools:
 # 生成本项目的模板地址，fork 了模板的话改成自己的；也可以临时指定：just template-sync ../rust-template
 template_source := "https://github.com/shiinazuki/rust-template"
 
-# 按 .config/template-values.toml 里记下的选项，用最新模板原地重新生成，结果直接写进工作区，
-# 由 git 挑选要保留的改动。模板删掉的文件不会被同步删除。需要 cargo-generate 0.24+。
+# 选项取自 .config/template-values.toml。模板删掉的文件不会被同步删除。需要 cargo-generate 0.24+
 [group('setup')]
 [doc('按生成时的选项用最新模板原地重新生成，再用 git 挑选要保留的改动')]
 template-sync source=template_source: _generated-only
@@ -590,9 +553,9 @@ template-sync source=template_source: _generated-only
     echo "  git add -p             挑出要保留的改动，再提交"
     echo "  git restore .          全部放弃"
 
-# 用 core.hooksPath 启用仓库里的 .githooks/，每个 clone 都要跑一次。
+# 每个 clone 都要跑一次
 [group('setup')]
-[doc('启用 git 钩子（commit-msg 校验提交信息 / pre-push 跑 just ci）')]
+[doc('启用 .githooks/ 里的 git 钩子')]
 hooks:
     #!/usr/bin/env bash
     set -euo pipefail

@@ -1,13 +1,7 @@
 # cargo-release 配置：https://github.com/crate-ci/cargo-release
-#   发布流程：just release            （默认 patch）
-#             just release minor
-#             just release major
+#   just release [patch|minor|major]   预演，确认后用 just release-execute 执行
 #
-# 文件里的 {{version}} 等是 cargo-release 的占位符，已在 cargo-generate.toml
-# 的 exclude 列表里，生成项目时不做变量替换。
-#
-# 只写与默认值不同的项。默认会先做发布校验（verify），打完 tag 后把提交与 tag
-# push 到 origin，CI 收到 tag 后创建 Release。
+# 只写与默认值不同的项。执行时打 tag 并推送到 origin，CI 收到 tag 后创建 Release。
 
 # 只允许在这些分支上发版
 allow-branch = ["main", "master"]
@@ -17,11 +11,8 @@ tag-name = "v{{version}}"
 tag-message = "chore(release): {{crate_name}} v{{version}}"
 pre-release-commit-message = "chore(release): v{{version}}"
 
-# 发版前用 git-cliff 把 CHANGELOG 更新到新版本号，改动一并进入发版提交。
-# 命令见 justfile 的 _changelog-for 配方。
+# 发版前更新 CHANGELOG 并纳入发版提交（justfile 的 _changelog-for）
 pre-release-hook = ["just", "_changelog-for", "{{version}}"]
 
-# 本地发版时不执行 cargo publish。
-# 发布到 crates.io 由 CI 那侧负责：GitHub 的 .github/workflows/release.yaml 里有
-# crates-io job，用仓库变量 PUBLISH_TO_CRATES_IO=true 打开，走 Trusted Publishing（OIDC）。
+# 不在本地 cargo publish；GitHub 上由 release.yaml 的 crates-io job 发布
 publish = false

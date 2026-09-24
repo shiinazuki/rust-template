@@ -1,14 +1,10 @@
 #!/usr/bin/env bash
-# 提交前的快速检查：格式化 / clippy / TOML / 拼写 / 私钥，只跑跟本次改动相关的项。
-# 测试与依赖审计在 pre-push（just ci）那一层。
-#
-# 检查的是工作区当前状态，不是暂存区快照。
+# 提交前的快速检查，只跑与本次改动相关的项；检查的是工作区，不是暂存区快照。
 #
 # 安装：just hooks        临时跳过：git commit --no-verify
 set -euo pipefail
 
-# 模板仓库自身跑不了 cargo（Cargo.toml 里还是占位符），直接放行。
-# 本文件不做 liquid 变量替换，下面这个占位符必须原样保留。
+# 模板仓库本身直接放行（本文件不做 liquid 替换，占位符原样保留）
 if grep -qF '{{ project-name }}' Cargo.toml 2>/dev/null; then
     exit 0
 fi
@@ -57,7 +53,7 @@ if touched '(Cargo\.(toml|lock)|deny\.toml)$'; then
 fi
 
 # --- 拼写 -------------------------------------------------------------------
-# typos 扫全仓只要几十毫秒，不按文件类型筛
+# 不按文件筛选，直接扫全仓
 if command -v typos >/dev/null 2>&1; then
     run "typos" typos
 fi

@@ -1,4 +1,4 @@
-# 排除构建上下文里用不到的文件，减小 docker build 的上下文体积。
+# 构建上下文里用不到的文件
 target/
 .git/
 .github/
@@ -6,7 +6,7 @@ target/
 .idea/
 .devcontainer/
 scripts/
-# 项目级 cargo 配置不带进容器（里面多是只在宿主机成立的设置）
+# 项目级 cargo 配置只用于宿主机
 .cargo/
 
 # 容器里用不到的开发期文件

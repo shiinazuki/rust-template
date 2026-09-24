@@ -19,8 +19,7 @@
 *.gz   binary
 *.wasm binary
 
-# 机器生成的文件：linguist-generated 让 GitHub 的 PR 页面默认折叠它们。
-# 不加 `-diff`，保证 `git diff Cargo.lock` 仍逐行可读。
+# 机器生成的文件，GitHub 的 PR 页面默认折叠（git diff 照常逐行显示）
 Cargo.lock   linguist-generated=true
 CHANGELOG.md linguist-generated=true
 

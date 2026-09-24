@@ -1,8 +1,4 @@
-# Docker 相关命令，由根 justfile 的 `import? 'docker.just'` 可选加载
-# （生成项目时没选 Docker，这个文件不存在，import? 静默跳过）。
-#
-# 本文件在 cargo-generate.toml 的 exclude 里，不做 liquid 替换，
-# 因此镜像名从 Cargo.toml 里读；`pkg` 定义在根 justfile 里，这边不要重复定义。
+# Docker 相关命令，由根 justfile 导入；镜像名用根 justfile 里的 `pkg`。
 
 version := `grep -m1 '^version' Cargo.toml | sed -E 's/.*"(.*)".*/\1/'`
 revision := `git rev-parse --short HEAD 2>/dev/null || echo unknown`
@@ -13,7 +9,7 @@ tag := "latest"
 docker-build:
     #!/usr/bin/env bash
     set -euo pipefail
-    # 先在宿主机确认 Cargo.lock 是最新的，容器里的 --locked 构建才不会白等
+    # 先在宿主机确认 Cargo.lock 是最新的
     cargo check --locked --quiet
     DOCKER_BUILDKIT=1 docker build \
         --build-arg VERSION="{{ version }}" \

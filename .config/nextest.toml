@@ -1,9 +1,6 @@
 # cargo-nextest 配置：https://nexte.st/docs/configuration/
-#   本地：just test                           （default profile）
-#   CI  ：NEXTEST_PROFILE=ci just coverage    （ci profile）
-#
-# 只写与默认值不同的项，默认值见
-# https://github.com/nextest-rs/nextest/blob/main/nextest-runner/default-config.toml
+# 本地 `just test` 用 default profile，CI 设 NEXTEST_PROFILE=ci。
+# 只写与默认值不同的项，默认值见 https://github.com/nextest-rs/nextest/blob/main/nextest-runner/default-config.toml
 
 # 低于这个版本直接报错（退出码 92）；global-timeout 需要 0.9.100+
 nextest-version = "0.9.100"
@@ -17,7 +14,7 @@ slow-timeout = { period = "30s", terminate-after = 4 }
 # bench.slow-timeout = { period = "5m" }
 # bench.global-timeout = "30m"
 
-# CI 专用 profile，默认继承 default，这里只写与 default 不同的项
+# CI 用的 profile，继承 default
 [profile.ci]
 # 用少量重试吸收 CI 上的偶发抖动，重试后通过的测试标记为 flaky 并单独列出
 retries = { backoff = "exponential", count = 2, delay = "1s", jitter = true }
@@ -28,7 +25,7 @@ fail-fast = false
 failure-output = "immediate-final"
 status-level = "retry"
 slow-timeout = { period = "60s", terminate-after = 3 }
-# 整轮测试的总闸，设得比 CI job 的 timeout-minutes 小一截，让 nextest 先超时并正常收尾
+# 整轮测试的超时，小于 CI job 的 timeout-minutes，让 nextest 先超时并输出报告
 global-timeout = "20m"
 
 # 输出 JUnit 报告（target/nextest/ci/junit.xml），默认只带失败测试的输出
@@ -38,8 +35,7 @@ path = "junit.xml"
 # report-skipped = "ignored"
 
 # ---------------------------------------------------------------------------
-# 测试分组：给共享资源（数据库、固定端口、同一个文件）的测试限制并发。
-# 声明一个并发上限为 1 的组，再按名字把相关测试划进去，取消注释即可用。
+# 测试分组：共享数据库、端口、文件的测试放进并发上限为 1 的组
 # ---------------------------------------------------------------------------
 
 # [test-groups.serial]
@@ -53,6 +49,3 @@ path = "junit.xml"
 # [[profile.default.overrides]]
 # filter = 'test(integration)'
 # slow-timeout = { period = "120s", terminate-after = 2 }
-
-# 本文件没用到的能力：跑测试前执行命令（setup scripts）、给测试进程套外壳（wrapper scripts），
-# 见 https://nexte.st/docs/configuration/setup-scripts/ 与 .../wrapper-scripts/

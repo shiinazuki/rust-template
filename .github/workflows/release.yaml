@@ -1,7 +1,6 @@
 name: release
 
-# 只有推 v* tag 时才跑，日常检查在 build.yaml 里。
-# 发布流程不使用任何编译缓存，每次从零构建。
+# 推 v* tag 时触发，不使用编译缓存
 on:
   push:
     tags:
@@ -16,21 +15,18 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  # 把 tag 指向的这个 commit 从零验证一遍（tag 可能打在任何 commit 上）。
+  # 从零验证 tag 指向的 commit
   verify:
     name: verify tagged commit
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # 顺便把「这仓库有没有 bin target」告诉下面的 binaries job：
-    # binaries 上不能写 job 级的 `if: hashFiles(...)`，理由见 build.yaml 的 detect job。
+    # 供 binaries job 的 if 判断
     outputs:
       is_bin: ${{ steps.probe.outputs.is_bin }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # 模板仓库本身不该走发版流程，这里提前报错拦下
-      # （build.yaml / audit.yaml 是自动触发，所以那两条选择跳过；打 tag 是人主动做的）。
       - name: Refuse to release the template repo itself
         run: |
           if grep -q '{%' Cargo.toml 2>/dev/null; then
@@ -44,10 +40,8 @@ jobs:
         uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5 # v2.87.19
         with:
           tool: just,cargo-nextest,cargo-deny,typos,taplo-cli
-      # 与 build.yaml 同一套检查（lint / test / audit），发版这条路径上不能比日常 CI 松
       - name: Lint, test and audit
         run: just ci
-      # 校验 tag 名与 Cargo.toml 里的版本一致
       - name: Tag matches Cargo.toml version
         env:
           TAG: ${{ github.ref_name }}
@@ -65,25 +59,22 @@ jobs:
           echo "is_bin=$is_bin" >> "$GITHUB_OUTPUT"
           echo "bin=$is_bin"
 
-  # 跨平台编译二进制（只有 bin 项目才跑），产物交给下面的 github-release job 统一发布。
-  # upload-rust-binary-action 一步完成编译、打包（Unix 出 .tar.gz、Windows 出 .zip）与
-  # sha256 校验和；dry-run 模式下只构建不上传。
+  # bin 项目：跨平台编译并打包（Unix 为 .tar.gz，Windows 为 .zip），附 sha256，
+  # 由 github-release job 统一发布；dry-run 只构建不上传
   binaries:
     name: binary (${{ matrix.target }})
-    # verify 必须列进 needs 才能读到它的 outputs
     needs: [verify]
     if: needs.verify.outputs.is_bin == 'true'
     permissions:
       contents: read
-      # 下面两项只有开了 provenance 签名（见本 job 末尾那一步）才用得上
+      # 下面两项供 provenance 签名使用
       id-token: write
       attestations: write
     strategy:
       fail-fast: false
       matrix:
         include:
-          # musl 的两个目标交给 cross 在容器里编，宿主机不用装交叉 linker；
-          # 静态链接的产物在任何 Linux 发行版（含 distroless / scratch）上都能跑。
+          # musl 目标用 cross 编译，产物静态链接
           - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
             build-tool: cross
@@ -125,14 +116,8 @@ jobs:
           locked: true
           dry-run: true
           dry-run-intended: true
-      # 构建来源证明（SLSA provenance）：由 GitHub 用一次性 OIDC 凭据在 Sigstore 上
-      # 签一份「这个文件由本仓库的哪个 workflow、哪个 commit 构建」，公开可验：
-      #     gh attestation verify <下载到的压缩包> --repo <owner>/<repo>
-      #
-      # 默认不启用：仓库 Settings → Secrets and variables → Actions → Variables
-      # 里加 ATTEST_BUILD_PROVENANCE=true 打开（私有 / internal 仓库需要 GitHub Enterprise）。
-      #
-      # tar 与 zip 只会有一个非空，`||` 取第一个非空值。
+      # 构建来源证明（SLSA provenance），验证：gh attestation verify <压缩包> --repo <owner>/<repo>
+      # 仓库变量 ATTEST_BUILD_PROVENANCE=true 时启用（私有仓库需要 GitHub Enterprise）
       - name: Attest build provenance
         if: vars.ATTEST_BUILD_PROVENANCE == 'true'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
@@ -148,8 +133,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  # 生成本次的变更说明，连同全部二进制一次性创建 GitHub Release。
-  # gh release create 带附件时先建草稿、传完附件再发布，兼容 immutable releases。
+  # 生成变更说明，连同全部二进制一次性创建 Release（兼容 immutable releases）
   github-release:
     name: github release
     needs: [verify, binaries]
@@ -195,12 +179,8 @@ jobs:
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag \
             --title "$TAG" --notes-file CHANGES.md "${flags[@]}" "${assets[@]}"
 
-  # 发布到 crates.io。默认不启用，在仓库
-  # Settings → Secrets and variables → Actions → Variables 里加 PUBLISH_TO_CRATES_IO=true 打开。
-  # release.toml 里还有一个 publish 开关，那个管本地发版，保持关闭，两个都开会发两次。
-  #
-  # 走 crates.io 的 Trusted Publishing（OIDC），仓库里不存长期 token；首次使用前
-  # 要在 crates.io 的 crate 设置页把「仓库 + workflow 文件名」登记为受信任发布者。
+  # 发布到 crates.io，仓库变量 PUBLISH_TO_CRATES_IO=true 时启用（release.toml 的 publish 保持关闭）。
+  # 走 Trusted Publishing：首次使用前在 crates.io 的 crate 设置页登记本仓库与 workflow 文件名。
   crates-io:
     name: publish to crates.io
     if: vars.PUBLISH_TO_CRATES_IO == 'true'
@@ -208,8 +188,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
-      # job 级 permissions 是整体替换而非追加，没列出的 scope 一律变成 none，
-      # 所以 contents: read 必须显式补上。
+      # job 级 permissions 整体替换顶层设置，contents: read 要显式写出
       contents: read
       id-token: write # 换取 crates.io 临时 token 所必需
     steps:

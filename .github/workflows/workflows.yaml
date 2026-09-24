@@ -32,9 +32,7 @@ jobs:
         uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5 # v2.87.19
         with:
           tool: zizmor
-      # actionlint 不在 install-action 的支持列表里（Go 写的，crates.io 上没有同名包），
-      # 这里自己取回官方预编译二进制、核对 sha256 再装。
-      # 版本要手工升级：dependabot 管不到 run: 里的版本号，
+      # 下载官方预编译二进制并校验 sha256。版本需手工升级，
       # 校验和取自 release 页的 actionlint_<版本>_checksums.txt。
       - name: Install actionlint
         env:
@@ -54,8 +52,7 @@ jobs:
           sudo install -m 0755 actionlint /usr/local/bin/actionlint
           rm -f "$tarball" actionlint
           actionlint --version
-      # --min-severity medium：低危项多是风格建议。想更严就去掉这个参数，
-      # 或加 --persona=pedantic。
+      # 只报中危及以上；更严可去掉该参数或加 --persona=pedantic
       - name: Audit GitHub Actions workflows and dependabot
         run: zizmor --min-severity medium --no-progress .github
       - name: Lint GitHub Actions workflows

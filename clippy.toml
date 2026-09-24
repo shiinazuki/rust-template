@@ -1,6 +1,6 @@
 # Clippy 的行为配置（lint 的开关在 Cargo.toml 的 [lints.clippy] 里）。
 
-# 放行测试代码里的 unwrap / expect / panic / dbg，单元测试和 tests/ 都覆盖
+# 测试代码（单元测试与 tests/）里放行 unwrap / expect / panic / dbg
 allow-unwrap-in-tests = true
 allow-expect-in-tests = true
 allow-panic-in-tests = true
@@ -24,13 +24,10 @@ doc-valid-idents = [
 # cognitive-complexity-threshold = 25
 
 # ---------------------------------------------------------------------------
-# 异步运行时下的阻塞 API 禁令
-#
-# 禁止误用 std 的阻塞式文件 / 进程 / sleep API，改用 tokio 的对应项。CI 用 `-D warnings`，
-# 确有必要时在那一处写 #[expect(clippy::disallowed_types, reason = "...")]。
+# 异步运行时下的阻塞 API 禁令：std 的文件 / 进程 / sleep API 改用 tokio 的对应项，
+# 确需同步调用时就地写 #[expect(clippy::disallowed_methods, reason = "...")]
 # ---------------------------------------------------------------------------{% if async_runtime %}
 
-# 每条把 std 的路径映射到 tokio 的替代品
 disallowed-types = [
   { path = "std::fs::DirBuilder", replacement = "tokio::fs::DirBuilder" },
   { path = "std::fs::DirEntry", replacement = "tokio::fs::DirEntry" },

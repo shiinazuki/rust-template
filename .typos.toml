@@ -14,8 +14,7 @@ extend-ignore-re = [
   "(?Rm)^.*(#|//)\\s*spellchecker:disable-line$",
 ]
 
-# 专有名词、缩写、人名的放行名单。
-# 格式为 "被识别成拼写错误的词" = "希望替换成的词"，两边写成一样即表示放行。
+# 放行的专有名词、缩写、人名，两边写同一个词
 [default.extend-words]
 # ba = "ba"
 

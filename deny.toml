@@ -1,14 +1,12 @@
-# cargo-deny 配置：依赖的安全公告、License 合规、重复版本与来源审计。
-#   just audit（本地与 CI 相同）
-#
-# 只写与默认值不同的项。完整字段与默认值见 https://embarkstudios.github.io/cargo-deny/
+# cargo-deny 配置：安全公告、License、重复版本与依赖来源。运行：just audit
+# 只写与默认值不同的项，完整字段见 https://embarkstudios.github.io/cargo-deny/
 
-# 默认检查所有平台的依赖；只面向少数平台时在这里列出，减少无关平台的告警
+# 只检查这些平台的依赖（默认所有平台）
 # [graph]
 # targets = ["x86_64-unknown-linux-gnu", "aarch64-apple-darwin", "x86_64-pc-windows-msvc"]
 
 # ---------------------------------------------------------------------------
-# 安全公告（RustSec advisory-db），公告库用系统 git 拉取，运行环境必须装有 git
+# 安全公告（RustSec advisory-db），用系统 git 拉取
 # ---------------------------------------------------------------------------
 [advisories]
 # 忽略特定公告，逐条写明 reason
@@ -16,7 +14,7 @@ ignore = [
   # { id = "RUSTSEC-0000-0000", reason = "只在 windows 上触发，本项目不支持 windows" },
   # { crate = "some-crate@0.1.1", reason = "上游还没发新版，已确认不走到受影响的代码路径" },
 ]
-# 「无人维护」只对本 workspace 的直接依赖判失败（默认 all，间接依赖也算）
+# 只对直接依赖判「无人维护」失败（默认 all）
 unmaintained = "workspace"
 # 用到已被 yank 的版本时判失败（默认 warn）
 yanked = "deny"
@@ -27,8 +25,7 @@ maximum-db-staleness = "P7D"
 # License 合规
 # ---------------------------------------------------------------------------
 [licenses]
-# 允许的 License（SPDX 标识符，见 https://spdx.org/licenses/）：
-# 一份对商业使用友好的宽松许可清单，不含 GPL / AGPL 这类传染性协议。
+# 允许的 License（SPDX 标识符）：宽松许可，不含 GPL / AGPL 等传染性协议
 allow = [
   "MIT",
   "Apache-2.0",
@@ -85,28 +82,20 @@ skip = [
 # 连同整棵子依赖树一起豁免：
 # skip-tree = [{ crate = "some-crate@1.0", depth = 20 }]
 
-# 约束 workspace 成员声明依赖的方式（版本统一在 [workspace.dependencies] 定，
-# 成员只写 `foo = { workspace = true }`），拆出子 crate 后才真正起作用。
+# 检查各成员是否用 `foo = { workspace = true }` 继承依赖版本
 [bans.workspace-dependencies]
 # path 依赖不参与重复声明检查
 include-path-dependencies = false
 # [workspace.dependencies] 里声明了却没人用时只警告（默认 deny），布局稳定后可删掉这行
 unused = "warn"
 
-# 扫描编译期执行的代码（build script 与 proc-macro）里夹带的可执行文件 / 脚本，整段不写则不扫。
-# 原生可执行文件默认就判失败；带 shebang 的脚本默认只提示，这里改成判失败。
+# 扫描带 build script 或 proc-macro 的包里夹带的可执行文件与脚本（整段不写则不扫），
+# 带 shebang 的脚本也判失败（默认只提示）
 [bans.build]
 interpreted = "deny"
 
-# 预置的放行项：这几个 crate 自带 build.rs 因而必被扫到，包里又躺着上游留下的
-# CI / 测试脚本。放行的是列出的这几个文件，它们的 build.rs 照常受检。
-#
-#   libc              etc/libc-util.py        维护者生成/比对 FFI 声明用
-#   blake3            .github/workflows/*.py  发版脚本；c/test.py 测 C 实现
-#   curve25519-dalek  tests/build_tests.sh    检查各 feature 组合能否编过
-#
-# 项目没用到其中某个依赖时会报 `warning[unmatched-bypass]`，所以 `just audit`
-# 带上了 `-A unmatched-bypass`。
+# 预置放行：这几个常见依赖的包里带有上游的 CI / 测试脚本，只放行列出的文件。
+# 没用到其中某个依赖时的 unmatched-bypass 警告由 `just audit` 的 -A 关掉。
 [[bans.build.bypass]]
 name = "libc"
 allow-globs = ["etc/*.py"]
@@ -126,8 +115,7 @@ allow-globs = ["tests/build_tests.sh"]
 # allow-globs = ["scripts/*.py"]
 # allow = [{ path = "bin/x86_64-linux", checksum = "<sha256>" }]
 
-# 找出已经被 std / core 吸收掉的 crates.io 依赖（如 lazy_static -> LazyLock），整段不写则跳过。
-# 默认只看本 workspace 的直接依赖，命中即判失败。
+# 直接依赖里有已被 std 取代的 crate（如 lazy_static -> LazyLock）时判失败，整段不写则不查
 [bans.std-replacements]
 # 给没声明 rust-version 的 crate 用的兜底版本，打开时要与 Cargo.toml 的 rust-version 一致
 # rust-version = "1.94"
@@ -144,8 +132,7 @@ allow-globs = ["tests/build_tests.sh"]
 # 依赖来源（默认只认 crates.io）
 # ---------------------------------------------------------------------------
 [sources]
-# 来自未知 registry / git 仓库的依赖直接判失败（默认 warn），
-# 确需引入时把地址加到下面的 allow-git，或按组织放行。
+# 未知 registry / git 来源判失败（默认 warn），需要时加进 allow-git 或 allow-org
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-git = [

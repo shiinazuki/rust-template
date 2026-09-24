@@ -1,17 +1,14 @@
 # 生成的项目自成一个 workspace root，不会被外层 workspace 接管。
 [workspace]
-# 拆分出子 crate（如 crates/core、crates/cli）时在这里登记，
-# 它们即可继承下面的 [workspace.package] / [workspace.dependencies] / [workspace.lints]。
+# 拆出的子 crate（如 crates/core）登记在这里，即可继承下面的 workspace.* 配置
 members = []
 resolver = "3"
 
 # --- 供所有成员继承的公共元数据 -------------------------------------------
-# 子 crate 写 `version.workspace = true` 之类即可继承。
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-# MSRV（最低支持版本）：低于它 cargo 直接报错，resolver 选依赖版本、clippy 给建议时也按它取舍。
-# `just msrv` 和 CI 的 msrv job 负责验证它属实。
+# MSRV（最低支持的 Rust 版本），依赖解析与 clippy 建议都参照它，由 `just msrv` 验证
 rust-version = "1.94"
 license = "{{ license }}"
 # 仓库地址，域名按 ci 选项推导（ci = none 时按 github 处理）。
@@ -68,10 +65,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 # 全部字段见 https://doc.rust-lang.org/cargo/reference/manifest.html
 
 # ---------------------------------------------------------------------------
-# Feature 开关
-#
-# 取消下面几行的注释后，CI 的 hack job（cargo hack --feature-powerset）
-# 才会真正逐个组合地检查各 feature。
+# Feature 开关：声明后 `just hack` 会逐个组合检查
 # ---------------------------------------------------------------------------
 # [features]
 # default = []
@@ -81,11 +75,8 @@ rustdoc-args = ["--cfg", "docsrs"]
 # ---------------------------------------------------------------------------
 # 依赖
 #
-# 版本只在下面的 [workspace.dependencies] 里写一次，[dependencies] / [dev-dependencies]
-# 以及将来拆出的子 crate 都只写 `foo = { workspace = true }` 继承它。
-#
-# 依赖登记进版本目录之后，`cargo add foo` 会自动写成继承形式，第二步不必手写。
-# 命令行别带版本号：`cargo add foo@1.2` 会退回具体版本，哪怕它和目录里的一模一样。
+# 版本只写在 [workspace.dependencies]，其余位置写 `foo = { workspace = true }` 继承。
+# 登记版本后 `cargo add foo` 自动写成继承形式；带版本号（foo@1.2）则写成具体版本。
 # ---------------------------------------------------------------------------
 
 [workspace.dependencies]
@@ -101,7 +92,7 @@ anyhow = "1"
 # anyhow 只给应用层用，见 src/main.rs{% endif %}
 
 [dependencies]
-# 本 crate 的运行时依赖写在这一段（到下一个 [ ] 表头为止）{% if async_runtime and crate_type == "bin" %}
+# 本 crate 的运行时依赖{% if async_runtime and crate_type == "bin" %}
 tokio = { workspace = true }
 # 入口是 #[tokio::main]，见 src/main.rs{% endif %}{% if logging and crate_type == "bin" %}
 tracing = { workspace = true }
@@ -138,8 +129,7 @@ codegen-units = 1
 strip = "debuginfo"
 # panic = "abort" # 二进制更小，但会禁用 unwind 并影响 #[should_panic] 测试
 
-# 性能分析（flamegraph / samply / instruments）用：cargo build --profile profiling
-# 优化级别与 release 一致，另带完整调试信息，采样结果能对应到源码行与内联函数
+# 性能分析用（cargo build --profile profiling）：release 的优化级别 + 完整调试信息
 [profile.profiling]
 inherits = "release"
 debug = true
@@ -167,12 +157,12 @@ strip = "none"
 # ---------------------------------------------------------------------------
 # 统一代码规范与 Clippy 约束
 #
-# 写在 [workspace.lints]，子 crate 用 `[lints] workspace = true` 继承同一套规则。
-# lint 组必须带 priority = -1，否则会覆盖后面单条 lint 的设置。
+# 子 crate 用 `[lints] workspace = true` 继承。
+# lint 组要带 priority = -1，单条 lint 的设置才能覆盖它。
 # ---------------------------------------------------------------------------
 
 [workspace.lints.rust]
-unsafe_code = "forbid" # 禁止 unsafe（确实需要时改成 "deny"，再按处 expect 并写明理由）
+unsafe_code = "forbid" # 确需 unsafe 时改成 "deny"，再逐处 #[expect]
 # 标识符里禁止非 ASCII 字符（拦同形字伪装，注释和字符串不受影响）
 non_ascii_idents = "deny"
 missing_debug_implementations = "warn"
@@ -203,12 +193,12 @@ closure_returning_async_block = "warn"
 # 按需打开的三条：
 #   trivial_casts           靠自动 coercion 就能完成的 cast
 #   single_use_lifetimes    只用了一次的生命周期参数（已知会在 derive 展开处误报）
-#   dead_code_pub_in_binary bin crate 里没被用到的 pub 项（rustc 1.97+，MSRV 低于它时 msrv 检查会报 unknown lint）
+#   dead_code_pub_in_binary bin crate 里没被用到的 pub 项（需要 MSRV ≥ 1.97）
 # trivial_casts = "warn"
 # single_use_lifetimes = "warn"
 # dead_code_pub_in_binary = "warn"
-# 仅 nightly（需 #![feature(unqualified_local_imports)]）：本 crate 内部的 use
-# 一律写成 self:: / super:: / crate:: 开头。
+# 仅 nightly（需 #![feature(unqualified_local_imports)]）：
+# crate 内部的 use 要以 self:: / super:: / crate:: 开头
 # unqualified_local_imports = "warn"
 # 强制公开 API 写文档注释，仅库项目打开
 missing_docs = "{% if crate_type == 'lib' %}warn{% else %}allow{% endif %}"
@@ -246,11 +236,10 @@ must_use_candidate = "allow"
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
 
-# 降噪：cargo 组里两条在默认状态下必然误伤的
-#
-# 要求 keywords / categories 齐全，而模板里这两项默认注释着（见 [package]）
+# 降噪：cargo 组里的两条
+# 要求 keywords / categories 等发布元数据齐全
 cargo_common_metadata = "allow"
-# 同一个 crate 出现多个版本，改由 deny.toml 的 [bans] multiple-versions 管
+# 同一 crate 的多个版本改由 deny.toml 的 [bans] 管
 multiple_crate_versions = "allow"
 
 # 测试里的 unwrap / expect / panic 由 clippy.toml 的 allow-*-in-tests 统一放行。
@@ -258,7 +247,7 @@ multiple_crate_versions = "allow"
 # 文档检查，本地 `cargo doc` 与编辑器里同样生效；CI 另有 RUSTDOCFLAGS="-D warnings"
 [workspace.lints.rustdoc]
 broken_intra_doc_links = "deny"
-# 没有 //! 头注释的 crate 在 docs.rs 上是一片空白
+# crate 根缺少 //! 文档
 missing_crate_level_docs = "warn"
 private_intra_doc_links = "warn"
 invalid_html_tags = "warn"

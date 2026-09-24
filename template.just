@@ -1,10 +1,5 @@
-# 模板仓库自己的维护命令。
-#
-# 本文件在 cargo-generate.toml 的 ignore 列表里，不会进入生成的项目；
-# 根 justfile 用 `import? 'template.just'` 可选加载。
-#
-# 模板仓库根目录跑不了 cargo（rust-toolchain.toml 里的 channel 是未替换的
-# `{{ toolchain }}`），所以下面的配方都不直接调 cargo，由 smoke.sh 先切到临时目录。
+# 模板仓库自己的维护命令，不进入生成的项目。
+# 模板根目录跑不了 cargo，需要编译的检查由 smoke.sh 在临时目录里生成项目后执行。
 
 [group('template')]
 [doc('自测：按矩阵生成项目并逐个跑检查（10 组，含 2 组 nightly、3 种协议）')]
@@ -27,7 +22,7 @@ template-lint:
     #!/usr/bin/env bash
     set -uo pipefail
     fail=0
-    # 校验模板里的十几个 TOML 仍是合法 TOML，即「liquid 标签只能锚在注释行行尾」那条约定
+    # 同时校验 liquid 标签没有破坏 TOML 语法
     echo "== taplo（TOML 排版与语法）=="
     if command -v taplo >/dev/null 2>&1; then
         taplo fmt --check || fail=1
@@ -60,7 +55,7 @@ template-lint:
     else
         echo "  - 未安装 shellcheck，跳过（brew install shellcheck）"
     fi
-    # 检查文档里的死链。刻意不放进 CI：lychee 要访问外网，容易随机误报。
+    # 文档死链检查，需要访问外网，只在本地跑
     echo "== lychee（文档链接）=="
     if command -v lychee >/dev/null 2>&1; then
         lychee --no-progress README.md _README.md '*.md' 'docs/*.md' || fail=1

@@ -1,15 +1,11 @@
-# taplo 的 TOML 格式化配置：https://taplo.tamasfe.dev/configuration/formatter-options.html
-#   格式化：just fmt
-#   只检查：just lint
-#
-# VSCode 的 even-better-toml 保存时也读这份配置。
+# taplo 的 TOML 格式化配置，`just fmt` 格式化、`just lint` 检查，编辑器的 even-better-toml 也读它
+# 选项见 https://taplo.tamasfe.dev/configuration/formatter-options.html
 
-# 排除不需要格式化的目录。taplo 不读 .gitignore，被忽略的目录也要写在这里；
-# .cargo-home 是 GitLab CI 放 CARGO_HOME 的位置，里面有依赖源码与 cargo 自己写的 TOML。
+# 不格式化的目录。taplo 不读 .gitignore；.cargo-home 是 GitLab CI 的 CARGO_HOME
 exclude = ["target/**", ".cargo-home/**"]
 
 [formatting]
-# 关掉行尾注释与键值的列对齐：CJK 宽度算法不一致会产生反复的无意义 diff
+# 不对齐行尾注释与键值（CJK 字符的宽度会算错）
 align_comments = false
 align_entries = false
 column_width = 100

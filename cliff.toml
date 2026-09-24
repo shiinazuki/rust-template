@@ -1,13 +1,9 @@
-# git-cliff ~ configuration file
-# https://git-cliff.org/docs/configuration
+# git-cliff 配置：https://git-cliff.org/docs/configuration
 #
-# 仓库地址由下面 body 里的 `repo_url` 按托管平台推导：
-#   - GitHub：`--github-repo owner/repo` 或环境变量 `GITHUB_REPO`
-#   - GitLab：`--gitlab-repo owner/repo` 或环境变量 `GITLAB_REPO`
-# 本地由 `just changelog` 识别 origin 后注入，CI 里由各自的流水线设置。
-# 自建 GitLab 需要把下面拼出的 gitlab.com 改成自己的域名。
+# 提交链接的仓库地址取自环境变量 GITHUB_REPO 或 GITLAB_REPO（owner/repo），
+# 由 `just changelog` 与 CI 设置。自建 GitLab 要把 body 里的 gitlab.com 换成自己的域名。
 #
-# 分组名里的 `<!-- N -->` 是排序用的隐藏前缀，渲染时被模板的 `striptags` 过滤掉。
+# 分组名里的 `<!-- N -->` 用于排序，渲染时被 striptags 去掉。
 
 [changelog]
 header = """
