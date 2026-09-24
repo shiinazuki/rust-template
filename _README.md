@@ -420,6 +420,7 @@ just docker-clean       # 删除本地镜像
 > CI/CD → Schedules 配一条每日定时流水线专门跑 `deny`（对应 GitHub 的 `audit.yaml`）。
 
 配套 cargo 工具用 cargo-binstall 下预编译二进制，并单独缓存 `.cargo-home/bin/`。
+release job 的 glab 镜像钉在具体版本上，没有自动升级，需要时手工改它的 `image`。
 {% endif %}{% if ci == "none" %}
 ## CI
 

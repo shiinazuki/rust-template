@@ -11,8 +11,8 @@
 # 由下面的 [conditional.'crate_type == ...'] 控制。
 
 [template]
-# 用到了 0.23 才有的 array 类型占位符与 conditional 能力
-cargo_generate_version = ">=0.23.0"
+# choices 的 { value, label } 写法需要 0.24
+cargo_generate_version = ">=0.24.0"
 
 # ---------------------------------------------------------------------------
 # exclude：文件照常复制到生成项目，但不做 liquid 变量替换
@@ -115,19 +115,31 @@ regex = "^[A-Za-z0-9][A-Za-z0-9._/-]{0,98}$"
 [placeholders.toolchain]
 type = "string"
 prompt = "Rust 工具链（写入 rust-toolchain.toml 的 channel）"
-choices = ["stable", "nightly"]
+# label 只用于交互提示；default、--define 与模板渲染用的都是 value
+choices = [
+  { value = "stable", label = "stable（默认）" },
+  { value = "nightly", label = "nightly（需要 #![feature(...)] 时选）" },
+]
 default = "stable"
 
 [placeholders.license]
 type = "string"
 prompt = "选择开源协议"
-choices = ["MIT", "Apache-2.0", "MIT OR Apache-2.0"]
+choices = [
+  { value = "MIT", label = "MIT" },
+  { value = "Apache-2.0", label = "Apache-2.0" },
+  { value = "MIT OR Apache-2.0", label = "MIT OR Apache-2.0（双协议，Rust 生态的常见做法）" },
+]
 default = "MIT"
 
 [placeholders.ci]
 type = "string"
 prompt = "CI 平台"
-choices = ["github", "gitlab", "none"]
+choices = [
+  { value = "github", label = "github（.github/：workflows + dependabot）" },
+  { value = "gitlab", label = "gitlab（.gitlab-ci.yml）" },
+  { value = "none", label = "none（不生成 CI 配置）" },
+]
 default = "github"
 
 [placeholders.docker]

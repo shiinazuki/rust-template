@@ -200,11 +200,13 @@ meta_variable_misuse = "warn"
 macro_use_extern_crate = "warn"
 # 返回 async 块的闭包，应直接写成 async 闭包
 closure_returning_async_block = "warn"
-# 按需打开的两条：
-#   trivial_casts        靠自动 coercion 就能完成的 cast
-#   single_use_lifetimes 只用了一次的生命周期参数（已知会在 derive 展开处误报）
+# 按需打开的三条：
+#   trivial_casts           靠自动 coercion 就能完成的 cast
+#   single_use_lifetimes    只用了一次的生命周期参数（已知会在 derive 展开处误报）
+#   dead_code_pub_in_binary bin crate 里没被用到的 pub 项（rustc 1.97+，MSRV 低于它时 msrv 检查会报 unknown lint）
 # trivial_casts = "warn"
 # single_use_lifetimes = "warn"
+# dead_code_pub_in_binary = "warn"
 # 仅 nightly（需 #![feature(unqualified_local_imports)]）：本 crate 内部的 use
 # 一律写成 self:: / super:: / crate:: 开头，配合 rustfmt 的 group_imports。
 # unqualified_local_imports = "warn"

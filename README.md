@@ -11,7 +11,7 @@
 
 ## 快速开始
 
-先装 cargo-generate（只需一次）：
+先装 cargo-generate（需要 0.24 及以上，旧版用同一条命令升级）：
 
 ```bash
 cargo install --locked cargo-generate
@@ -352,11 +352,13 @@ Use --allow-commands if you want to allow the template to run system commands
 
 ### 依赖的上游版本
 
-两处需要跟进：
+四处需要跟进：
 
 | 位置 | 形式 | 谁来更新 |
 | --- | --- | --- |
 | workflow 里的 action | commit hash + `# vX.Y.Z` 注释 | dependabot 每周一提 PR，模板仓库与生成项目都一样 |
+| workflow 里的 `ACTIONLINT_VERSION` | 版本号 + 两个架构的 sha256 | 手动，`build.yaml` 与 `template-ci.yaml` 两处一起改 |
+| `.gitlab-ci.yml` 的 release job 镜像 | `gitlab-org/cli` 的版本 tag | 手动 |
 | `Cargo.toml` 里可选依赖的版本 | caret 版本 | 手动，改动很少 |
 
 `.github/dependabot.yml` 会跟着模板一起进生成项目，但它同时也管着模板仓库自己，
