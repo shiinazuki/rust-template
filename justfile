@@ -15,17 +15,15 @@ repo_host := if origin_url =~ 'gitlab' { "gitlab" } else { if origin_url =~ 'git
 # 包名（本文件不做 liquid 替换，只能从 Cargo.toml 里读）
 pkg := `grep -m1 '^name' Cargo.toml | sed -E 's/.*"(.*)".*/\1/'`
 
-# 格式化该用哪条工具链，按 rust-toolchain.toml 的 channel 推导：
-#   nightly / nightly-YYYY-MM-DD  -> 就用它自己
-#   stable / 具体版本号           -> 退回 nightly（just install-tools 会装那份 rustfmt）
-# 读不到 rust-toolchain.toml 时落到 nightly。
-fmt_toolchain := ```
-    channel=$(grep -m1 '^channel' rust-toolchain.toml 2>/dev/null | sed -E 's/.*"([^"]+)".*/\1/')
-    case "$channel" in
-        nightly*) echo "$channel" ;;
-        *)        echo nightly ;;
-    esac
-```
+# rust-toolchain.toml 声明的 channel。两套 CI 与 git 钩子都调用本文件的配方，不再各自解析。
+channel := `grep -m1 '^channel' rust-toolchain.toml 2>/dev/null | sed -E 's/.*"([^"]+)".*/\1/' || true`
+
+# 格式化用的工具链：channel 是 nightly / nightly-YYYY-MM-DD 时用它自己，
+# 否则退回 nightly（由 `just install-rustfmt` 安装）
+fmt_toolchain := if channel =~ '^nightly' { channel } else { "nightly" }
+
+# CI 环境（GitHub / GitLab 都会设 CI）里给 cargo 命令加 --locked；本地由 `just ci` 的 _lock-fresh 把关
+locked := if env("CI", "") == "" { "" } else { "--locked" }
 
 # 列出所有可用命令
 default:
@@ -133,31 +131,40 @@ clean: _generated-only
 # 检查
 # ---------------------------------------------------------------------------
 
-# 与 CI 的 lint job 一一对应，最后一条把 rustdoc 的警告也升级成错误
+# 两套 CI 的 lint job 直接跑这条，最后一条把 rustdoc 的警告也升级成错误
 [group('check')]
-[doc('格式化检查 / TOML 排版 / clippy / 拼写检查 / 文档警告（与 CI 的 lint job 等价）')]
+[doc('格式化检查 / TOML 排版 / clippy / 拼写检查 / 文档警告（CI 的 lint job 跑的就是它）')]
 lint: _generated-only
     cargo +{{ fmt_toolchain }} fmt --all -- --check
     taplo fmt --check
-    cargo clippy --all-targets --all-features -- -D warnings
+    cargo clippy {{ locked }} --all-targets --all-features -- -D warnings
     typos
-    RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features --document-private-items
+    RUSTDOCFLAGS="-D warnings" cargo doc {{ locked }} --no-deps --all-features --document-private-items
 
 [group('check')]
 [doc('运行测试（含 doctest）')]
-test: _generated-only
+test: _generated-only && doctest
+    cargo nextest run {{ locked }} --all-targets --all-features
+
+# nextest 不跑 doctest
+[group('check')]
+[doc('运行文档测试（没有 lib target 时跳过）')]
+doctest: _generated-only
     #!/usr/bin/env bash
     set -euo pipefail
-    cargo nextest run --all-targets --all-features
-    # nextest 不跑 doctest，有 lib target 时补一次
     if [ -f src/lib.rs ]; then
-        cargo test --doc --all-features
+        cargo test {{ locked }} --doc --all-features
     fi
 
+# 跑一遍测试，从同一份数据出 lcov 与汇总；CI 的 test job 另设 NEXTEST_PROFILE=ci。
+# 想给覆盖率设下限，在最后一条后面加 --fail-under-lines N（N 是百分比）。
 [group('check')]
-[doc('生成覆盖率报告（lcov.info）')]
+[doc('跑测试并生成覆盖率报告（lcov.info + 终端汇总）')]
 coverage: _generated-only
-    cargo llvm-cov nextest --all-features --lcov --output-path lcov.info
+    cargo llvm-cov clean --workspace
+    cargo llvm-cov --no-report nextest {{ locked }} --all-features
+    cargo llvm-cov report --lcov --output-path lcov.info
+    cargo llvm-cov report --summary-only
 
 [group('check')]
 [doc('生成 HTML 覆盖率报告并在浏览器里打开')]
@@ -169,10 +176,19 @@ coverage-html: _generated-only
 audit: _generated-only
     cargo deny check -A unmatched-bypass
 
-# 与 CI 的 hack job 等价：逐个 feature 组合做检查，--depth 2 限制组合爆炸
+# CI 的 hack job 跑的就是它。--depth 2 限制组合爆炸。
+# 不能加 --locked：--no-dev-deps 会临时删掉 [dev-dependencies]，依赖图一变就要改 Cargo.lock。
+# 没有 [features] 也没有 optional 依赖时幂集只有一种组合，等于一次 cargo check，直接跳过。
 [group('check')]
-[doc('遍历 feature 幂集做检查（需要 cargo-hack）')]
+[doc('遍历 feature 幂集做检查（没有 feature 时跳过；需要 cargo-hack）')]
 hack: _generated-only
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! find . -name Cargo.toml -not -path './target/*' \
+        -exec grep -qE '^\[features\]|^[^#]*optional *= *true' {} +; then
+        echo "没有声明 feature，跳过幂集检查"
+        exit 0
+    fi
     cargo hack --feature-powerset --depth 2 --no-dev-deps check
 
 # 不放进 `just ci`，两套 CI 里也没有对应的 job：cargo-machete 靠扫源码里的符号判断，
@@ -183,9 +199,9 @@ hack: _generated-only
 unused: _generated-only
     cargo machete
 
-# 同样不放进 `just ci`：要和已发布的版本比对，本地没网或没发布过时没意义。
+# 不放进 `just ci`：没有发过版（没有 v* tag）时无从比较。CI 的 semver job 跑的就是它。
 [group('check')]
-[doc('检查公开 API 有没有破坏性变更（仅纯库项目；需要 cargo-semver-checks）')]
+[doc('以最近的 v* tag 为基线检查公开 API 破坏性变更（仅纯库项目；需要 cargo-semver-checks）')]
 semver: _generated-only
     #!/usr/bin/env bash
     set -euo pipefail
@@ -195,18 +211,22 @@ semver: _generated-only
         echo "不是纯库项目，跳过 semver 检查"
         exit 0
     fi
-    cargo semver-checks
+    if ! tag=$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null); then
+        echo "还没有 v* tag，跳过 semver 检查"
+        exit 0
+    fi
+    echo "基线版本：$tag"
+    cargo semver-checks --baseline-rev "$tag"
 
-# nightly 项目上 MSRV 检查不适用，自动转去跑 `just nll`。
+# nightly 项目上 MSRV 检查不适用，自动转去跑 `just nll`。CI 的 msrv job 跑的就是它。
 [group('check')]
 [doc('验证 Cargo.toml 里声明的 MSRV 真的能编译（nightly 项目改跑 nll）')]
 msrv: _generated-only
     #!/usr/bin/env bash
     set -euo pipefail
-    channel=$(grep -m1 '^channel' rust-toolchain.toml | sed -E 's/.*"([^"]+)".*/\1/')
     version=$(grep -m1 '^rust-version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/' || true)
-    if [ "${channel#nightly}" != "$channel" ]; then
-        echo "工具链是 ${channel}：MSRV 检查不适用，改跑 NLL 兜底检查"
+    if [[ "{{ channel }}" == nightly* ]]; then
+        echo "工具链是 {{ channel }}：MSRV 检查不适用，改跑 NLL 兜底检查"
         exec just nll
     fi
     if [ -z "$version" ]; then
@@ -225,9 +245,8 @@ msrv: _generated-only
 nll: _generated-only
     #!/usr/bin/env bash
     set -euo pipefail
-    channel=$(grep -m1 '^channel' rust-toolchain.toml | sed -E 's/.*"([^"]+)".*/\1/')
-    if [ "${channel#nightly}" = "$channel" ]; then
-        echo "工具链是 ${channel}，本来用的就是 NLL，无需检查"
+    if [[ "{{ channel }}" != nightly* ]]; then
+        echo "工具链是 {{ channel }}，本来用的就是 NLL，无需检查"
         exit 0
     fi
     # 换个 target 目录，避免和平时 `just check` 的产物互相顶掉
@@ -248,7 +267,7 @@ ice:
         echo "  所以 git status 干净不代表没有——用这条配方看，别看 git。）"
         exit 0
     fi
-    channel=$(grep -m1 '^channel' rust-toolchain.toml 2>/dev/null | sed -E 's/.*"([^"]+)".*/\1/')
+    channel="{{ channel }}"
     echo "发现 ${#dumps[@]} 个 ICE 转储；rust-toolchain.toml 声明的 channel：${channel:-（读不到）}"
     echo ""
     for f in "${dumps[@]}"; do
@@ -302,9 +321,8 @@ ci: _lock-fresh lint test audit
 
 [group('deps')]
 [doc('按 Cargo.toml 的版本约束升级 Cargo.lock')]
-update: _generated-only
+update: _generated-only && audit
     cargo update
-    cargo deny check -A unmatched-bypass
 
 [group('deps')]
 [doc('列出可升级的依赖（需要 cargo-outdated）')]
@@ -398,10 +416,9 @@ doctor:
         echo "  ✗ 未找到 rustup（https://rustup.rs）"
         exit 1
     fi
-    channel=$(grep -m1 '^channel' rust-toolchain.toml | sed -E 's/.*"([^"]+)".*/\1/')
-    echo "  rust-toolchain.toml 声明的 channel: ${channel}"
+    echo "  rust-toolchain.toml 声明的 channel: {{ channel }}"
     rustc --version 2>/dev/null | sed 's/^/  /' || {
-        echo "  ✗ 工具链 ${channel} 尚未安装 -> rustup toolchain install"
+        echo "  ✗ 工具链 {{ channel }} 尚未安装 -> rustup toolchain install"
         missing=1
     }
 
@@ -443,7 +460,7 @@ doctor:
     if rustup component list --toolchain '{{ fmt_toolchain }}' --installed 2>/dev/null | grep -q '^rustfmt'; then
         echo "  ✓ rustfmt ({{ fmt_toolchain }})"
     else
-        echo "  ✗ rustfmt ({{ fmt_toolchain }}) -> just install-tools"
+        echo "  ✗ rustfmt ({{ fmt_toolchain }}) -> just install-rustfmt"
         missing=1
     fi
 
@@ -474,7 +491,7 @@ doctor:
     fi
 
     echo "== 可选 =="
-    for t in cargo-binstall cargo-flamegraph docker; do
+    for t in cargo-binstall cargo-generate cargo-flamegraph docker; do
         command -v "$t" >/dev/null 2>&1 \
             && echo "  ✓ ${t}" \
             || echo "  - ${t}（未安装，非必需）"
@@ -518,13 +535,45 @@ install-tools:
         echo ""
         cargo install --locked "${tools[@]}"
     fi
-    # channel 本身是 nightly 时，rust-toolchain.toml 的 components 里已经带了 rustfmt，
-    # 只有非 nightly 才需要额外装一份。
-    channel=$(grep -m1 '^channel' rust-toolchain.toml 2>/dev/null | sed -E 's/.*"([^"]+)".*/\1/')
-    if [ "${channel#nightly}" = "$channel" ]; then
-        # --allow-downgrade：当天 nightly 缺 rustfmt 组件时自动退回最近一个齐全的版本
+    just install-rustfmt
+
+# channel 本身是 nightly 时，rust-toolchain.toml 的 components 里已经带了 rustfmt。
+# --allow-downgrade：当天 nightly 缺 rustfmt 组件时自动退回最近一个齐全的版本。
+[group('setup')]
+[doc('安装格式化用的 nightly rustfmt（channel 是 nightly 时无需安装）')]
+install-rustfmt:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ "{{ channel }}" != nightly* ]]; then
         rustup toolchain install nightly --allow-downgrade --profile minimal --component rustfmt
     fi
+
+# 生成本项目的模板地址，fork 了模板的话改成自己的；也可以临时指定：just template-sync ../rust-template
+template_source := "https://github.com/shiinazuki/rust-template"
+
+# 按 .config/template-values.toml 里记下的选项，用最新模板原地重新生成，结果直接写进工作区，
+# 由 git 挑选要保留的改动。模板删掉的文件不会被同步删除。需要 cargo-generate 0.24+。
+[group('setup')]
+[doc('按生成时的选项用最新模板原地重新生成，再用 git 挑选要保留的改动')]
+template-sync source=template_source: _generated-only
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ -n "$(git status --porcelain)" ]; then
+        echo "✗ 工作区有未提交的改动，先提交或 stash：重新生成后要靠 git diff 区分模板带来的改动。" >&2
+        exit 1
+    fi
+    kind=$([ -f src/main.rs ] && echo bin || echo lib)
+    if [ -d "{{ source }}" ]; then from=--path; else from=--git; fi
+    # 丢掉 stdout：post-script 打印的是新项目的上手步骤，这里用不上
+    cargo generate "$from" "{{ source }}" --name "{{ pkg }}" "--$kind" --silent \
+        --values-file .config/template-values.toml --init --overwrite >/dev/null
+    git status --short
+    echo ""
+    echo "接下来："
+    echo "  git diff               逐个看模板带来的改动"
+    echo "  git restore src tests  丢掉对业务代码的覆盖（其它被覆盖的文件同理）"
+    echo "  git add -p             挑出要保留的改动，再提交"
+    echo "  git restore .          全部放弃"
 
 # 用 core.hooksPath 启用仓库里的 .githooks/，每个 clone 都要跑一次。
 [group('setup')]
@@ -532,20 +581,6 @@ install-tools:
 hooks:
     #!/usr/bin/env bash
     set -euo pipefail
-    # 清理早期版本用 pre-commit 装进 .git/hooks/ 的脚本：它们写死了已不存在的
-    # --config=.pre-commit-config.yaml，会在每次 commit 时报错。
-    # 只删自报家门的那些（文件头有 pre-commit 的生成标记），手写的钩子不动。
-    for h in pre-commit commit-msg pre-push post-commit post-checkout post-merge; do
-        f=".git/hooks/$h"
-        if [ -f "$f" ] && grep -q "File generated by pre-commit" "$f" 2>/dev/null; then
-            rm -f "$f"
-            echo "  已清理遗留的 pre-commit 钩子：$f"
-            # pre-commit 安装时会把原有的同名钩子改名备份成 .legacy
-            if [ -f "$f.legacy" ]; then
-                echo "  ⚠️ 发现 $f.legacy（pre-commit 当初备份的旧钩子），保留着，需要的话自己看一眼"
-            fi
-        fi
-    done
     # cargo-generate 不保证保留可执行位，这里补一次
     chmod +x .githooks/*
     git config core.hooksPath .githooks

@@ -29,9 +29,6 @@ profile = "minimal"
 # 格式化用的工具链从上面的 channel 推导，不写死 `+nightly`：
 #   channel = "nightly" / "nightly-<日期>"   -> 用这条工具链自身
 #   channel = "stable" / "1.85.0"            -> 退回 nightly，需另装一份 nightly 的 rustfmt
-#       rustup toolchain install nightly --allow-downgrade --profile minimal --component rustfmt
-#     （`just install-tools` 会装，`just doctor` 会检查）
+#     （`just install-rustfmt` 会装，`just doctor` 会检查）
 #
-# 三处实现规则一致：justfile 顶部的 `fmt_toolchain` 变量、
-# .github/workflows/{build,release}.yaml 的 "Resolve rustfmt toolchain" 步骤、
-# .gitlab-ci.yml 的 lint job。
+# 规则只实现在 justfile 顶部的 `fmt_toolchain` 变量里，两套 CI 与 git 钩子都从那里取。

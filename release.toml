@@ -5,6 +5,9 @@
 #
 # 文件里的 {{version}} 等是 cargo-release 的占位符，已在 cargo-generate.toml
 # 的 exclude 列表里，生成项目时不做变量替换。
+#
+# 只写与默认值不同的项。默认会先做发布校验（verify），打完 tag 后把提交与 tag
+# push 到 origin，CI 收到 tag 后创建 Release。
 
 # 只允许在这些分支上发版
 allow-branch = ["main", "master"]
@@ -18,17 +21,7 @@ pre-release-commit-message = "chore(release): v{{version}}"
 # 命令见 justfile 的 _changelog-for 配方。
 pre-release-hook = ["just", "_changelog-for", "{{version}}"]
 
-# 打完 tag 后自动 push 提交和 tag，CI 收到 tag 后创建 Release
-push = true
-push-remote = "origin"
-
 # 本地发版时不执行 cargo publish。
 # 发布到 crates.io 由 CI 那侧负责：GitHub 的 .github/workflows/release.yaml 里有
 # crates-io job，用仓库变量 PUBLISH_TO_CRATES_IO=true 打开，走 Trusted Publishing（OIDC）。
 publish = false
-
-# 发版前做一次发布校验
-verify = true
-
-sign-commit = false
-sign-tag = false

@@ -1,0 +1,12 @@
+# 生成本项目时的选项，`just template-sync` 按它用最新模板原地重新生成。
+# 改这里的值再 sync，就能在已有项目上打开某个开关；关掉开关不会删除已经生成的文件。
+[values]
+description = "{{ description }}"
+repo-owner = "{{ repo-owner }}"
+toolchain = "{{ toolchain }}"
+license = "{{ license }}"
+ci = "{{ ci }}"
+docker = "{{ docker }}"
+async_runtime = "{{ async_runtime }}"
+error_handling = "{{ error_handling }}"
+logging = "{{ logging }}"

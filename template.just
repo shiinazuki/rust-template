@@ -63,7 +63,7 @@ template-lint:
     # 检查文档里的死链。刻意不放进 CI：lychee 要访问外网，容易随机误报。
     echo "== lychee（文档链接）=="
     if command -v lychee >/dev/null 2>&1; then
-        lychee --no-progress README.md _README.md '*.md' || fail=1
+        lychee --no-progress README.md _README.md '*.md' 'docs/*.md' || fail=1
     else
         echo "  - 未安装 lychee，跳过（cargo binstall lychee）"
     fi

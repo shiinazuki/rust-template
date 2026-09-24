@@ -1,0 +1,414 @@
+# 开发指南
+
+## 开发环境
+
+### Rust 工具链
+
+工具链由 [`rust-toolchain.toml`](../rust-toolchain.toml) 固定为 {{ toolchain }}，首次进入目录时
+rustup 自动安装。这个文件会覆盖 rustup 的全局默认工具链，在本项目目录内一律以它为准。
+
+同时会装上 `rustfmt`、`clippy`、`rust-src`（rust-analyzer 解析标准库要用）和
+`llvm-tools-preview`（覆盖率要用）。`rust-analyzer`、`miri`、交叉编译 target 等可选项
+在该文件里以注释列出，按需打开。
+
+[`rustfmt.toml`](../rustfmt.toml) 用到了 `imports_granularity`、`group_imports`、`wrap_comments`
+等 unstable 选项，只有 nightly 的 rustfmt 才认（stable 会静默忽略），所以格式化一律走
+`just fmt` / `just lint`，不要手写 `cargo fmt`。
+{% if toolchain == "stable" %}
+本项目跑在 stable 上，需要额外装一次 nightly 的 rustfmt：`just install-rustfmt`
+（`just install-tools` 会顺带装，`just doctor` 会检查它在不在）。
+{% else %}
+本项目本身就跑在 nightly 上，格式化用的就是同一条工具链，不需要额外安装。
+
+nightly 滚动更新，偶尔会缺 `rustfmt` / `clippy` 组件，或者 clippy 新增的 lint 让 CI 的
+`-D warnings` 突然挂掉。前者加 `--allow-downgrade` 重装即可，后者把 `channel` 钉成日期版本，
+例如 `channel = "nightly-2026-08-18"`。
+
+钉日期版本不需要改任何格式化命令：`just fmt` / `just lint` 从 `channel` 推导该用哪条工具链
+（见 justfile 顶部的 `fmt_toolchain`），两套 CI 与 git 钩子调的也是它。也不要手写 `cargo +nightly fmt`，
+钉了日期之后 `+nightly` 指的是另一条工具链，排版可能不同。
+{% endif %}
+### 编译器自己崩了（ICE）怎么办
+
+`error: internal compiler error` 加上工作目录里的 `rustc-ice-*.txt`，说明是编译器崩了，
+不是你的代码有语法或类型错误。先跑：
+
+```bash
+just ice
+```
+
+它从几百行栈回溯里摘出三样东西：panic 消息、产生它的编译器版本、崩溃时的 query stack。
+把版本那一行和 `rust-toolchain.toml` 里的 `channel` 对一下：对不上说明工具链配置没生效
+（跑 `just doctor` 会点出来）；对得上就是这一版编译器崩了，照 query stack 找到那个
+函数 / 类型换个写法，或把 `channel` 钉到前几天的 nightly。
+
+⚠️ `.gitignore` 挡住了 `rustc-ice-*.txt`，所以 `git status` 干净不代表没有转储，用 `just ice` 看。
+
+### MSRV
+
+`Cargo.toml` 里的 `rust-version` 声明了最低支持版本，它只是下限，用更新的 stable
+或 nightly 编译都没问题。
+
+默认取 `1.94`——大致是当前 stable 往回数 4 个版本（约半年），而不是 edition 2024 的
+地板值 1.85。配上 `resolver = "3"` 与 `.cargo/config.toml` 的
+`incompatible-rust-versions = "fallback"`，依赖的新版本一旦把 `rust-version` 抬到你的
+MSRV 以上，resolver 会一声不吭地退回旧版本，而安全补丁往往就在新版本里。
+`time` 的 RUSTSEC-2026-0009 补在 0.3.47（要求 rustc 1.88）：
+
+| `rust-version` | resolver 选中的 `time` | `just audit` |
+| --- | --- | --- |
+| `1.85` | 0.3.45（有漏洞） | FAILED |
+| `1.94` | 0.3.55 | 通过 |
+
+两种情况下 `cargo build` 都一路绿灯，只有 `just audit` 能发现。要支持更老的 rustc 就往下调，
+但别低到某个依赖的地板以下；再撞上同类问题时优先抬 `rust-version`，而不是在 `deny.toml`
+里 ignore 掉告警。
+{% if toolchain == "stable" %}
+`just msrv` 和 CI 的 msrv job 会真的用那个版本编译一遍来验证声明属实。
+{% else %}
+nightly 项目上 MSRV 检查不适用（代码里可能有 `#![feature(...)]`，那在任何 stable 上都编不过），
+`just msrv` 和 CI 的 msrv job 会自动转去跑 `just nll`。
+
+### nightly 的借用检查器比 stable 宽
+
+`nightly-2026-08-06` 及之后默认启用了新一代借用检查器 Polonius，它比 stable 的 NLL
+接受更多合法程序。最典型的是「条件返回一个借用，之后再可变借用同一个值」：
+
+```rust
+fn get_or_insert(map: &mut HashMap<u32, String>) -> &String {
+    if let Some(v) = map.get(&22) {
+        return v; // stable 认为这个借用一直活到函数结束
+    }
+    map.insert(22, String::from("hi")); // 于是这里报 E0502
+    &map[&22]
+}
+```
+
+这段代码在 nightly 上编得过，在 stable 上编不过。分界线是 `nightly-2026-08-05` 及更早
+用的还是 NLL。
+
+这个差异没有任何显式标记：没有属性、没有 lint、连 warning 都没有。
+
+`just nll` 用同一条 nightly 编译，只把借用检查器换回 NLL（`-Zpolonius=off`）拦下这类代码。
+CI 的 msrv job 每次都会跑它；本地在动过生命周期相关的代码之后手动跑一次即可（它换了
+`RUSTFLAGS`，等于一次全量重编，所以没进 `just ci`）。Polonius 进 stable 后这一节可以删掉。
+{% endif %}
+### 配套工具
+
+先装 [just](https://github.com/casey/just)（命令入口，见 [`justfile`](../justfile)），
+再让它把剩下的装齐：
+
+```bash
+cargo install just
+just install-tools
+just doctor          # 确认真的都装上了
+```
+
+`install-tools` 会优先用 [cargo-binstall](https://github.com/cargo-bins/cargo-binstall)
+下载预编译二进制（从源码编译一遍要十几分钟，binstall 只要几十秒），建议先装上它：
+
+```bash
+cargo install cargo-binstall
+```
+
+装的是这些（也可以按需逐个 `cargo install --locked <名字>`）：
+
+| 工具 | 用途 |
+| --- | --- |
+| `cargo-nextest` | 测试运行器（比 `cargo test` 快，输出也更清楚） |
+| `cargo-deny` | 依赖安全公告与 License 检查 |
+| `cargo-llvm-cov` | 覆盖率 |
+| `cargo-release` | 发版 |
+| `cargo-outdated` | 检查依赖是否有新版本 |
+| `cargo-machete` | 找出声明了却没用到的依赖 |
+| `cargo-semver-checks` | 公开 API 的破坏性变更检查 |
+| `cargo-hack` | feature 幂集检查 |
+| `typos-cli` | 拼写检查 |
+| `taplo-cli` | TOML 格式化与检查（rustfmt 只管 `.rs`） |
+| `git-cliff` | 生成 CHANGELOG |
+| `bacon` | 后台实时监控 |
+
+### git 钩子
+
+```bash
+just hooks
+```
+
+钩子脚本在 [`.githooks/`](../.githooks/) 里，`just hooks` 把 `core.hooksPath` 指过去
+（每个 clone 都要跑一次）：
+
+| 钩子 | 作用 | 大概耗时 |
+| --- | --- | --- |
+| `pre-commit` | 按**本次改动的文件类型**跑快速检查：`.rs` → rustfmt + clippy；`.toml` → taplo；`Cargo.toml` / `Cargo.lock` / `deny.toml` → cargo-deny；外加拼写与私钥检测 | 秒级 |
+| `commit-msg` | 校验 Conventional Commits —— CHANGELOG 分组与 cargo-release 的版本推导都依赖它 | 瞬间 |
+| `pre-push` | 跑一遍 `just ci`（lint / test / audit） | 十几秒起 |
+
+三层越往后越全也越慢：`pre-commit` 只跑秒级检查，提交到一半的活儿也该能存档；
+`cargo deny` 只在依赖真可能变了时才跑（它要解析整棵依赖树）；`pre-push` 才是真正的闸门，
+全量检查没过就推不出去。
+
+> `pre-commit` 检查的是工作区当前状态，不是暂存区快照。`git commit -a` 下两者一致；
+> 用 `git add -p` 做部分暂存时，未暂存的改动也会被算进来。
+
+临时跳过：`git commit --no-verify` / `git push --no-verify`。
+停用：`git config --unset core.hooksPath`。
+
+### 容器里开发（可选）
+
+[`.devcontainer/`](../.devcontainer/) 里有一份 Dev Container 配置，VS Code 的
+Dev Containers 插件或 GitHub Codespaces 可以直接用，省掉本机装工具链的过程。
+
+## 常用命令
+
+`just` 不带参数会列出全部命令，那份清单直接来自 [`justfile`](../justfile) 里每条配方的
+`[doc]` 标注，是唯一权威的一份。日常最常用的是这些：
+
+```bash
+just                 # 列出全部命令
+just doctor          # 环境体检：缺什么、怎么装
+just dev             # bacon 实时监控，边写边重跑 clippy
+just check           # 快速检查编译
+just fmt             # 格式化 .rs（nightly rustfmt）与 .toml（taplo）
+just fix             # clippy --fix 自动修复 + 格式化
+just test            # 运行测试（含 doctest）
+just lint            # 格式化检查 + clippy + typos + 文档警告
+just ci              # 本地跑一遍 CI 的主要检查（lint / test / audit）
+
+just release minor          # 发版预演：跑全套检查 + 干跑，不改动任何东西
+just release-execute minor  # 真正发版：抬版本号 + CHANGELOG + tag + 推送
+```
+
+覆盖率、火焰图、benchmark、依赖升级、CHANGELOG、MSRV / NLL、ICE 解读、
+公开 API 破坏性变更检查等都各有配方，`just` 一敲就能看到。
+{% if docker and crate_type == "bin" %}
+容器相关命令来自 [`docker.just`](../docker.just)（根 justfile 用 `import?` 可选加载）：
+
+```bash
+just docker-build       # 构建镜像（多阶段 + distroless，同时打 latest 与版本号 tag）
+just docker-run -- --help   # 运行镜像
+just docker-inspect     # 用 dive 看分层体积
+just docker-scan        # 用 trivy 扫已知漏洞
+just docker-clean       # 删除本地镜像
+```
+
+镜像里的二进制用 [cargo-auditable](https://github.com/rust-secure-code/cargo-auditable)
+构建：依赖清单被编进二进制的一个专用 section，`just docker-scan` 的 trivy 和
+`cargo audit bin <二进制>` 都能直接对着产物查 CVE。体积代价约 1%，运行时零开销；
+不需要就把 `Dockerfile` 里那一层删掉。
+{% endif %}
+`just ci` 包含 `lint` / `test` / `audit` 三项，其中 `lint` 和 CI 的 lint job 严格对齐，
+含 `cargo doc` 的文档警告检查（`[workspace.lints.rustdoc]` 里 `bare_urls`、
+`invalid_html_tags` 这些只是 `warn`，本地不跑 `cargo doc` 就看不见）。
+
+`unused` / `semver` / `hack` / `msrv` / `nll` 留在外面手动跑：分别是误报多、没有 `v*` tag
+时无从比较、要额外装 cargo-hack、会往机器上装一整条工具链、换 `RUSTFLAGS` 等于全量重编。
+除 `unused` 外它们在两套 CI 里都有对应的 job（`semver` 只对纯库项目生效）。
+
+## 工程结构
+
+`Cargo.toml` 里已经铺好了 workspace 骨架：`[workspace.package]`、`[workspace.dependencies]`、
+`[workspace.lints]` 三段供将来拆分子 crate 继承。现在只有根 crate 一个成员，它通过
+`version.workspace = true` / `[lints] workspace = true` 继承这些配置；要拆出 `crates/core`、
+`crates/cli` 时只需在 `members` 里登记，子 crate 同样写 `.workspace = true`。
+
+### 编译 profile
+
+| profile | 用途 |
+| --- | --- |
+| `dev` | 自身代码 O0 保证调试体验；依赖 O2（`[profile.dev.package."*"]`），运行时快一个数量级 |
+| `test` | O1，比 O0 跑得快又不用等 O3 的编译时间 |
+| `release` | O3 + thin LTO + `codegen-units = 1` + strip |
+| `profiling` | 继承 release 但保留符号，火焰图才有可读函数名：`just flamegraph` |
+| `bench` | 继承 release 且保留符号，保证 benchmark 测的是优化后的代码 |
+
+`Cargo.toml` 末尾还注释着两项按需打开的配置：`build-override`（加速 proc-macro 编译）
+和 `overflow-checks`（release 下也检查整数溢出）。
+{% if async_runtime %}
+### 异步运行时
+
+项目已引入 [tokio](https://tokio.rs/)（`rt-multi-thread` + `macros`）。{% if crate_type == "lib" %}
+它在 `[dev-dependencies]` 里：库这一侧只有 `#[tokio::test]` 用得到它，
+放进 `[dependencies]` 等于让每个使用者都白拉一份 tokio。真要在库里跑异步逻辑时再挪过去
+——但**不要**在库里装 runtime，起不起 runtime 是应用的决定。{% else %}
+入口是 `#[tokio::main]`。{% endif %}
+
+同时 [`clippy.toml`](../clippy.toml) 里启用了 `disallowed-types` / `disallowed-methods`：
+用到 `std::fs` / `std::process` 这类阻塞 API 会被拦下（CI 是 `-D warnings`，直接构建失败），
+请改用 `tokio::fs` 对应项。
+
+这条禁令不区分 async 上下文——clippy 看不出一处调用是不是在 `async fn` 里，所以同步代码、
+测试、`build.rs` 里的 `std::fs` 一样会被拦。确有必要时在那一处写
+`#[expect(clippy::disallowed_types, reason = "...")]`：用 `expect` 而不是 `allow` 是本模板的
+约定（`clippy::allow_attributes` 在盯着），lint 不再触发时 `expect` 会提醒你删掉压制项。
+{% endif %}{% if error_handling %}
+### 错误处理
+{% if crate_type == "lib" %}
+[`src/error.rs`](../src/error.rs) 里用 [thiserror](https://docs.rs/thiserror) 定义了公开错误类型
+`Error` 与 `Result<T>` 别名，并从 `lib.rs` 重新导出。
+
+库只用 thiserror、不用 anyhow：库抛 `anyhow::Error` 会让调用方除了打印之外什么都做不了。
+`Error` 上标了 `#[non_exhaustive]`，以后新增变体不构成破坏性变更。
+{% else %}
+两层分工，[`src/error.rs`](../src/error.rs)（属于 lib 那一侧）与 `main.rs` 各管一段：
+
+- **库层**用 [thiserror](https://docs.rs/thiserror) 定义**具体**错误（`Error::EmptyName`），
+  调用方可以 `match` 之后分别处理——该重试的重试，该降级的降级；
+- **`main`** 用 [anyhow](https://docs.rs/anyhow) 收口，`.context("...")` 补充上下文后统一上报。
+
+`main.rs` 里那行 `{{ crate_name }}::greet(&name).context("...")?` 就是分界线：
+左边是可以 `match` 的具体错误，右边开始是「打印给人看」的 anyhow。
+{% endif %}{% endif %}{% if logging and crate_type == "bin" %}
+### 日志
+
+[`src/telemetry.rs`](../src/telemetry.rs) 用 [tracing](https://docs.rs/tracing) +
+`tracing-subscriber` 初始化全局 subscriber：
+
+- 过滤规则运行时可调：`RUST_LOG=warn,{{ crate_name }}=debug`，不必重新编译；
+- 日志写 stderr，stdout 留给程序真正的输出（`main.rs` 里走 `print_line`），
+  所以把日志级别调到 `warn` 也不会把程序的结果一起吞掉；
+- 过滤表达式写错、或 `RUST_LOG` 被设成空串时，退回 `telemetry::init("info")` 给的默认级别，
+  而不是得到一个「进程正常启动、却一条日志都不打」的空 filter；
+- `RUST_LOG` 写成一个裸词（`RUST_LOG=inof`）时会提示一句：按 `EnvFilter` 的语法裸词是
+  目标名不是级别，它解析得成功，于是默认指令失效、日志一条都不打，`EnvFilter` 自己不会出声。
+
+要输出 JSON 给日志采集系统、或者接 OpenTelemetry，文件末尾的注释里写了怎么改。
+{% endif %}
+## 项目里的各个配置文件
+
+| 文件 | 作用 |
+| --- | --- |
+| [`rust-toolchain.toml`](../rust-toolchain.toml) | 固定工具链版本与组件 |
+| [`rustfmt.toml`](../rustfmt.toml) | 格式化规则（含 unstable 选项，走 nightly） |
+| [`clippy.toml`](../clippy.toml) | Clippy 行为配置（lint 开关在 `Cargo.toml` 的 `[workspace.lints]`） |
+| [`deny.toml`](../deny.toml) | 依赖的安全公告 / License / 重复版本 / 来源审计，外加 build script 里夹带的二进制与脚本 |
+| [`.taplo.toml`](../.taplo.toml) | TOML 格式化规则（rustfmt 只管 `.rs`，`.toml` 归 taplo） |
+| [`.typos.toml`](../.typos.toml) | 拼写检查的词表与排除规则 |
+| [`cliff.toml`](../cliff.toml) | git-cliff 生成 CHANGELOG 的模板与分组规则 |
+| [`release.toml`](../release.toml) | cargo-release 的发版流程配置 |
+| [`bacon.toml`](../bacon.toml) | bacon 实时监控的任务定义 |
+| [`justfile`](../justfile) | 全部日常命令的入口 |{% if docker and crate_type == "bin" %}
+| [`docker.just`](../docker.just) | 容器相关命令（被 justfile 可选 import） |
+| [`Dockerfile`](../Dockerfile) | 多阶段构建 + distroless 运行镜像 |{% endif %}
+| [`.config/nextest.toml`](../.config/nextest.toml) | 测试运行器配置（含 CI 专用 profile、JUnit、超时与测试分组示例） |
+| [`.config/template-values.toml`](../.config/template-values.toml) | 生成本项目时的选项，`just template-sync` 用它重新生成 |
+| [`.cargo/config.toml`](../.cargo/config.toml) | cargo 项目级配置：网络重试、依赖解析策略，以及链接器 / 并行前端 / 镜像源的开关都收在这里 |
+| [`CLAUDE.md`](../CLAUDE.md) | 给 AI 编码助手的项目约定（格式化必须走 nightly、零警告、不许压制 lint 等） |
+| [`.githooks/`](../.githooks/) | Git 钩子（commit-msg 校验提交信息 / pre-push 跑 `just ci`），`just hooks` 启用 |
+| [`.editorconfig`](../.editorconfig) | 跨编辑器的基础排版约定 |
+| [`.gitattributes`](../.gitattributes) | 入库换行统一、二进制标记、`Cargo.lock` 折叠 |
+| [`.devcontainer/`](../.devcontainer/) | Dev Container / Codespaces 配置 |{% if ci == "github" %}
+| [`.github/workflows/`](../.github/workflows/) | CI（build / release / audit / workflows） |
+| [`.github/dependabot.yml`](../.github/dependabot.yml) | 依赖自动升级：cargo / actions{% if docker and crate_type == "bin" %} / docker 基础镜像{% endif %} |{% endif %}{% if ci == "gitlab" %}
+| [`.gitlab-ci.yml`](../.gitlab-ci.yml) | GitLab CI：lint / test / deny / hack / msrv / semver + tag 触发 release |{% endif %}
+{% if ci == "github" %}
+## CI
+
+推送和 PR 触发 [`build.yaml`](../.github/workflows/build.yaml)。各 job 调用 justfile 里的
+同名配方，检查规则只在 justfile 里维护，本地跑同一条 `just` 命令就能复现 CI 的结果：
+
+- **detect** —— 探测仓库里有哪些 target，供下面的 job 做条件判断（几秒钟）
+- **lint** —— `just lint`：格式化（`.rs` 走 rustfmt、`.toml` 走 taplo）、拼写、
+  clippy（`-D warnings`）、文档警告
+- **test** —— `just coverage doctest`：nextest（CI profile：不 fail-fast、失败重试、输出 JUnit）
+  + 覆盖率 + doctest
+- **deny** —— `just audit`：依赖的安全公告 / License / 重复版本 / 来源
+- **msrv / nll** —— `just msrv`：stable 项目用 `Cargo.toml` 里声明的最低版本编译一遍；
+  nightly 项目改用 `-Zpolonius=off` 编一遍，拦下只有新借用检查器才编得过的代码
+- **hack** —— `just hack`：遍历 feature 幂集，防止「单独开某个 feature 编不过」；没声明 feature 时跳过
+- **semver** —— `just semver`：以上一个 tag 为基线检查公开 API 破坏性变更（仅**纯库**项目，
+  没有 tag 时跳过；二进制项目的 `src/lib.rs` 是自用的内部库，不对外承诺 API）
+- **docker** —— 构建一次容器镜像确认 Dockerfile 没坏（仅选了 Docker 的项目；只构建不推送）
+
+CI 环境里 justfile 会给 cargo 命令自动加上 `--locked`。
+
+打 `v*` tag 触发 [`release.yaml`](../.github/workflows/release.yaml)：
+
+- **verify** —— 把 tag 指向的 commit 从零验证一遍，并核对 tag 与 `Cargo.toml` 版本一致
+- **github-release** —— git-cliff 生成变更说明并创建 Release
+- **binaries** —— 五个目标平台（Linux musl x64/arm64、macOS x64/arm64、Windows x64）
+  交叉编译、打包、生成 sha256 并挂到 Release 上（仅 bin 项目）。
+  可选再加一层构建来源证明（SLSA provenance，Sigstore 签名，`gh attestation verify` 可验）：
+  校验和只证明「文件没被改过」，来源证明回答「它是谁造的」。默认关闭，
+  需要在仓库 Variables 里加 `ATTEST_BUILD_PROVENANCE=true`（私有仓库需要 GitHub Enterprise）
+- **crates-io** —— 用 crates.io 的 Trusted Publishing（OIDC，无需长期 token）发布，
+  **默认关闭**，需要在仓库 Variables 里加 `PUBLISH_TO_CRATES_IO=true`
+
+[`audit.yaml`](../.github/workflows/audit.yaml) 每天定时跑一次依赖审计：安全公告是
+「代码没动风险也会变」的东西，只靠 PR 触发发现不了。
+
+改动 `.github/workflows/` 时另外触发 [`workflows.yaml`](../.github/workflows/workflows.yaml)：
+用 [zizmor](https://docs.zizmor.sh/) 审计 workflow 的**安全性**（脚本注入、过宽权限、缓存投毒），
+再用 [actionlint](https://github.com/rhysd/actionlint) 查**正确性**（表达式写错、不存在的
+job 依赖、`run:` 里的 shell 语法）——两者不重叠。
+
+三点值得注意：
+
+- CI 与发布分成两个 workflow，发布流程不使用编译缓存：缓存是可写的，一旦发布产物建立在
+  缓存之上，污染缓存就等价于污染 release 二进制。
+- 按 target 裁剪的 job（semver / binaries / docker）一律靠 `detect` 传出的 outputs 判断，
+  而不是在 job 级写 `if: hashFiles(...)`——job 级的 `if:` 在 checkout 之前求值，
+  那时 hashFiles 恒为空串，job 会被静默跳过且不报错。
+- 第三方 action 全部用 commit hash 钉死（后面的 `# vX.Y.Z` 是给人看的），
+  由 dependabot 每周自动更新。tag 可变，上游账号被攻破就能直接进你的 CI。
+{% endif %}{% if ci == "gitlab" %}
+## CI
+
+推送和 MR 会触发 [`.gitlab-ci.yml`](../.gitlab-ci.yml)。各 job 调用 justfile 里的同名配方，
+本地跑同一条 `just` 命令就能复现：
+
+- **lint** —— 格式化（`.rs` 走 rustfmt、`.toml` 走 taplo）、拼写、clippy（`-D warnings`）、文档警告
+- **test** —— nextest + 覆盖率（MR 页面直接显示百分比）+ JUnit 报告
+- **deny** —— 依赖的安全公告 / License / 重复版本 / 来源
+- **hack** —— feature 幂集检查，没声明 feature 时跳过
+- **msrv** —— 用声明的最低版本编译一遍；nightly 项目改成用 `-Zpolonius=off` 编一遍，
+  拦下只有新借用检查器才编得过的代码
+- **semver** —— 以上一个 tag 为基线检查公开 API 破坏性变更（仅**纯库**项目，没有 tag 时跳过）
+
+打 `v*` tag 时额外跑 **verify-tag**（从零验证 + 核对版本号）、**changelog**、
+**build-binary**、**release**。
+
+> 安全公告是「代码没动风险也会变」的东西，只靠 MR 触发发现不了。建议到
+> CI/CD → Schedules 配一条每日定时流水线专门跑 `deny`（对应 GitHub 的 `audit.yaml`）。
+
+配套 cargo 工具用 cargo-binstall 下预编译二进制，并单独缓存 `.cargo-home/bin/`。
+release job 的 glab 镜像钉在具体版本上，没有自动升级，需要时手工改它的 `image`。
+{% endif %}{% if ci == "none" %}
+## CI
+
+生成时选择了不带 CI 配置。需要时可以从模板仓库把 `.github/` 或 `.gitlab-ci.yml` 拷回来，
+或直接用 `just ci` 在本地跑同一套检查。
+{% endif %}
+## 跟进模板更新
+
+生成时的选项记在 [`.config/template-values.toml`](../.config/template-values.toml) 里。
+模板更新后不必重新生成项目再搬代码，在工作区干净时运行：
+
+```bash
+just template-sync                    # 从模板仓库取最新版，按原选项原地重新生成
+just template-sync ../rust-template   # 也可以指向本地的模板目录
+```
+
+生成结果直接覆盖进工作区，再用 git 挑选：
+
+```bash
+git diff                # 逐个看模板带来的改动
+git restore src tests   # 丢掉对业务代码的覆盖（其它被覆盖的文件同理）
+git add -p              # 挑出要保留的改动，再提交
+```
+
+改 `.config/template-values.toml` 里的值再 sync，就能在已有项目上打开某个开关。
+模板删掉的文件、关掉开关后不再生成的文件都不会被自动删除。
+
+## 提交规范
+
+本项目使用 [Conventional Commits](https://www.conventionalcommits.org/)，
+`CHANGELOG.md` 由 [git-cliff](https://git-cliff.org/) 依据提交信息自动生成：
+
+```
+feat(parser): 支持嵌套表达式
+fix: 修正边界条件下的 panic
+docs: 补充 README
+```
+
+commit message 由 [`.githooks/commit-msg`](../.githooks/commit-msg) 强制校验（`just hooks` 启用后生效）。
+

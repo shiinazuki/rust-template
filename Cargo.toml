@@ -41,6 +41,7 @@ exclude = [
   ".gitattributes",
   ".githooks/",
   "CLAUDE.md",
+  "docs/development.md",
   ".dockerignore",
   "Dockerfile",
   "cliff.toml",
@@ -131,11 +132,10 @@ opt-level = 2
 debug = false
 
 [profile.release]
-opt-level = 3
 lto = "thin" # 改成 "fat" 体积更小，编译更慢
 codegen-units = 1
 strip = "symbols"
-panic = "unwind" # 改成 "abort" 二进制更小，但会禁用 unwind 并影响 #[should_panic] 测试
+# panic = "abort" # 二进制更小，但会禁用 unwind 并影响 #[should_panic] 测试
 
 # 性能分析（flamegraph / samply / instruments）用：cargo build --profile profiling
 # 优化级别与 release 一致，但保留符号
@@ -144,9 +144,8 @@ inherits = "release"
 debug = true
 strip = "none"
 
-# benchmark 按 release 的优化级别编译，并保留符号
+# bench 默认继承 release 的优化级别，这里只把符号留下
 [profile.bench]
-inherits = "release"
 debug = true
 strip = "none"
 

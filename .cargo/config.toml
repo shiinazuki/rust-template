@@ -109,7 +109,7 @@ incompatible-rust-versions = "fallback"
 # 把 crates.io 的稀疏索引换成镜像。三点注意：
 #   1. 只影响下载来源，不影响校验和，Cargo.lock 与 `--locked` 照常工作；
 #   2. `cargo publish` / `cargo owner` / `cargo yank` 要显式加 `--registry crates-io`；
-#   3. deny.toml 的 [sources] allow-registry 仍写官方地址。
+#   3. deny.toml 的 [sources] 保持默认的官方 crates.io 地址即可。
 # [source.crates-io]
 # replace-with = "mirror"
 #

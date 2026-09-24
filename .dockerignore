@@ -12,6 +12,7 @@ scripts/
 # 容器里用不到的开发期文件
 *.md
 !README.md
+docs/
 .githooks/
 cliff.toml
 deny.toml

@@ -40,13 +40,8 @@ fi
 
 # --- Rust 源码 --------------------------------------------------------------
 if touched '\.rs$'; then
-    # 规则同 justfile 的 fmt_toolchain
-    channel=$(grep -m1 '^channel' rust-toolchain.toml 2>/dev/null |
-        sed -E 's/.*"([^"]+)".*/\1/' || true)
-    case "$channel" in
-        nightly*) fmt_toolchain=$channel ;;
-        *) fmt_toolchain=nightly ;;
-    esac
+    # 格式化工具链取自 justfile 的 fmt_toolchain，没装 just 时退回 nightly
+    fmt_toolchain=$(just --evaluate fmt_toolchain 2>/dev/null || echo nightly)
     run "cargo +$fmt_toolchain fmt --check" cargo "+$fmt_toolchain" fmt --all -- --check
     run "cargo clippy" cargo clippy --all-targets --all-features -- -D warnings
 fi

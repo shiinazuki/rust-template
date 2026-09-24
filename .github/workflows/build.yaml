@@ -74,6 +74,9 @@ jobs:
             echo "::notice::检测到这是模板仓库本身（Cargo.toml 里还是 liquid 占位符），跳过所有 cargo 相关的 job。模板自身的检查见 template-ci.yaml。"
           fi
 
+  # 下面各 job 调用 justfile 里的同名配方，检查规则只在 justfile 里维护。
+  # CI 环境里 justfile 会给 cargo 命令自动加上 --locked。
+
   # 格式化 / 拼写 / clippy / 文档：不跑测试，失败得最快
   lint:
     name: lint
@@ -89,38 +92,15 @@ jobs:
           persist-credentials: false
       - name: Install Rust (版本由 rust-toolchain.toml 固定)
         run: rustup show active-toolchain || rustup toolchain install
-      # 规则同 justfile 的 fmt_toolchain
-      - name: Resolve rustfmt toolchain
-        run: |
-          channel=$(grep -m1 '^channel' rust-toolchain.toml | sed -E 's/.*"([^"]+)".*/\1/')
-          case "$channel" in
-            nightly*)
-              fmt="$channel"
-              ;;
-            *)
-              fmt=nightly
-              rustup toolchain install nightly --allow-downgrade --profile minimal --component rustfmt
-              ;;
-          esac
-          echo "FMT_TOOLCHAIN=$fmt" >> "$GITHUB_ENV"
       - name: Install cargo tools
         uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5 # v2.87.19
         with:
-          tool: typos,taplo-cli
+          tool: just,typos,taplo-cli
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - name: Check code format
-        run: cargo "+$FMT_TOOLCHAIN" fmt --all -- --check
-      # rustfmt 不管 .toml，项目里的 TOML 排版由 taplo 保证，规则见 .taplo.toml
-      - name: Check TOML format
-        run: taplo fmt --check
-      - name: Check spelling
-        run: typos
-      - name: Lint rust sources
-        run: cargo clippy --locked --all-targets --all-features -- -D warnings
-      - name: Check documentation
-        env:
-          RUSTDOCFLAGS: -D warnings
-        run: cargo doc --locked --no-deps --all-features --document-private-items
+      - name: Install rustfmt
+        run: just install-rustfmt
+      - name: Lint
+        run: just lint
 
   # 测试 + 覆盖率
   test:
@@ -158,24 +138,19 @@ jobs:
       - name: Install cargo tools
         uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5 # v2.87.19
         with:
-          tool: cargo-nextest,cargo-llvm-cov
+          tool: just,cargo-nextest,cargo-llvm-cov
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       # - name: Install Protoc
       #   uses: arduino/setup-protoc@v3
-      # 这里没有单独的 `cargo check`：lint job 的 clippy 已是它的超集，
-      # 而下面的 llvm-cov 会带 `-C instrument-coverage` 重新编一遍。
+      # 这里没有单独的 `cargo check`：lint job 的 clippy 已是它的超集。
       # 只测 debug；要提前拦 release-only 的编译错误，补一条
       # `cargo check --locked --release --all-targets --all-features`。
       #
-      # 用 .config/nextest.toml 里的 ci profile：不 fail-fast、失败重试 2 次、输出 JUnit
-      - name: Execute rust tests with coverage
-        run: cargo llvm-cov nextest --locked --profile ci --all-features --lcov --output-path lcov.info
-      # nextest 不跑 doctest，有 lib target 时补一次。
-      # 这里的 hashFiles 是步骤级的，此刻已经 checkout 过，结果可信。
-      - name: Execute doc tests
-        if: hashFiles('src/lib.rs') != ''
-        run: cargo test --locked --doc --all-features
-      # 想给覆盖率设下限就在上一条命令里加 --fail-under-lines N（N 是百分比）
+      # NEXTEST_PROFILE=ci 用 .config/nextest.toml 里的 ci profile：不 fail-fast、失败重试、输出 JUnit
+      - name: Run tests with coverage
+        env:
+          NEXTEST_PROFILE: ci
+        run: just coverage doctest
       - name: Upload coverage report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -208,61 +183,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install cargo-deny
+      - name: Install cargo tools
         uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5 # v2.87.19
         with:
-          tool: cargo-deny
+          tool: just,cargo-deny
       - name: Check dependencies (advisories / licenses / bans / sources)
-        run: cargo deny check -A unmatched-bypass
+        run: just audit
 
-  # workflow 文件自己的静态检查，两个工具互补：
-  #   zizmor      安全向——脚本注入、过宽权限、缓存投毒、可变 tag
-  #   actionlint  正确性向——表达式、job 依赖、runner 标签、run: 里的 shell 语法
-  workflows:
-    name: lint workflows
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Install zizmor
-        uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5 # v2.87.19
-        with:
-          tool: zizmor
-      # actionlint 不在 install-action 的支持列表里（Go 写的，crates.io 上没有同名包），
-      # 这里自己取回官方预编译二进制、核对 sha256 再装。
-      # 版本要手工升级：dependabot 管不到 run: 里的版本号，
-      # 校验和取自 release 页的 actionlint_<版本>_checksums.txt。
-      - name: Install actionlint
-        env:
-          ACTIONLINT_VERSION: "1.7.12"
-        run: |
-          set -euo pipefail
-          case "$(uname -m)" in
-            x86_64) arch=amd64 sha=8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8 ;;
-            aarch64) arch=arm64 sha=325e971b6ba9bfa504672e29be93c24981eeb1c07576d730e9f7c8805afff0c6 ;;
-            *) echo "actionlint 没有 $(uname -m) 的预编译包"; exit 1 ;;
-          esac
-          tarball="actionlint_${ACTIONLINT_VERSION}_linux_${arch}.tar.gz"
-          curl --proto '=https' --tlsv1.2 -fsSL -o "$tarball" \
-            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${tarball}"
-          echo "$sha  $tarball" | sha256sum --check --strict -
-          tar -xzf "$tarball" actionlint
-          sudo install -m 0755 actionlint /usr/local/bin/actionlint
-          rm -f "$tarball" actionlint
-          actionlint --version
-      # --min-severity medium：低危项多是风格建议。想更严就去掉这个参数，
-      # 或加 --persona=pedantic。
-      - name: Audit GitHub Actions workflows
-        run: zizmor --min-severity medium --no-progress .github/workflows
-      - name: Lint GitHub Actions workflows
-        run: actionlint -color
-
-  # 按 rust-toolchain.toml 的 channel 分两条路，判断依据在 job 内部读文件：
-  #   stable  → 用 Cargo.toml 里 rust-version 声明的那个版本 check 一遍
-  #   nightly → MSRV 检查不适用，改用 `-Zpolonius=off` 把借用检查器换回 stable 的 NLL，
-  #             拦下只有 nightly 编得过的代码
+  # stable 项目用 Cargo.toml 里声明的 rust-version 编一遍；nightly 项目改用
+  # `-Zpolonius=off` 换回 stable 的 NLL 借用检查器编一遍。分支判断在 msrv 配方里。
   msrv:
     name: msrv / nll
     needs: [detect]
@@ -273,51 +202,18 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Decide what to check
-        id: msrv
-        run: |
-          channel=$(grep -m1 '^channel' rust-toolchain.toml | sed -E 's/.*"([^"]+)".*/\1/')
-          version=$(grep -m1 '^rust-version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')
-          if [ "${channel#nightly}" != "$channel" ]; then
-            mode=nll
-            echo "工具链是 ${channel}：MSRV 检查不适用，改跑 NLL 兜底检查"
-          elif [ -z "$version" ]; then
-            mode=skip
-            echo "Cargo.toml 里没有 rust-version，跳过 MSRV 检查"
-          else
-            mode=msrv
-            echo "version=$version" >> "$GITHUB_OUTPUT"
-            echo "MSRV = $version"
-          fi
-          echo "mode=$mode" >> "$GITHUB_OUTPUT"
-      # 用 env 把 step 输出接进来，而不是把 ${{ ... }} 直接拼进 run:（防脚本注入）
-      - name: Install Rust toolchain
-        if: steps.msrv.outputs.mode == 'msrv'
-        env:
-          MSRV: ${{ steps.msrv.outputs.version }}
-        run: rustup toolchain install "$MSRV" --profile minimal
       - name: Install Rust (版本由 rust-toolchain.toml 固定)
-        if: steps.msrv.outputs.mode == 'nll'
         run: rustup show active-toolchain || rustup toolchain install
-      # key 带上 mode：两条路的工具链与 RUSTFLAGS 不同，编译产物互不通用
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        if: steps.msrv.outputs.mode != 'skip'
+      - name: Install just
+        uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5 # v2.87.19
         with:
-          key: ${{ steps.msrv.outputs.mode }}
-      - name: Check with MSRV toolchain
-        if: steps.msrv.outputs.mode == 'msrv'
-        env:
-          MSRV: ${{ steps.msrv.outputs.version }}
-        run: cargo "+$MSRV" check --locked --all-targets --all-features
-      # 本地等价命令：`just nll`
-      - name: Check with the stable borrow checker (NLL)
-        if: steps.msrv.outputs.mode == 'nll'
-        env:
-          RUSTFLAGS: -Zpolonius=off
-        run: cargo check --locked --all-targets --all-features
+          tool: just
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Check MSRV / NLL
+        run: just msrv
 
   # 特性组合检查：把 [features] 的幂集逐个 check 一遍，
-  # 覆盖「只开某一个 feature 编不过」这类问题。没声明 feature 时相当于一次普通 check。
+  # 覆盖「只开某一个 feature 编不过」这类问题。没声明 feature 时配方直接跳过。
   hack:
     name: feature powerset
     needs: [detect]
@@ -331,20 +227,16 @@ jobs:
           persist-credentials: false
       - name: Install Rust (版本由 rust-toolchain.toml 固定)
         run: rustup show active-toolchain || rustup toolchain install
-      - name: Install cargo-hack
+      - name: Install cargo tools
         uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5 # v2.87.19
         with:
-          tool: cargo-hack
+          tool: just,cargo-hack
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      # --depth 2 限制组合爆炸。
-      # 这里不能加 --locked：--no-dev-deps 会临时删掉 [dev-dependencies]，
-      # 依赖图一变 cargo 就要改 Cargo.lock，而 --locked 禁止改动，直接 101 退出。
-      # 「lock 是最新的」由 lint / test / msrv 那几个 job 的 --locked 保证。
       - name: Check feature powerset
-        run: cargo hack --feature-powerset --depth 2 --no-dev-deps check
+        run: just hack
 
   # 公开 API 的破坏性变更检查（只对纯库项目跑，判断见 detect job）。
-  # 以上一个 v* tag 为基线，指出该抬 minor 还是 major；没有 tag 时自动跳过。
+  # 以上一个 v* tag 为基线，指出该抬 minor 还是 major；没有 tag 时配方直接跳过。
   semver:
     name: semver-checks
     needs: [detect]
@@ -358,28 +250,13 @@ jobs:
           persist-credentials: false
       - name: Install Rust (版本由 rust-toolchain.toml 固定)
         run: rustup show active-toolchain || rustup toolchain install
-      - name: Find baseline tag
-        id: baseline
-        run: |
-          if tag=$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null); then
-            echo "rev=$tag" >> "$GITHUB_OUTPUT"
-            echo "基线版本：$tag"
-          else
-            echo "rev=" >> "$GITHUB_OUTPUT"
-            echo "仓库还没有 v* tag，跳过 semver 检查"
-          fi
-      - name: Install cargo-semver-checks
-        if: steps.baseline.outputs.rev != ''
+      - name: Install cargo tools
         uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5 # v2.87.19
         with:
-          tool: cargo-semver-checks
+          tool: just,cargo-semver-checks
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        if: steps.baseline.outputs.rev != ''
       - name: Check for API breakage
-        if: steps.baseline.outputs.rev != ''
-        env:
-          BASELINE: ${{ steps.baseline.outputs.rev }}
-        run: cargo semver-checks --baseline-rev "$BASELINE"
+        run: just semver
 
   # 容器镜像构建验证（只在生成项目时选了 Docker 才有这个 job）：只构建、不推送，
   # 用来发现 Dockerfile 什么时候坏掉。
@@ -395,7 +272,7 @@ jobs:
         with:
           submodules: recursive
           persist-credentials: false
-      # 走 env 而不是把 ${{ }} 直接拼进 run，理由同 msrv job
+      # 走 env 而不是把 ${{ }} 直接拼进 run，防脚本注入
       - name: Build image
         env:
           DOCKER_BUILDKIT: "1"

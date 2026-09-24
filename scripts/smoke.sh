@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# 模板自测：按矩阵生成若干种组合的项目，逐个跑格式化 / clippy / 测试。
+# 模板自测：按矩阵生成若干种组合的项目，逐个跑与 CI 相同的 just lint / test / audit 等检查。
 #
 #   bash scripts/smoke.sh            # 默认矩阵（10 组，覆盖各开关的开与关）
 #   bash scripts/smoke.sh --full     # 完整矩阵（19 组：bin 的 3 个源码开关全排列
@@ -102,8 +102,8 @@ assert_layout() {
     # --- 与开关无关，永远该在 ---------------------------------------------
     for f in Cargo.toml README.md CLAUDE.md justfile rust-toolchain.toml rustfmt.toml clippy.toml \
              deny.toml .taplo.toml .typos.toml cliff.toml release.toml bacon.toml \
-             .config/nextest.toml .cargo/config.toml \
-             .githooks/pre-commit .githooks/commit-msg .githooks/pre-push \
+             .config/nextest.toml .config/template-values.toml .cargo/config.toml \
+             docs/development.md .githooks/pre-commit .githooks/commit-msg .githooks/pre-push \
              .editorconfig .gitattributes .gitignore src/lib.rs tests/integration.rs; do
         have "$f" "所有组合都该生成"
     done
@@ -125,6 +125,7 @@ assert_layout() {
     case "$ci" in
         github)
             have .github/workflows/build.yaml "ci=github"
+            have .github/workflows/workflows.yaml "ci=github"
             have .github/dependabot.yml "ci=github"
             gone .gitlab-ci.yml "ci=github"
             ;;
@@ -202,13 +203,14 @@ assert_layout() {
     return "$bad"
 }
 
-# 有几项检查靠 `command -v` 守卫，工具缺了会跳过，这里先把缺的报出来
+# 这些检查都要用到，缺一个就直接退出
 missing_tools=""
-for t in cargo-nextest cargo-deny just taplo python3; do
+for t in cargo-generate cargo-nextest cargo-deny just taplo typos python3; do
     command -v "$t" >/dev/null 2>&1 || missing_tools="$missing_tools $t"
 done
 if [ -n "$missing_tools" ]; then
-    printf '\033[33m注意：以下工具未安装，依赖它们的检查会被跳过：%s\033[0m\n' "$missing_tools"
+    printf '\033[31m缺少工具：%s\033[0m\n' "$missing_tools" >&2
+    exit 2
 fi
 
 pass=0
@@ -246,50 +248,31 @@ for row in "${matrix[@]}"; do
     ok=1
     cd "$workdir/$proj" || exit 1
 
-    # 1. 生成出来的代码必须本来就是 rustfmt 干净的
-    if ! cargo +nightly fmt --all -- --check >"$workdir/$proj.fmt.log" 2>&1; then
-        echo "  ✗ fmt --check 不通过（$workdir/$proj.fmt.log）"; ok=0
+    # 1. 用生成时记下的选项原地重新生成一次，结果必须与刚生成的完全一致：
+    #    .config/template-values.toml 漏了选项或值写错时，`just template-sync` 会改坏项目
+    git add -A && git -c user.name=smoke -c user.email=smoke@example.com commit -qm init
+    if ! cargo generate --path "$template" --name "$proj" "--$kind" --silent \
+            --values-file .config/template-values.toml --init --overwrite \
+            >"$workdir/$proj.sync.log" 2>&1 \
+        || [ -n "$(git status --porcelain)" ]; then
+        git status --short >>"$workdir/$proj.sync.log"
+        echo "  ✗ 按 .config/template-values.toml 原地重新生成后有差异（$workdir/$proj.sync.log）"; ok=0
     fi
-    # 2. clippy 用和 CI 一样的严格度
-    if ! cargo clippy --all-targets --all-features -- -D warnings >"$workdir/$proj.clippy.log" 2>&1; then
-        echo "  ✗ clippy 不通过（$workdir/$proj.clippy.log）"; ok=0
-    fi
-    # 3. 测试（有 nextest 就用 nextest，没有就退回 cargo test）
-    if command -v cargo-nextest >/dev/null 2>&1; then
-        test_cmd=(cargo nextest run --all-targets --all-features)
-    else
-        test_cmd=(cargo test --all-features)
-    fi
-    if ! "${test_cmd[@]}" >"$workdir/$proj.test.log" 2>&1; then
-        echo "  ✗ 测试不通过（$workdir/$proj.test.log）"; ok=0
-    fi
-    # 4. 有 lib target 就补一次 doctest（nextest 不跑 doctest；bin 项目也有 src/lib.rs）
-    if [ -f src/lib.rs ] && ! cargo test --doc --all-features >"$workdir/$proj.doc.log" 2>&1; then
-        echo "  ✗ doctest 不通过（$workdir/$proj.doc.log）"; ok=0
-    fi
-    # 5. 文档警告，与 `just lint` 和两套 CI 的 RUSTDOCFLAGS="-D warnings" 对齐
-    if ! RUSTDOCFLAGS="-D warnings" \
-        cargo doc --no-deps --all-features --document-private-items \
-        >"$workdir/$proj.rustdoc.log" 2>&1; then
-        echo "  ✗ 文档警告（$workdir/$proj.rustdoc.log）"; ok=0
-    fi
-    # 6. 依赖审计：某个开关引入的新依赖可能带着不在 deny.toml allow 列表里的协议
-    if command -v cargo-deny >/dev/null 2>&1 \
-        && ! cargo deny check -A unmatched-bypass >"$workdir/$proj.deny.log" 2>&1; then
-        echo "  ✗ cargo deny 不通过（$workdir/$proj.deny.log）"; ok=0
-    fi
-    # 7. 留下来的 Cargo.lock 必须和 Cargo.toml 对得上（CI 全程用 --locked）
+    # 2. 留下来的 Cargo.lock 必须和 Cargo.toml 对得上（CI 全程用 --locked）
     if [ -f Cargo.lock ] && ! cargo metadata --locked --format-version 1 >"$workdir/$proj.lock.log" 2>&1; then
         echo "  ✗ Cargo.lock 与 Cargo.toml 不一致（$workdir/$proj.lock.log）"; ok=0
     fi
-    # 8. justfile 至少要能被 just 解析
-    if command -v just >/dev/null 2>&1 && ! just --list >"$workdir/$proj.just.log" 2>&1; then
-        echo "  ✗ justfile 解析失败（$workdir/$proj.just.log）"; ok=0
-    fi
-    # 9. Markdown 表格中间不能出现空行，否则表格会断掉
+    # 3. 与 CI 相同的检查。先按 just bootstrap 的做法生成 Cargo.lock，
+    #    否则 CI 环境里带 --locked 的命令会直接失败
+    cargo fetch >"$workdir/$proj.fetch.log" 2>&1
+    for recipe in lint test audit; do
+        if ! just "$recipe" >"$workdir/$proj.$recipe.log" 2>&1; then
+            echo "  ✗ just $recipe 不通过（$workdir/$proj.$recipe.log）"; ok=0
+        fi
+    done
+    # 4. Markdown 表格中间不能出现空行，否则表格会断掉
     #    （liquid 标签独占一行时，被裁掉的分支就会留下空行）
-    if command -v python3 >/dev/null 2>&1; then
-        if ! python3 - README.md >"$workdir/$proj.md.log" 2>&1 <<'PY'
+    if ! python3 - README.md docs/development.md >"$workdir/$proj.md.log" 2>&1 <<'PY'
 import sys
 
 for path in sys.argv[1:]:
@@ -300,18 +283,16 @@ for path in sys.argv[1:]:
             print(f"{path}:{i + 1} 表格中间有空行，Markdown 表格会在这里断开")
             sys.exit(1)
 PY
-        then
-            echo "  ✗ README 的 Markdown 表格被空行截断（$workdir/$proj.md.log）"; ok=0
-        fi
+    then
+        echo "  ✗ Markdown 表格被空行截断（$workdir/$proj.md.log）"; ok=0
     fi
-    # 10. 生成项目里的 TOML 必须是合法 TOML（模板里的 liquid 标签有没有漏掉锚定）
-    if command -v python3 >/dev/null 2>&1; then
-        if ! python3 - <<'PY' >"$workdir/$proj.toml.log" 2>&1
-import glob, sys, tomllib
+    # 5. 生成项目里的 TOML 必须是合法 TOML（模板里的 liquid 标签有没有漏掉锚定）
+    if ! python3 - <<'PY' >"$workdir/$proj.toml.log" 2>&1
+import sys, tomllib
 bad = []
 for f in ["Cargo.toml", "clippy.toml", "deny.toml", "rustfmt.toml", "release.toml",
           "bacon.toml", "rust-toolchain.toml", ".typos.toml", ".config/nextest.toml",
-          ".cargo/config.toml"]:
+          ".cargo/config.toml", ".config/template-values.toml"]:
     try:
         with open(f, "rb") as fh:
             tomllib.load(fh)
@@ -322,18 +303,12 @@ for f in ["Cargo.toml", "clippy.toml", "deny.toml", "rustfmt.toml", "release.tom
 if bad:
     print("\n".join(bad)); sys.exit(1)
 PY
-        then
-            echo "  ✗ 生成项目里有非法 TOML（$workdir/$proj.toml.log）"; ok=0
-        fi
+    then
+        echo "  ✗ 生成项目里有非法 TOML（$workdir/$proj.toml.log）"; ok=0
     fi
-    # 11. TOML 排版，与生成项目 CI 里的 `taplo fmt --check` 对齐
-    if command -v taplo >/dev/null 2>&1 \
-        && ! taplo fmt --check >"$workdir/$proj.taplo.log" 2>&1; then
-        echo "  ✗ taplo fmt --check 不通过（$workdir/$proj.taplo.log）"; ok=0
-    fi
-    # 12. 生成项目里不该残留没被渲染的 liquid 占位符。
-    #     排除的这几个文件就是 cargo-generate.toml 里 `exclude` 的那几个，
-    #     改动 exclude 列表时记得同步这里。
+    # 6. 生成项目里不该残留没被渲染的 liquid 占位符。
+    #    排除的这几个文件就是 cargo-generate.toml 里 `exclude` 的那几个，
+    #    改动 exclude 列表时记得同步这里。
     if grep -rIn -e '{{' -e '{%' . \
         --exclude-dir=target --exclude-dir=.git --exclude-dir=workflows \
         --exclude=justfile --exclude=docker.just --exclude=release.toml \
@@ -341,13 +316,13 @@ PY
         >"$workdir/$proj.liquid.log" 2>&1; then
         echo "  ✗ 生成项目里残留未渲染的 liquid 占位符（$workdir/$proj.liquid.log）"; ok=0
     fi
-    # 13. 按开关断言「该有的文件在、不该有的文件不在」
+    # 7. 按开关断言「该有的文件在、不该有的文件不在」
     if ! assert_layout "$kind" "$ci" "$docker" "$err" "$logging" "$license" \
         >"$workdir/$proj.layout.log" 2>&1; then
         echo "  ✗ 生成的文件清单和开关对不上（$workdir/$proj.layout.log）"; ok=0
     fi
-    # 14. 真正构建一次容器镜像。默认关闭，用 SMOKE_DOCKER=1 打开
-    #     （模板 CI 里只有每周的完整矩阵会开）。
+    # 8. 真正构建一次容器镜像。默认关闭，用 SMOKE_DOCKER=1 打开
+    #    （模板 CI 里只有每周的完整矩阵会开）。
     if [ "${SMOKE_DOCKER:-0}" = "1" ] && [ -f Dockerfile ] && command -v docker >/dev/null 2>&1; then
         if ! DOCKER_BUILDKIT=1 docker build -t "smoke-$proj:test" . \
             >"$workdir/$proj.docker.log" 2>&1; then

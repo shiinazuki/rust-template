@@ -52,19 +52,12 @@ footer = """
 trim = true
 # 即使这次没有新 release 也渲染 body
 render_always = true
-postprocessors = [
-  # { pattern = '<REPO>', replace = "https://github.com/owner/repo" },
-]
 
 [git]
 # 按 https://www.conventionalcommits.org 解析提交
 conventional_commits = true
 # 不符合 conventional commits 的提交也保留（归到 Other 组）
 filter_unconventional = false
-# 要求所有提交都必须是 conventional，优先级高于 filter_unconventional
-require_conventional = false
-# 是否把提交信息的每一行当成独立提交处理
-split_commits = false
 # 预处理提交信息的正则
 commit_preprocessors = [
   # 把 (#123) 变成 issue 链接，仓库地址由上面 body 模板里的 replace 过滤器补上
@@ -91,26 +84,8 @@ commit_parsers = [
 ]
 # 不让上面的 skip 规则误伤 breaking change
 protect_breaking_commits = true
-# 丢弃没被任何 parser 匹配到的提交
-filter_commits = false
-# 出现无法匹配的提交时直接失败
-fail_on_unmatched_commit = false
-# 从提交信息里提取外部引用并转成链接
-link_parsers = []
-# 只统计当前分支上的 tag
-use_branch_tags = false
 # 匹配版本 tag 的正则
 tag_pattern = "v[0-9].*"
-# 需要跳过的 tag
-skip_tags = ""
-ignore_tags = ""
-# 按拓扑顺序而不是时间顺序排列 release / 提交
-topo_order = false
-topo_order_commits = true
-# 每个分组内提交的顺序：oldest / newest
-sort_commits = "oldest"
-# 是否递归处理 submodule 的提交
-recurse_submodules = false
 
 # 自动推断下一个版本号（`git cliff --bumped-version`）
 [bump]

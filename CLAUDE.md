@@ -6,8 +6,22 @@ This project enforces several **counter-intuitive** rules. Default Rust habits w
 
 {% comment %}
 > Unrendered template variables below? You are in the **template repository**, not a generated
-> project. `cargo` commands cannot run from the template root; see `README.md` for how to modify
-> and self-test the template. This note is stripped at render time, so generated projects never see it.
+> project. This note is stripped at render time, so generated projects never see it.
+>
+> Rules for changing the template (details in `README.md`):
+>
+> - `cargo` cannot run from the template root. Verify with `just smoke` (or `just smoke-full`): it
+>   generates projects into a temp dir and runs the same `just lint` / `test` / `audit` as CI.
+>   `just template-lint` checks the template repo itself.
+> - Fix problems in the template, never only in a generated project—the next generation loses them.
+> - CI jobs and git hooks call `justfile` recipes. Change check logic in the justfile, not in workflows.
+> - Liquid tags in TOML / YAML must sit at the end of a comment line so the file stays valid.
+> - Adding or renaming a placeholder: update `.config/template-values.toml` as well (the smoke test's
+>   in-place regeneration check fails otherwise).
+> - Changing `exclude` in `cargo-generate.toml`: update the leftover-placeholder check in `scripts/smoke.sh`.
+> - In source templates, never put the package name directly inside macro arguments; bind the call
+>   result to a short variable first (rustfmt wraps long argument lists).
+> - Comments state what something does, not why it was chosen or how it came about.
 {% endcomment -%}
 ## Primary Entry Point: Always Use `just`
 

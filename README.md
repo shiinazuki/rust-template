@@ -43,6 +43,15 @@ just ci              # 跑一遍完整检查
 > cargo-generate 会在目标目录 `git init`，但不会替你提交，生成完之后所有文件都还是
 > untracked。首次提交要自己来：`just changelog` 这类依赖 git 历史的命令在没有任何提交时会报错。
 
+模板更新之后，已经生成的项目不必重新生成再搬代码。在项目里（工作区干净时）运行：
+
+```bash
+just template-sync
+```
+
+它按 `.config/template-values.toml` 里记下的选项，用最新模板原地重新生成，再由你用
+`git diff` / `git add -p` 挑选要保留的改动。详见生成项目的 `docs/development.md`「跟进模板更新」。
+
 ## 生成时会问什么
 
 交互式会依次询问下面几项；也可以全部用 `--define key=value` 在命令行给定，实现非交互生成。
@@ -162,13 +171,13 @@ cargo add clap --features derive,env
 
 生成项目会拿到这些配置文件：`rust-toolchain.toml`、`rustfmt.toml`、`clippy.toml`、
 `deny.toml`、`.taplo.toml`、`.typos.toml`、`cliff.toml`、`release.toml`、`bacon.toml`、
-`justfile`、`.config/nextest.toml`、`.cargo/config.toml`、`CLAUDE.md`、`.githooks/`、
-`.devcontainer/`、`.editorconfig`、`.gitattributes`、`.gitignore`；按开关追加
-`Dockerfile` / `.dockerignore` / `docker.just`，以及 `.github/`（build / release / audit
-三条 workflow + dependabot）或 `.gitlab-ci.yml`。
+`justfile`、`.config/nextest.toml`、`.config/template-values.toml`、`.cargo/config.toml`、
+`CLAUDE.md`、`.githooks/`、`.devcontainer/`、`.editorconfig`、`.gitattributes`、`.gitignore`，
+以及开发指南 `docs/development.md`；按开关追加 `Dockerfile` / `.dockerignore` / `docker.just`，
+以及 `.github/`（build / release / audit / workflows 四条 workflow + dependabot）或 `.gitlab-ci.yml`。
 
-逐个文件的作用见 [`_README.md`](_README.md) 的「项目里的各个配置文件」一节——那份表会跟着
-生成的项目走，改说明只改那一处。更细的取舍写在各文件自己的注释里。
+逐个文件的作用见 [`docs/development.md`](docs/development.md) 的「项目里的各个配置文件」一节——
+那份表会跟着生成的项目走，改说明只改那一处。更细的取舍写在各文件自己的注释里。
 
 模板自身的机制文件：
 
@@ -176,7 +185,8 @@ cargo add clap --features derive,env
 | --- | --- |
 | `cargo-generate.toml` | 占位符、`exclude` / `ignore`、按开关裁剪的 `conditional` |
 | `post-script.rhai` | 生成后收尾：整理 LICENSE、换上 README、按需删 `Cargo.lock` |
-| `_README.md` | 生成项目要用的 README，post-script 会把它改名成 `README.md` |
+| `_README.md` | 生成项目的 README（简介与快速开始），post-script 会把它改名成 `README.md` |
+| `.config/template-values.toml` | 进入生成项目，记下生成时的选项，供 `just template-sync` 原地重新生成 |
 
 只属于模板仓库、不会进入生成项目的文件（在 `cargo-generate.toml` 的 `ignore` 里）：
 
@@ -190,9 +200,11 @@ cargo add clap --features derive,env
 
 ## 维护这个模板
 
-改模板前先过一遍这几条约束，下面各有一节：
+改模板前先过一遍这几条约束：
 
 - 模板仓库里跑不了 cargo，验证一律走 `just smoke`
+- 检查逻辑只写在 `justfile` 里，两套 CI 与 git 钩子都调用它的配方
+- 新增或改名占位符时同步 `.config/template-values.toml`
 - 源码里不要把包名写进宏参数（rustfmt 会折行）
 - 花括号属于别的模板语言的文件要进 `exclude`
 - TOML / YAML 里的 liquid 标签必须锚在注释行行尾
@@ -229,16 +241,13 @@ just template-lint  # 检查模板仓库自身：taplo + typos + zizmor + action
 每个组合会依次验证（逐条的实现和条件见 `scripts/smoke.sh`）：
 
 - 能不能生成（liquid 语法、conditional 配置）
-- `cargo +nightly fmt --check` —— 生成的代码必须开箱就是 rustfmt 干净的
-- `cargo clippy -- -D warnings` —— 和 CI 同样的严格度
-- 测试（nextest）与 doctest
-- `RUSTDOCFLAGS="-D warnings" cargo doc` —— 文档警告，编译 / clippy / 测试都看不见它
-- `cargo deny check` —— 某个开关引入的依赖可能带着不在白名单里的协议
+- 按 `.config/template-values.toml` 原地重新生成一次，结果与刚生成的完全一致——
+  选项文件漏了占位符或值写错时，`just template-sync` 会改坏项目
 - 留下来的 `Cargo.lock` 与 `Cargo.toml` 对得上（`cargo metadata --locked`）
-- `justfile` 能被 just 解析
-- README 里的 Markdown 表格没有被条件块裁出的空行截断
+- `just lint` / `just test` / `just audit` —— 与生成项目的 CI 执行同一组命令：rustfmt、
+  taplo 排版、clippy（`-D warnings`）、拼写、文档警告、nextest + doctest、依赖审计
+- README 与 `docs/development.md` 里的 Markdown 表格没有被条件块裁出的空行截断
 - 生成项目里的 TOML 都是合法 TOML
-- `taplo fmt --check` —— 排版也要合规
 - 没有残留未渲染的 `{{ }}` / `{% %}` —— 变量改名漏一处、`{% raw %}` 忘了配对就是这个症状，
   而它多半藏在注释和文档里，编译 / clippy / 测试都发现不了
 - 文件清单与开关对得上 —— 逐个断言每个开关该生成、不该生成的文件
@@ -357,7 +366,7 @@ Use --allow-commands if you want to allow the template to run system commands
 | 位置 | 形式 | 谁来更新 |
 | --- | --- | --- |
 | workflow 里的 action | commit hash + `# vX.Y.Z` 注释 | dependabot 每周一提 PR，模板仓库与生成项目都一样 |
-| workflow 里的 `ACTIONLINT_VERSION` | 版本号 + 两个架构的 sha256 | 手动，`build.yaml` 与 `template-ci.yaml` 两处一起改 |
+| `workflows.yaml` 里的 `ACTIONLINT_VERSION` | 版本号 + 两个架构的 sha256 | 手动 |
 | `.gitlab-ci.yml` 的 release job 镜像 | `gitlab-org/cli` 的版本 tag | 手动 |
 | `Cargo.toml` 里可选依赖的版本 | caret 版本 | 手动，改动很少 |
 

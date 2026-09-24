@@ -1,7 +1,7 @@
 # GitLab CI —— 与 .github/workflows/ 等价的一套流水线。
 # 生成项目时选 `ci = gitlab` 才会保留本文件（选 github 则保留 .github/）。
 #
-# 结构：lint / test / deny / hack / semver 并行，msrv 视工具链走 MSRV / NLL 两条路之一，
+# 结构：lint / test / deny / hack / msrv / semver 并行，各自调用 justfile 里的同名配方；
 #       打 v* tag 时额外跑 release（先从零验证一遍，再建 Release）。
 
 stages:
@@ -91,8 +91,11 @@ workflow:
     - if: $CI_PIPELINE_SOURCE == "web"
 
 # ---------------------------------------------------------------------------
-# 格式化 / 拼写 / clippy / 文档：不跑测试，失败得最快
+# 下面各 job 调用 justfile 里的同名配方，检查规则只在 justfile 里维护。
+# GitLab 会设 CI=true，justfile 据此给 cargo 命令自动加上 --locked。
 # ---------------------------------------------------------------------------
+
+# 格式化 / 拼写 / clippy / 文档：不跑测试，失败得最快
 lint:
   stage: check
   # 用 extends 而不是 YAML 锚点：同一个 mapping 里出现两个 `<<` 是非法 YAML
@@ -100,43 +103,23 @@ lint:
     - .cargo-cache
     - .rust-setup
   script:
-    # 规则同 justfile 的 fmt_toolchain
-    - |
-      channel=$(grep -m1 '^channel' rust-toolchain.toml | sed -E 's/.*"([^"]+)".*/\1/')
-      case "$channel" in
-        nightly*)
-          FMT_TOOLCHAIN="$channel"
-          ;;
-        *)
-          FMT_TOOLCHAIN=nightly
-          rustup toolchain install nightly --allow-downgrade --profile minimal --component rustfmt
-          ;;
-      esac
-    - install_tools typos-cli taplo-cli
-    - cargo "+$FMT_TOOLCHAIN" fmt --all -- --check
-    # rustfmt 不管 .toml，TOML 排版由 taplo 保证（规则见 .taplo.toml）
-    - taplo fmt --check
-    - typos
-    - cargo clippy --locked --all-targets --all-features -- -D warnings
-    - RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --all-features --document-private-items
+    - install_tools just typos-cli taplo-cli
+    - just install-rustfmt
+    - just lint
 
-# ---------------------------------------------------------------------------
 # 测试 + 覆盖率
-# ---------------------------------------------------------------------------
 test:
   stage: check
   extends:
     - .cargo-cache
     - .rust-setup
+  variables:
+    # 用 .config/nextest.toml 里的 ci profile：不 fail-fast、失败重试、输出 JUnit
+    NEXTEST_PROFILE: ci
   script:
-    - install_tools cargo-nextest cargo-llvm-cov
-    # 这里没有单独的 `cargo check`：lint job 的 clippy 已是它的超集。
-    # 分两步：先只跑测试收集数据（--no-report），再从同一份数据出两种报告。
-    - cargo llvm-cov --no-report nextest --locked --profile ci --all-features
-    - cargo llvm-cov report --lcov --output-path lcov.info
-    - cargo llvm-cov report --summary-only
-    # nextest 不跑 doctest，有 lib target 时补一次
-    - if [ -f src/lib.rs ]; then cargo test --locked --doc --all-features; fi
+    - install_tools just cargo-nextest cargo-llvm-cov
+    # coverage 配方最后打印的汇总供下面的 coverage 正则提取
+    - just coverage doctest
   # 让 GitLab 的 MR 页面直接显示覆盖率百分比
   coverage: '/TOTAL.*?(\d+\.\d+)%/'
   artifacts:
@@ -147,68 +130,39 @@ test:
     reports:
       junit: target/nextest/ci/junit.xml
 
-# ---------------------------------------------------------------------------
 # 依赖审计：不需要编译，几秒出结果
-# ---------------------------------------------------------------------------
 deny:
   stage: check
   extends:
     - .cargo-cache
     - .rust-setup
   script:
-    - install_tools cargo-deny
-    - cargo deny check -A unmatched-bypass
+    - install_tools just cargo-deny
+    - just audit
 
-# ---------------------------------------------------------------------------
-# 特性组合检查：覆盖「只开某一个 feature 编不过」这类问题
-# ---------------------------------------------------------------------------
+# 特性组合检查：覆盖「只开某一个 feature 编不过」这类问题；没声明 feature 时配方直接跳过
 hack:
   stage: check
   extends:
     - .cargo-cache
     - .rust-setup
   script:
-    - install_tools cargo-hack
-    # 不能加 --locked：--no-dev-deps 会临时删掉 [dev-dependencies]，依赖图一变
-    # cargo 就要改 Cargo.lock，而 --locked 禁止改动，直接 101 退出。
-    # 「lock 是最新的」由 lint / test / msrv 那几个 job 的 --locked 保证。
-    - cargo hack --feature-powerset --depth 2 --no-dev-deps check
+    - install_tools just cargo-hack
+    - just hack
 
-# ---------------------------------------------------------------------------
-# 按 rust-toolchain.toml 的 channel 分两条路（与 GitHub 那套 build.yaml 的 msrv job 一致）：
-#   stable  → 验证 Cargo.toml 里声明的最低版本真的能编译
-#   nightly → MSRV 检查不适用，改用 `-Zpolonius=off` 把借用检查器换回 stable 的 NLL，
-#             拦下只有 nightly 编得过的代码
-# ---------------------------------------------------------------------------
+# stable 项目用 Cargo.toml 里声明的 rust-version 编一遍；nightly 项目改用
+# `-Zpolonius=off` 换回 stable 的 NLL 借用检查器编一遍。分支判断在 msrv 配方里。
 msrv:
   stage: check
   extends:
     - .cargo-cache
     - .rust-setup
   script:
-    - |
-      channel=$(grep -m1 '^channel' rust-toolchain.toml | sed -E 's/.*"([^"]+)".*/\1/')
-      version=$(grep -m1 '^rust-version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/' || true)
-      if [ "${channel#nightly}" != "$channel" ]; then
-        echo "工具链是 ${channel}：MSRV 检查不适用，改跑 NLL 兜底检查"
-        # 换个 target 目录，避免和其它 job 共用的 target/ 互相顶掉
-        export CARGO_TARGET_DIR=target/nll
-        RUSTFLAGS=-Zpolonius=off cargo check --locked --all-targets --all-features
-        exit 0
-      fi
-      if [ -z "$version" ]; then
-        echo "Cargo.toml 里没有 rust-version，跳过 MSRV 检查"; exit 0
-      fi
-      echo "MSRV = $version"
-      rustup toolchain install "$version" --profile minimal
-      cargo "+$version" check --locked --all-targets --all-features
+    - install_tools just
+    - just msrv
 
-# ---------------------------------------------------------------------------
-# 公开 API 的破坏性变更检查（与 GitHub 那套的 semver job 对齐）。
-# 以上一个 v* tag 为基线，指出该抬 minor 还是 major；没有 tag 时自动跳过。
-# 判断条件是「有 src/lib.rs 且没有 src/main.rs」：bin 项目的 lib target 是内部库，
-# 不参与检查；要同时对外发布库和命令行时，把 main.rs 那半条删掉。
-# ---------------------------------------------------------------------------
+# 公开 API 的破坏性变更检查：以上一个 v* tag 为基线，
+# 不是纯库项目或还没有 tag 时配方直接跳过
 semver:
   stage: check
   extends:
@@ -217,16 +171,8 @@ semver:
   variables:
     GIT_DEPTH: 0 # 需要完整历史才能找到上一个 tag
   script:
-    - |
-      if [ ! -f src/lib.rs ] || [ -f src/main.rs ]; then
-        echo "不是纯库项目，跳过 semver 检查"; exit 0
-      fi
-      if ! tag=$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null); then
-        echo "仓库还没有 v* tag，跳过 semver 检查"; exit 0
-      fi
-      echo "基线版本：$tag"
-      install_tools cargo-semver-checks
-      cargo semver-checks --baseline-rev "$tag"
+    - install_tools just cargo-semver-checks
+    - just semver
 
 # ---------------------------------------------------------------------------
 # 以下只在 v* tag 上跑
@@ -239,27 +185,10 @@ verify-tag:
   rules:
     - if: $CI_COMMIT_TAG =~ /^v/
   script:
-    - install_tools cargo-nextest cargo-deny typos-cli taplo-cli
-    # 与上面的 lint job 同一套检查，发版这条路径上不能比日常流水线松
-    - |
-      channel=$(grep -m1 '^channel' rust-toolchain.toml | sed -E 's/.*"([^"]+)".*/\1/')
-      case "$channel" in
-        nightly*)
-          FMT_TOOLCHAIN="$channel"
-          ;;
-        *)
-          FMT_TOOLCHAIN=nightly
-          rustup toolchain install nightly --allow-downgrade --profile minimal --component rustfmt
-          ;;
-      esac
-    - cargo "+$FMT_TOOLCHAIN" fmt --all -- --check
-    - taplo fmt --check
-    - typos
-    - cargo clippy --locked --all-targets --all-features -- -D warnings
-    - RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --all-features --document-private-items
-    - cargo nextest run --locked --all-targets --all-features
-    - if [ -f src/lib.rs ]; then cargo test --locked --doc --all-features; fi
-    - cargo deny check -A unmatched-bypass
+    - install_tools just cargo-nextest cargo-deny typos-cli taplo-cli
+    - just install-rustfmt
+    # 与上面的 lint / test / deny 同一套检查，发版这条路径上不能比日常流水线松
+    - just ci
     # 校验 tag 名与 Cargo.toml 里的版本一致
     - |
       version=$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')

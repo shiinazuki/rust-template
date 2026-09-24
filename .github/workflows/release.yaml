@@ -41,44 +41,15 @@ jobs:
           fi
       - name: Install Rust (版本由 rust-toolchain.toml 固定)
         run: rustup show active-toolchain || rustup toolchain install
-      # 规则同 justfile 的 fmt_toolchain
-      - name: Resolve rustfmt toolchain
-        run: |
-          channel=$(grep -m1 '^channel' rust-toolchain.toml | sed -E 's/.*"([^"]+)".*/\1/')
-          case "$channel" in
-            nightly*)
-              fmt="$channel"
-              ;;
-            *)
-              fmt=nightly
-              rustup toolchain install nightly --allow-downgrade --profile minimal --component rustfmt
-              ;;
-          esac
-          echo "FMT_TOOLCHAIN=$fmt" >> "$GITHUB_ENV"
       - name: Install cargo tools
         uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5 # v2.87.19
         with:
-          tool: cargo-nextest,cargo-deny,typos,taplo-cli
-      # 与 build.yaml 的 lint job 同一套检查，发版这条路径上不能比日常 CI 松
-      - name: Check code format
-        run: cargo "+$FMT_TOOLCHAIN" fmt --all -- --check
-      - name: Check TOML format
-        run: taplo fmt --check
-      - name: Check spelling
-        run: typos
-      - name: Lint rust sources
-        run: cargo clippy --locked --all-targets --all-features -- -D warnings
-      - name: Check documentation
-        env:
-          RUSTDOCFLAGS: -D warnings
-        run: cargo doc --locked --no-deps --all-features --document-private-items
-      - name: Run tests
-        run: cargo nextest run --locked --all-targets --all-features
-      - name: Run doc tests
-        if: hashFiles('src/lib.rs') != ''
-        run: cargo test --locked --doc --all-features
-      - name: Check dependencies
-        run: cargo deny check -A unmatched-bypass
+          tool: just,cargo-nextest,cargo-deny,typos,taplo-cli
+      - name: Install rustfmt
+        run: just install-rustfmt
+      # 与 build.yaml 同一套检查（lint / test / audit），发版这条路径上不能比日常 CI 松
+      - name: Lint, test and audit
+        run: just ci
       # 校验 tag 名与 Cargo.toml 里的版本一致
       - name: Tag matches Cargo.toml version
         env:
