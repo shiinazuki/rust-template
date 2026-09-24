@@ -28,6 +28,7 @@ This project enforces several **counter-intuitive** rules. Default Rust habits w
 ```bash
 just            # List all available recipes
 just check      # Fast compilation check (cargo check)
+just fmt        # Format Rust (rustfmt) and TOML (taplo)
 just test       # Run full test suite (cargo-nextest + doctests)
 just lint       # Formatting, TOML, clippy, typos, and doc checks (equivalent to the CI lint job)
 just ci         # Full local gate: lint + test + audit (this is what the pre-push hook runs)
@@ -35,23 +36,13 @@ just ci         # Full local gate: lint + test + audit (this is what the pre-pus
 
 **Run `just lint` at least once after modifying code.** Do not rely solely on `cargo build`—CI gates on clippy and rustdoc warnings, not just compilation success.
 
-## 5 Critical Gotchas (Do Not Violate)
+## 4 Critical Gotchas (Do Not Violate)
 
-### 1. Formatting MUST use nightly via `just fmt`
-
-```bash
-just fmt        # NEVER run raw `cargo fmt` or `cargo +nightly fmt` directly
-```
-
-`rustfmt.toml` relies on **unstable options** (such as `imports_granularity`, `group_imports`, `wrap_comments`). Stable `rustfmt` **silently ignores** them—no error, no formatting—so a local check passes while CI fails.
-
-Do not hardcode `cargo +nightly fmt` either: if `rust-toolchain.toml` pins a dated channel (e.g. `nightly-2026-08-18`), plain `+nightly` resolves to a **different** toolchain that may format differently. `just fmt` derives the exact toolchain from the channel (see `fmt_toolchain` in `justfile`).
-
-### 2. Zero Warnings Policy in CI
+### 1. Zero Warnings Policy in CI
 
 CI enforces `-D warnings` for both `cargo clippy` and rustdoc (`RUSTDOCFLAGS="-D warnings"`). Any warning fails the build, including broken intra-doc links, bare URLs, and invalid HTML in doc comments.
 
-### 3. Never Suppress Lints to Bypass CI
+### 2. Never Suppress Lints to Bypass CI
 
 When clippy complains, **fix the underlying code**. If suppression is genuinely unavoidable:
 
@@ -63,12 +54,12 @@ When clippy complains, **fix the underlying code**. If suppression is genuinely 
 - **`reason = "..."` is mandatory.**
 - `unsafe_code = "forbid"` is set workspace-wide and cannot be overridden by an attribute. If unsafe code is truly required, ask a human maintainer to downgrade it to `deny`.
 
-{% if toolchain == "stable" %}### 4. Compiler Version is Pinned by `rust-toolchain.toml`
+{% if toolchain == "stable" %}### 3. Compiler Version is Pinned by `rust-toolchain.toml`
 
 Do not override the toolchain with `rustup override set` or the `RUSTUP_TOOLCHAIN` environment variable. Both take silent precedence over `rust-toolchain.toml`; `just doctor` checks for exactly this.
 
 If the compiler itself crashes (`error: internal compiler error`, leaving `rustc-ice-*.txt`), run `just ice` before changing any code—it reports which compiler build crashed and where.
-{% else %}### 4. Nightly Toolchain & Borrow Checker Differences
+{% else %}### 3. Nightly Toolchain & Borrow Checker Differences
 
 This project targets nightly, which enables the Polonius borrow checker by default. It accepts more programs than stable NLL, with no warning to mark the difference, so code that builds here may not build on stable.
 
@@ -80,10 +71,10 @@ just nll        # Same nightly toolchain, stable NLL semantics
 
 Nightly moves daily; upstream ICEs or new clippy lints can break CI on their own. If an ICE occurs (`rustc-ice-*.txt`), run `just ice` before changing any code.
 {% endif %}
-{% if crate_type == "bin" %}### 5. Never Use `println!` for Standard Output
+{% if crate_type == "bin" %}### 4. Never Use `println!` for Standard Output
 
 Use the `print_line()` helper in `src/main.rs`. `println!` panics when a downstream pipe closes early (e.g. `app | head -n 1`). Diagnostics go to `stderr`, business output goes to `stdout`—never mix them.
-{% else %}### 5. Every Public Item Needs a Doc Comment
+{% else %}### 4. Every Public Item Needs a Doc Comment
 
 Library crates set `missing_docs = "warn"`, and CI runs `-D warnings`: a `pub` item without a doc comment fails the build. The crate root needs one too (`//!`)—`missing_crate_level_docs` is enforced as well.
 {% endif %}
@@ -148,7 +139,7 @@ refactor!: change greet return type to Result      # ! denotes breaking change
 ```
 
 Allowed types: `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`, `refactor`, `revert`, `style`, `test`.
-CHANGELOG entries and `cargo-release` version bumps are derived from these types via `cliff.toml`.
+CHANGELOG entries are grouped by these types via `cliff.toml`. The version bump is chosen explicitly: `just release patch|minor|major`.
 
 ## Prohibited Actions
 

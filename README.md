@@ -116,12 +116,14 @@ cargo generate --git https://github.com/shiinazuki/rust-template \
 | Docker 相关文件 | 按 `docker` 开关 | 始终不生成（库没有可执行入口） |
 | docs.rs 元数据 | 无 | `[package.metadata.docs.rs]` + `unexpected_cfgs` 登记 `docsrs` |
 | CI 的 semver job | 跳过 | 以上一个 tag 为基线检查 API 破坏性变更 |
+| CI 的 minimal-versions job | 跳过 | 直接依赖取声明的最低版本再编译 lib |
 | `just flamegraph` | 可用 | 跳过（没有 bin target） |
 
 bin 项目也有 `src/lib.rs`：`main.rs` 只做参数解析、日志初始化和错误收口，业务逻辑全在
 lib 一侧，集成测试、benchmark、doctest 都只能 `use` 到 lib target 导出的 `pub` 项。
-配套地，`just semver` 与 CI 的 semver job 只在纯库项目上跑，`missing_docs` 对 bin 仍是
-`allow`；要同时对外发布库和命令行时，把这两处判断里的 `src/main.rs` 条件删掉即可。
+配套地，`just semver` / `just minimal-versions` 与 CI 里对应的 job 只在纯库项目上跑，
+`missing_docs` 对 bin 仍是 `allow`；要同时对外发布库和命令行时，把这几处判断里的
+`src/main.rs` 条件删掉即可。
 
 `logging` 对库不生效：安装全局 tracing subscriber 是应用的职责。库里想发日志，
 只加 `tracing` 依赖用它的宏即可。选了它去生成库时，post-script 会打印一行说明。
@@ -244,8 +246,9 @@ just template-lint  # 检查模板仓库自身：taplo + typos + zizmor + action
 - 按 `.config/template-values.toml` 原地重新生成一次，结果与刚生成的完全一致——
   选项文件漏了占位符或值写错时，`just template-sync` 会改坏项目
 - 留下来的 `Cargo.lock` 与 `Cargo.toml` 对得上（`cargo metadata --locked`）
-- `just lint` / `just test` / `just audit` —— 与生成项目的 CI 执行同一组命令：rustfmt、
-  taplo 排版、clippy（`-D warnings`）、拼写、文档警告、nextest + doctest、依赖审计
+- `just lint` / `just test` / `just audit` / `just minimal-versions` —— 与生成项目的 CI 执行同一组命令：
+  rustfmt、taplo 排版、clippy（`-D warnings`）、拼写、文档警告、nextest + doctest、依赖审计、
+  库项目的依赖版本下限
 - README 与 `docs/development.md` 里的 Markdown 表格没有被条件块裁出的空行截断
 - 生成项目里的 TOML 都是合法 TOML
 - 没有残留未渲染的 `{{ }}` / `{% %}` —— 变量改名漏一处、`{% raw %}` 忘了配对就是这个症状，

@@ -26,7 +26,7 @@ doc-valid-idents = [
 # ---------------------------------------------------------------------------
 # 异步运行时下的阻塞 API 禁令
 #
-# 禁止误用 std 的阻塞式文件 / 进程 API，改用 tokio 的对应项。CI 用 `-D warnings`，
+# 禁止误用 std 的阻塞式文件 / 进程 / sleep API，改用 tokio 的对应项。CI 用 `-D warnings`，
 # 确有必要时在那一处写 #[expect(clippy::disallowed_types, reason = "...")]。
 # ---------------------------------------------------------------------------{% if async_runtime %}
 
@@ -60,6 +60,8 @@ disallowed-methods = [
   { path = "std::fs::soft_link", replacement = "tokio::fs::soft_link" },
   { path = "std::fs::symlink_metadata", replacement = "tokio::fs::symlink_metadata" },
   { path = "std::fs::write", replacement = "tokio::fs::write" },
+  # tokio::time 需要给 tokio 加 `time` feature
+  { path = "std::thread::sleep", replacement = "tokio::time::sleep" },
 ]
 # 新增禁令按同样的 { path, replacement } 写{% else %}
 
@@ -72,4 +74,5 @@ disallowed-methods = [
 # disallowed-methods = [
 #   { path = "std::fs::read_to_string", replacement = "tokio::fs::read_to_string" },
 #   { path = "std::fs::write", replacement = "tokio::fs::write" },
+#   { path = "std::thread::sleep", replacement = "tokio::time::sleep" },
 # ]{% endif %}

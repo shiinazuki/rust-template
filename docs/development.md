@@ -7,26 +7,15 @@
 工具链由 [`rust-toolchain.toml`](../rust-toolchain.toml) 固定为 {{ toolchain }}，首次进入目录时
 rustup 自动安装。这个文件会覆盖 rustup 的全局默认工具链，在本项目目录内一律以它为准。
 
-同时会装上 `rustfmt`、`clippy`、`rust-src`（rust-analyzer 解析标准库要用）和
-`llvm-tools-preview`（覆盖率要用）。`rust-analyzer`、`miri`、交叉编译 target 等可选项
-在该文件里以注释列出，按需打开。
+同时会装上 `rustfmt`、`clippy` 和 `rust-src`（rust-analyzer 解析标准库要用）。
+覆盖率要用的 `llvm-tools-preview` 由 `just coverage` 按需安装。`rust-analyzer`、`miri`、
+交叉编译 target 等可选项在该文件里以注释列出，按需打开。
 
-[`rustfmt.toml`](../rustfmt.toml) 用到了 `imports_granularity`、`group_imports`、`wrap_comments`
-等 unstable 选项，只有 nightly 的 rustfmt 才认（stable 会静默忽略），所以格式化一律走
-`just fmt` / `just lint`，不要手写 `cargo fmt`。
-{% if toolchain == "stable" %}
-本项目跑在 stable 上，需要额外装一次 nightly 的 rustfmt：`just install-rustfmt`
-（`just install-tools` 会顺带装，`just doctor` 会检查它在不在）。
-{% else %}
-本项目本身就跑在 nightly 上，格式化用的就是同一条工具链，不需要额外安装。
-
+[`rustfmt.toml`](../rustfmt.toml) 只用 stable 选项，编辑器保存时的格式化与 `just fmt` 结果一致。
+{% if toolchain == "nightly" %}
 nightly 滚动更新，偶尔会缺 `rustfmt` / `clippy` 组件，或者 clippy 新增的 lint 让 CI 的
 `-D warnings` 突然挂掉。前者加 `--allow-downgrade` 重装即可，后者把 `channel` 钉成日期版本，
 例如 `channel = "nightly-2026-08-18"`。
-
-钉日期版本不需要改任何格式化命令：`just fmt` / `just lint` 从 `channel` 推导该用哪条工具链
-（见 justfile 顶部的 `fmt_toolchain`），两套 CI 与 git 钩子调的也是它。也不要手写 `cargo +nightly fmt`，
-钉了日期之后 `+nightly` 指的是另一条工具链，排版可能不同。
 {% endif %}
 ### 编译器自己崩了（ICE）怎么办
 
@@ -119,7 +108,6 @@ cargo install cargo-binstall
 | `cargo-deny` | 依赖安全公告与 License 检查 |
 | `cargo-llvm-cov` | 覆盖率 |
 | `cargo-release` | 发版 |
-| `cargo-outdated` | 检查依赖是否有新版本 |
 | `cargo-machete` | 找出声明了却没用到的依赖 |
 | `cargo-semver-checks` | 公开 API 的破坏性变更检查 |
 | `cargo-hack` | feature 幂集检查 |
@@ -140,7 +128,7 @@ just hooks
 | 钩子 | 作用 | 大概耗时 |
 | --- | --- | --- |
 | `pre-commit` | 按**本次改动的文件类型**跑快速检查：`.rs` → rustfmt + clippy；`.toml` → taplo；`Cargo.toml` / `Cargo.lock` / `deny.toml` → cargo-deny；外加拼写与私钥检测 | 秒级 |
-| `commit-msg` | 校验 Conventional Commits —— CHANGELOG 分组与 cargo-release 的版本推导都依赖它 | 瞬间 |
+| `commit-msg` | 校验 Conventional Commits —— CHANGELOG 的分组依赖它 | 瞬间 |
 | `pre-push` | 跑一遍 `just ci`（lint / test / audit） | 十几秒起 |
 
 三层越往后越全也越慢：`pre-commit` 只跑秒级检查，提交到一半的活儿也该能存档；
@@ -168,7 +156,7 @@ just                 # 列出全部命令
 just doctor          # 环境体检：缺什么、怎么装
 just dev             # bacon 实时监控，边写边重跑 clippy
 just check           # 快速检查编译
-just fmt             # 格式化 .rs（nightly rustfmt）与 .toml（taplo）
+just fmt             # 格式化 .rs（rustfmt）与 .toml（taplo）
 just fix             # clippy --fix 自动修复 + 格式化
 just test            # 运行测试（含 doctest）
 just lint            # 格式化检查 + clippy + typos + 文档警告
@@ -200,9 +188,10 @@ just docker-clean       # 删除本地镜像
 含 `cargo doc` 的文档警告检查（`[workspace.lints.rustdoc]` 里 `bare_urls`、
 `invalid_html_tags` 这些只是 `warn`，本地不跑 `cargo doc` 就看不见）。
 
-`unused` / `semver` / `hack` / `msrv` / `nll` 留在外面手动跑：分别是误报多、没有 `v*` tag
-时无从比较、要额外装 cargo-hack、会往机器上装一整条工具链、换 `RUSTFLAGS` 等于全量重编。
-除 `unused` 外它们在两套 CI 里都有对应的 job（`semver` 只对纯库项目生效）。
+`unused` / `semver` / `hack` / `msrv` / `nll` / `minimal-versions` 留在外面手动跑：分别是误报多、
+没有 `v*` tag 时无从比较、要额外装 cargo-hack、会往机器上装一整条工具链、换 `RUSTFLAGS` 等于全量重编、
+要用 nightly 重新解析依赖。除 `unused` 外它们在两套 CI 里都有对应的 job
+（`semver` 与 `minimal-versions` 只对纯库项目生效）。
 
 ## 工程结构
 
@@ -216,13 +205,12 @@ just docker-clean       # 删除本地镜像
 | profile | 用途 |
 | --- | --- |
 | `dev` | 自身代码 O0 保证调试体验；依赖 O2（`[profile.dev.package."*"]`），运行时快一个数量级 |
-| `test` | O1，比 O0 跑得快又不用等 O3 的编译时间 |
-| `release` | O3 + thin LTO + `codegen-units = 1` + strip |
-| `profiling` | 继承 release 但保留符号，火焰图才有可读函数名：`just flamegraph` |
-| `bench` | 继承 release 且保留符号，保证 benchmark 测的是优化后的代码 |
+| `release` | O3 + thin LTO + `codegen-units = 1`，去掉调试信息但保留符号（panic backtrace 有函数名） |
+| `profiling` | 继承 release，另带完整调试信息，火焰图能对应到源码行与内联函数：`just flamegraph` |
+| `bench` | 继承 release，另带完整调试信息，保证 benchmark 测的是优化后的代码 |
 
-`Cargo.toml` 末尾还注释着两项按需打开的配置：`build-override`（加速 proc-macro 编译）
-和 `overflow-checks`（release 下也检查整数溢出）。
+`Cargo.toml` 末尾还注释着几项按需打开的配置：`profile.test` 的 `opt-level`（测试计算量大时用）、
+`build-override`（加速 proc-macro 编译）和 `overflow-checks`（release 下也检查整数溢出）。
 {% if async_runtime %}
 ### 异步运行时
 
@@ -233,8 +221,8 @@ just docker-clean       # 删除本地镜像
 入口是 `#[tokio::main]`。{% endif %}
 
 同时 [`clippy.toml`](../clippy.toml) 里启用了 `disallowed-types` / `disallowed-methods`：
-用到 `std::fs` / `std::process` 这类阻塞 API 会被拦下（CI 是 `-D warnings`，直接构建失败），
-请改用 `tokio::fs` 对应项。
+用到 `std::fs` / `std::process` / `std::thread::sleep` 这类阻塞 API 会被拦下（CI 是 `-D warnings`，
+直接构建失败），请改用 tokio 的对应项。
 
 这条禁令不区分 async 上下文——clippy 看不出一处调用是不是在 `async fn` 里，所以同步代码、
 测试、`build.rs` 里的 `std::fs` 一样会被拦。确有必要时在那一处写
@@ -271,14 +259,15 @@ just docker-clean       # 删除本地镜像
 - `RUST_LOG` 写成一个裸词（`RUST_LOG=inof`）时会提示一句：按 `EnvFilter` 的语法裸词是
   目标名不是级别，它解析得成功，于是默认指令失效、日志一条都不打，`EnvFilter` 自己不会出声。
 
-要输出 JSON 给日志采集系统、或者接 OpenTelemetry，文件末尾的注释里写了怎么改。
+要输出 JSON 给日志采集系统，给 `tracing-subscriber` 加上 `json` feature，再把 `fmt()` 换成
+`fmt().json()`；要接 OpenTelemetry，用 `tracing-opentelemetry` 再叠一层 layer。
 {% endif %}
 ## 项目里的各个配置文件
 
 | 文件 | 作用 |
 | --- | --- |
 | [`rust-toolchain.toml`](../rust-toolchain.toml) | 固定工具链版本与组件 |
-| [`rustfmt.toml`](../rustfmt.toml) | 格式化规则（含 unstable 选项，走 nightly） |
+| [`rustfmt.toml`](../rustfmt.toml) | 格式化规则（只用 stable 选项） |
 | [`clippy.toml`](../clippy.toml) | Clippy 行为配置（lint 开关在 `Cargo.toml` 的 `[workspace.lints]`） |
 | [`deny.toml`](../deny.toml) | 依赖的安全公告 / License / 重复版本 / 来源审计，外加 build script 里夹带的二进制与脚本 |
 | [`.taplo.toml`](../.taplo.toml) | TOML 格式化规则（rustfmt 只管 `.rs`，`.toml` 归 taplo） |
@@ -317,6 +306,8 @@ just docker-clean       # 删除本地镜像
 - **hack** —— `just hack`：遍历 feature 幂集，防止「单独开某个 feature 编不过」；没声明 feature 时跳过
 - **semver** —— `just semver`：以上一个 tag 为基线检查公开 API 破坏性变更（仅**纯库**项目，
   没有 tag 时跳过；二进制项目的 `src/lib.rs` 是自用的内部库，不对外承诺 API）
+- **minimal-versions** —— `just minimal-versions`：直接依赖取 `Cargo.toml` 允许的最低版本再编译 lib，
+  确认写下的版本下限真的可用（仅**纯库**项目）
 - **docker** —— 构建一次容器镜像确认 Dockerfile 没坏（仅选了 Docker 的项目；只构建不推送）
 
 CI 环境里 justfile 会给 cargo 命令自动加上 `--locked`。
@@ -324,20 +315,22 @@ CI 环境里 justfile 会给 cargo 命令自动加上 `--locked`。
 打 `v*` tag 触发 [`release.yaml`](../.github/workflows/release.yaml)：
 
 - **verify** —— 把 tag 指向的 commit 从零验证一遍，并核对 tag 与 `Cargo.toml` 版本一致
-- **github-release** —— git-cliff 生成变更说明并创建 Release
 - **binaries** —— 五个目标平台（Linux musl x64/arm64、macOS x64/arm64、Windows x64）
-  交叉编译、打包、生成 sha256 并挂到 Release 上（仅 bin 项目）。
+  交叉编译、打包、生成 sha256（仅 bin 项目）。
   可选再加一层构建来源证明（SLSA provenance，Sigstore 签名，`gh attestation verify` 可验）：
   校验和只证明「文件没被改过」，来源证明回答「它是谁造的」。默认关闭，
   需要在仓库 Variables 里加 `ATTEST_BUILD_PROVENANCE=true`（私有仓库需要 GitHub Enterprise）
+- **github-release** —— git-cliff 生成变更说明，连同全部二进制一次性创建 Release。
+  附件在发布前就位，仓库开了 immutable releases（发布后不能再改附件）也能用
 - **crates-io** —— 用 crates.io 的 Trusted Publishing（OIDC，无需长期 token）发布，
   **默认关闭**，需要在仓库 Variables 里加 `PUBLISH_TO_CRATES_IO=true`
 
 [`audit.yaml`](../.github/workflows/audit.yaml) 每天定时跑一次依赖审计：安全公告是
 「代码没动风险也会变」的东西，只靠 PR 触发发现不了。
 
-改动 `.github/workflows/` 时另外触发 [`workflows.yaml`](../.github/workflows/workflows.yaml)：
-用 [zizmor](https://docs.zizmor.sh/) 审计 workflow 的**安全性**（脚本注入、过宽权限、缓存投毒），
+改动 `.github/workflows/` 或 `.github/dependabot.yml` 时另外触发 [`workflows.yaml`](../.github/workflows/workflows.yaml)：
+用 [zizmor](https://docs.zizmor.sh/) 审计 workflow 与 dependabot 配置的**安全性**（脚本注入、过宽权限、
+缓存投毒、依赖升级冷却期），
 再用 [actionlint](https://github.com/rhysd/actionlint) 查**正确性**（表达式写错、不存在的
 job 依赖、`run:` 里的 shell 语法）——两者不重叠。
 
@@ -345,7 +338,7 @@ job 依赖、`run:` 里的 shell 语法）——两者不重叠。
 
 - CI 与发布分成两个 workflow，发布流程不使用编译缓存：缓存是可写的，一旦发布产物建立在
   缓存之上，污染缓存就等价于污染 release 二进制。
-- 按 target 裁剪的 job（semver / binaries / docker）一律靠 `detect` 传出的 outputs 判断，
+- 按 target 裁剪的 job（semver / minimal-versions / binaries / docker）一律靠 `detect` 或 `verify` 传出的 outputs 判断，
   而不是在 job 级写 `if: hashFiles(...)`——job 级的 `if:` 在 checkout 之前求值，
   那时 hashFiles 恒为空串，job 会被静默跳过且不报错。
 - 第三方 action 全部用 commit hash 钉死（后面的 `# vX.Y.Z` 是给人看的），
@@ -363,6 +356,7 @@ job 依赖、`run:` 里的 shell 语法）——两者不重叠。
 - **msrv** —— 用声明的最低版本编译一遍；nightly 项目改成用 `-Zpolonius=off` 编一遍，
   拦下只有新借用检查器才编得过的代码
 - **semver** —— 以上一个 tag 为基线检查公开 API 破坏性变更（仅**纯库**项目，没有 tag 时跳过）
+- **minimal-versions** —— 直接依赖取允许的最低版本再编译 lib（仅**纯库**项目）
 
 打 `v*` tag 时额外跑 **verify-tag**（从零验证 + 核对版本号）、**changelog**、
 **build-binary**、**release**。

@@ -77,16 +77,16 @@ incompatible-rust-versions = "fallback"
 #   aarch64-unknown-linux-gnu  换 mold 或显式开 lld 有明显收益
 #   macOS                      Xcode 15 起的系统 ld 本身已经很快
 #   windows-msvc               默认 link.exe，换 rust-lld（lld-link）一般更快
-#
-# 启用下面任一段即等于给项目设了 rustflags，注意文件开头那条覆盖规则。
 # ---------------------------------------------------------------------------
 
 # [target.aarch64-unknown-linux-gnu]
-# # 需要先装 mold（apt install mold / brew install mold），CI 镜像里也得装
+# # 需要先装 mold（apt install mold / brew install mold），CI 镜像里也得装。
+# # 这一段等于给项目设了 rustflags，注意文件开头那条覆盖规则。
 # rustflags = ["-C", "link-arg=-fuse-ld=mold"]
 
 # [target.x86_64-pc-windows-msvc]
-# rustflags = ["-C", "linker-features=+lld"]
+# # rust-lld.exe 随工具链分发，不用另装
+# linker = "rust-lld.exe"
 
 # ---------------------------------------------------------------------------
 # 并行前端（仅 nightly）

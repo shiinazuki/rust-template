@@ -28,7 +28,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          submodules: recursive
           persist-credentials: false
       # 模板仓库本身不该走发版流程，这里提前报错拦下
       # （build.yaml / audit.yaml 是自动触发，所以那两条选择跳过；打 tag 是人主动做的）。
@@ -45,8 +44,6 @@ jobs:
         uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5 # v2.87.19
         with:
           tool: just,cargo-nextest,cargo-deny,typos,taplo-cli
-      - name: Install rustfmt
-        run: just install-rustfmt
       # 与 build.yaml 同一套检查（lint / test / audit），发版这条路径上不能比日常 CI 松
       - name: Lint, test and audit
         run: just ci
@@ -68,46 +65,16 @@ jobs:
           echo "is_bin=$is_bin" >> "$GITHUB_OUTPUT"
           echo "bin=$is_bin"
 
-  # 生成本次的变更说明并创建 GitHub Release
-  github-release:
-    name: github release
-    needs: [verify]
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: write # 创建 Release 需要写权限
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0 # git-cliff 需要完整历史才能算出版本区间
-          persist-credentials: false
-      - name: Generate a changelog
-        uses: orhun/git-cliff-action@a9a95522b26fe6403f7bb24031f21fb573d0f5ff # v4.9.1
-        id: git-cliff
-        with:
-          config: cliff.toml
-          # --offline: 只用 GITHUB_REPO 拼提交链接，不调 GitHub API
-          args: -vv --latest --strip header --offline
-        env:
-          OUTPUT: CHANGES.md
-          GITHUB_REPO: ${{ github.repository }}
-      - name: Create release
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
-        with:
-          body: ${{ steps.git-cliff.outputs.content }}
-          # 预发布版本（v1.2.3-rc.1）自动标记成 pre-release
-          prerelease: ${{ contains(github.ref_name, '-') }}
-
-  # 跨平台编译二进制并挂到上面那个 Release 上（只有 bin 项目才跑）。
-  # upload-rust-binary-action 一步完成编译、打包（Unix 出 .tar.gz、Windows 出 .zip）、
-  # 生成 sha256 校验和与上传。
+  # 跨平台编译二进制（只有 bin 项目才跑），产物交给下面的 github-release job 统一发布。
+  # upload-rust-binary-action 一步完成编译、打包（Unix 出 .tar.gz、Windows 出 .zip）与
+  # sha256 校验和；dry-run 模式下只构建不上传。
   binaries:
     name: binary (${{ matrix.target }})
     # verify 必须列进 needs 才能读到它的 outputs
-    needs: [verify, github-release]
+    needs: [verify]
     if: needs.verify.outputs.is_bin == 'true'
     permissions:
-      contents: write # 往 Release 里传附件
+      contents: read
       # 下面两项只有开了 provenance 签名（见本 job 末尾那一步）才用得上
       id-token: write
       attestations: write
@@ -145,8 +112,8 @@ jobs:
         id: pkg
         shell: bash
         run: echo "name=$(grep -m1 '^name' Cargo.toml | sed -E 's/.*"(.*)".*/\1/')" >> "$GITHUB_OUTPUT"
-      - name: Build and upload
-        id: upload
+      - name: Build and package
+        id: build
         uses: taiki-e/upload-rust-binary-action@f0d45ae91ee7b8ee928de7a9d04d893a08bcbec6 # v1.30.2
         with:
           bin: ${{ steps.pkg.outputs.name }}
@@ -156,7 +123,8 @@ jobs:
           archive: $bin-$tag-$target
           checksum: sha256
           locked: true
-          token: ${{ secrets.GITHUB_TOKEN }}
+          dry-run: true
+          dry-run-intended: true
       # 构建来源证明（SLSA provenance）：由 GitHub 用一次性 OIDC 凭据在 Sigstore 上
       # 签一份「这个文件由本仓库的哪个 workflow、哪个 commit 构建」，公开可验：
       #     gh attestation verify <下载到的压缩包> --repo <owner>/<repo>
@@ -169,7 +137,63 @@ jobs:
         if: vars.ATTEST_BUILD_PROVENANCE == 'true'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-path: ${{ steps.upload.outputs.tar || steps.upload.outputs.zip }}
+          subject-path: ${{ steps.build.outputs.tar || steps.build.outputs.zip }}
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist-${{ matrix.target }}
+          path: |
+            ${{ steps.build.outputs.tar || steps.build.outputs.zip }}
+            ${{ steps.build.outputs.sha256 }}
+          if-no-files-found: error
+          retention-days: 7
+
+  # 生成本次的变更说明，连同全部二进制一次性创建 GitHub Release。
+  # gh release create 带附件时先建草稿、传完附件再发布，兼容 immutable releases。
+  github-release:
+    name: github release
+    needs: [verify, binaries]
+    # lib 项目的 binaries 是 skipped，照样要发 Release
+    if: ${{ !cancelled() && needs.verify.result == 'success' && (needs.binaries.result == 'success' || needs.binaries.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write # 创建 Release 需要写权限
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # git-cliff 需要完整历史才能算出版本区间
+          persist-credentials: false
+      - name: Generate a changelog
+        uses: orhun/git-cliff-action@a9a95522b26fe6403f7bb24031f21fb573d0f5ff # v4.9.1
+        with:
+          config: cliff.toml
+          # --offline: 只用 GITHUB_REPO 拼提交链接，不调 GitHub API
+          args: -vv --latest --strip header --offline
+        env:
+          OUTPUT: CHANGES.md
+          GITHUB_REPO: ${{ github.repository }}
+      - name: Download build artifacts
+        if: needs.verify.outputs.is_bin == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          shopt -s nullglob
+          assets=(dist/*)
+          flags=()
+          # 预发布版本（v1.2.3-rc.1）自动标记成 pre-release
+          if [[ "$TAG" == *-* ]]; then
+            flags+=(--prerelease)
+          fi
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "$TAG" --notes-file CHANGES.md "${flags[@]}" "${assets[@]}"
 
   # 发布到 crates.io。默认不启用，在仓库
   # Settings → Secrets and variables → Actions → Variables 里加 PUBLISH_TO_CRATES_IO=true 打开。

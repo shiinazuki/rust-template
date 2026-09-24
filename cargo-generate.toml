@@ -80,7 +80,7 @@ ignore = ["CHANGELOG.md", ".github/workflows/template-ci.yaml", "template.just",
 
 [hooks]
 # 生成后收尾：整理 LICENSE、把 _README.md 顶替成 README.md、按需删 Cargo.lock、
-# 检查 nightly 组件是否齐全、打印下一步提示。
+# 打印下一步提示。
 post = ["post-script.rhai"]
 
 # ---------------------------------------------------------------------------
@@ -109,8 +109,7 @@ regex = "^[A-Za-z0-9][A-Za-z0-9._/-]{0,98}$"
 # 没有单独问「托管在哪个平台」：域名由下面的 ci 选项推导（gitlab -> gitlab.com，
 # 其余 -> github.com）。ci = none 又托管在 GitLab 时，生成完手工改 repository 即可。
 
-# 默认 stable：生成的骨架里没有任何 #![feature(...)]，唯一需要 nightly 的
-# rustfmt 已经和 channel 解耦（见 justfile 的 fmt_toolchain）。
+# 默认 stable：生成的骨架里没有任何 #![feature(...)]，rustfmt 也只用 stable 选项。
 # 真的需要 #![feature(...)] 时再选 nightly。
 [placeholders.toolchain]
 type = "string"

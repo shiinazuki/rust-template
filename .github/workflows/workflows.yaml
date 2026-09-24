@@ -1,15 +1,15 @@
 name: workflows
 
-# workflow 文件自己的静态检查，只在 .github/workflows/ 有改动时触发。两个工具互补：
-#   zizmor      安全向——脚本注入、过宽权限、缓存投毒、可变 tag
+# workflow 与 dependabot 配置的静态检查，只在它们有改动时触发。两个工具互补：
+#   zizmor      安全向——脚本注入、过宽权限、缓存投毒、可变 tag、dependabot 冷却期
 #   actionlint  正确性向——表达式、job 依赖、runner 标签、run: 里的 shell 语法
 on:
   push:
     branches: [main]
-    paths: [".github/workflows/**"]
+    paths: [".github/workflows/**", ".github/dependabot.yml"]
   pull_request:
     branches: [main]
-    paths: [".github/workflows/**"]
+    paths: [".github/workflows/**", ".github/dependabot.yml"]
   workflow_dispatch:
 
 concurrency:
@@ -56,7 +56,7 @@ jobs:
           actionlint --version
       # --min-severity medium：低危项多是风格建议。想更严就去掉这个参数，
       # 或加 --persona=pedantic。
-      - name: Audit GitHub Actions workflows
-        run: zizmor --min-severity medium --no-progress .github/workflows
+      - name: Audit GitHub Actions workflows and dependabot
+        run: zizmor --min-severity medium --no-progress .github
       - name: Lint GitHub Actions workflows
         run: actionlint -color

@@ -42,9 +42,9 @@ jobs:
       # 组件装齐，免得后面 rustup 现装时撞上缺组件的 nightly。
       - name: Install Rust
         run: |
-          rustup toolchain install stable --profile minimal --component clippy
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy,rust-src
           rustup toolchain install nightly --allow-downgrade --profile minimal \
-            --component rustfmt,clippy,rust-src,llvm-tools
+            --component rustfmt,clippy,rust-src
       - name: Install tools
         uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5 # v2.87.19
         with:

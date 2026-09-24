@@ -40,9 +40,9 @@ template-lint:
     else
         echo "  - 未安装 typos，跳过（cargo binstall typos-cli）"
     fi
-    echo "== zizmor（workflow 安全审计）=="
+    echo "== zizmor（workflow 与 dependabot 安全审计）=="
     if command -v zizmor >/dev/null 2>&1; then
-        zizmor --min-severity medium --no-progress .github/workflows || fail=1
+        zizmor --min-severity medium --no-progress .github || fail=1
     else
         echo "  - 未安装 zizmor，跳过（cargo binstall zizmor）"
     fi

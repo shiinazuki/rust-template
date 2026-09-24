@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# 校验提交信息是否符合 Conventional Commits：CHANGELOG 的分组与
-# cargo-release 的版本推导都依赖它。
+# 校验提交信息是否符合 Conventional Commits：CHANGELOG 的分组依赖它。
 #
 # 安装：just hooks        临时跳过：git commit --no-verify
 set -euo pipefail
@@ -31,7 +30,7 @@ fi
     echo "  type：${types}"
     # 引号括住的 'EOF'：里面的反引号和 $ 按字面量处理，不做替换
     cat <<'EOF'
-  结尾的 `!` 表示破坏性变更（会让 cargo-release 抬 major）
+  结尾的 `!` 表示破坏性变更（CHANGELOG 里会标成 breaking）
 
   例子：
     feat(cli): 支持 --json 输出

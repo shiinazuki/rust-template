@@ -134,26 +134,27 @@ debug = false
 [profile.release]
 lto = "thin" # 改成 "fat" 体积更小，编译更慢
 codegen-units = 1
-strip = "symbols"
+# 去掉调试信息、保留符号表，panic 的 backtrace 里有函数名；"symbols" 体积更小但 backtrace 为空
+strip = "debuginfo"
 # panic = "abort" # 二进制更小，但会禁用 unwind 并影响 #[should_panic] 测试
 
 # 性能分析（flamegraph / samply / instruments）用：cargo build --profile profiling
-# 优化级别与 release 一致，但保留符号
+# 优化级别与 release 一致，另带完整调试信息，采样结果能对应到源码行与内联函数
 [profile.profiling]
 inherits = "release"
 debug = true
 strip = "none"
 
-# bench 默认继承 release 的优化级别，这里只把符号留下
+# bench 默认继承 release 的优化级别，这里另带完整调试信息
 [profile.bench]
 debug = true
 strip = "none"
 
-# 测试用 O1
-[profile.test]
-opt-level = 1
-
-# 按需打开的两项：
+# 按需打开的几项：
+#
+# [profile.test]
+# 测试计算量大、O0 跑得太慢时打开
+# opt-level = 1
 #
 # [profile.dev.build-override]
 # build script 与 proc-macro 的编译配置，[profile.dev.package."*"] 管不到它们
@@ -207,7 +208,7 @@ closure_returning_async_block = "warn"
 # single_use_lifetimes = "warn"
 # dead_code_pub_in_binary = "warn"
 # 仅 nightly（需 #![feature(unqualified_local_imports)]）：本 crate 内部的 use
-# 一律写成 self:: / super:: / crate:: 开头，配合 rustfmt 的 group_imports。
+# 一律写成 self:: / super:: / crate:: 开头。
 # unqualified_local_imports = "warn"
 # 强制公开 API 写文档注释，仅库项目打开
 missing_docs = "{% if crate_type == 'lib' %}warn{% else %}allow{% endif %}"

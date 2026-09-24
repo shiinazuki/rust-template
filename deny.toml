@@ -44,8 +44,6 @@ allow = [
   "Unicode-3.0",
   "Unicode-DFS-2016",
   "Unlicense",
-  # SPDX 里的 License 名，ring（rustls 的默认后端）的许可表达式里带这一项
-  "OpenSSL",
 ]
 # allow / exceptions 里列了却没被用到的 License 不报 warning
 unused-allowed-license = "allow"
@@ -58,9 +56,9 @@ exceptions = [
 
 # 手工澄清机器读不出 License 信息的 crate
 # [[licenses.clarify]]
-# crate = "ring"
-# expression = "MIT AND ISC AND OpenSSL"
-# license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
+# crate = "some-crate"
+# expression = "MIT AND ISC"
+# license-files = [{ path = "LICENSE", hash = 0x12345678 }]   # hash 以 cargo deny 报出的为准
 
 # ---------------------------------------------------------------------------
 # 依赖版本与特性禁令

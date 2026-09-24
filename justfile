@@ -18,10 +18,6 @@ pkg := `grep -m1 '^name' Cargo.toml | sed -E 's/.*"(.*)".*/\1/'`
 # rust-toolchain.toml 声明的 channel。两套 CI 与 git 钩子都调用本文件的配方，不再各自解析。
 channel := `grep -m1 '^channel' rust-toolchain.toml 2>/dev/null | sed -E 's/.*"([^"]+)".*/\1/' || true`
 
-# 格式化用的工具链：channel 是 nightly / nightly-YYYY-MM-DD 时用它自己，
-# 否则退回 nightly（由 `just install-rustfmt` 安装）
-fmt_toolchain := if channel =~ '^nightly' { channel } else { "nightly" }
-
 # CI 环境（GitHub / GitLab 都会设 CI）里给 cargo 命令加 --locked；本地由 `just ci` 的 _lock-fresh 把关
 locked := if env("CI", "") == "" { "" } else { "--locked" }
 
@@ -78,7 +74,7 @@ run *args: _generated-only
 [group('dev')]
 [doc('格式化代码与 TOML')]
 fmt: _generated-only
-    cargo +{{ fmt_toolchain }} fmt --all
+    cargo fmt --all
     taplo fmt
 
 [group('dev')]
@@ -102,7 +98,7 @@ doc: _generated-only
 bench *args: _generated-only
     cargo bench --all-features {{ args }}
 
-# 用 profiling profile 采样：优化等级与 release 一致，但保留符号。
+# 用 profiling profile 采样：优化等级与 release 一致，另带完整调试信息。
 # macOS 上 cargo-flamegraph 走 dtrace，需要 sudo；也可以换 samply：
 #     cargo build --profile profiling && samply record ./target/profiling/<包名>
 [group('dev')]
@@ -135,7 +131,7 @@ clean: _generated-only
 [group('check')]
 [doc('格式化检查 / TOML 排版 / clippy / 拼写检查 / 文档警告（CI 的 lint job 跑的就是它）')]
 lint: _generated-only
-    cargo +{{ fmt_toolchain }} fmt --all -- --check
+    cargo fmt --all -- --check
     taplo fmt --check
     cargo clippy {{ locked }} --all-targets --all-features -- -D warnings
     typos
@@ -160,7 +156,7 @@ doctest: _generated-only
 # 想给覆盖率设下限，在最后一条后面加 --fail-under-lines N（N 是百分比）。
 [group('check')]
 [doc('跑测试并生成覆盖率报告（lcov.info + 终端汇总）')]
-coverage: _generated-only
+coverage: _generated-only _llvm-tools
     cargo llvm-cov clean --workspace
     cargo llvm-cov --no-report nextest {{ locked }} --all-features
     cargo llvm-cov report --lcov --output-path lcov.info
@@ -168,8 +164,13 @@ coverage: _generated-only
 
 [group('check')]
 [doc('生成 HTML 覆盖率报告并在浏览器里打开')]
-coverage-html: _generated-only
+coverage-html: _generated-only _llvm-tools
     cargo llvm-cov nextest --all-features --html --open
+
+# cargo-llvm-cov 需要的 llvm-tools 组件不在 rust-toolchain.toml 里，由覆盖率配方按需安装
+[private]
+_llvm-tools:
+    rustup component add llvm-tools-preview
 
 [group('check')]
 [doc('依赖安全与 License 检查')]
@@ -217,6 +218,30 @@ semver: _generated-only
     fi
     echo "基线版本：$tag"
     cargo semver-checks --baseline-rev "$tag"
+
+# 把直接依赖解析到版本约束允许的最低版本（间接依赖仍取最新）再编译 lib，
+# 验证 Cargo.toml 里写的下限真的可用。解析要用 nightly cargo 的 -Zdirect-minimal-versions，
+# 结束后恢复原来的 Cargo.lock。CI 的 minimal-versions job 跑的就是它。
+[group('check')]
+[doc('用依赖声明的最低版本编译 lib（仅纯库项目；需要 nightly 工具链）')]
+minimal-versions: _generated-only
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ ! -f src/lib.rs ] || [ -f src/main.rs ]; then
+        echo "不是纯库项目，跳过 minimal-versions 检查"
+        exit 0
+    fi
+    if [[ "{{ channel }}" == nightly* ]]; then
+        nightly="{{ channel }}"
+    else
+        nightly=nightly
+        # 只在没有 nightly 时安装，不顺带升级已有的
+        cargo +nightly --version >/dev/null 2>&1 || rustup toolchain install nightly --profile minimal
+    fi
+    cp Cargo.lock Cargo.lock.bak
+    trap 'mv Cargo.lock.bak Cargo.lock' EXIT
+    cargo "+$nightly" update -Zdirect-minimal-versions
+    CARGO_TARGET_DIR=target/minimal-versions cargo check --lib --all-features
 
 # nightly 项目上 MSRV 检查不适用，自动转去跑 `just nll`。CI 的 msrv job 跑的就是它。
 [group('check')]
@@ -310,7 +335,7 @@ _lock-fresh: _generated-only
     fi
 
 # 覆盖 CI 里的 lint / test / deny 三个 job。
-# 不含 hack / msrv / nll，它们各自是独立配方，CI 上照常会跑。
+# 不含 hack / msrv / nll / minimal-versions，它们各自是独立配方，CI 上照常会跑。
 [group('check')]
 [doc('本地跑一遍 CI 的主要检查（lint / test / audit）')]
 ci: _lock-fresh lint test audit
@@ -324,15 +349,12 @@ ci: _lock-fresh lint test audit
 update: _generated-only && audit
     cargo update
 
+# 只预演不写 Cargo.lock。约束内能升的显示为 Updating，
+# 要改 Cargo.toml 里的约束才能升的在行尾标 (available: vX.Y.Z)。
 [group('deps')]
-[doc('列出可升级的依赖（需要 cargo-outdated）')]
+[doc('列出可升级的依赖（不改 Cargo.lock）')]
 outdated: _generated-only
-    cargo outdated --root-deps-only --exit-code 1
-
-[group('deps')]
-[doc('更新 git submodule')]
-update-submodule:
-    git submodule update --init --recursive --remote
+    cargo update --dry-run --verbose
 
 # ---------------------------------------------------------------------------
 # 发布
@@ -346,12 +368,18 @@ changelog:
     # --offline: 只用 owner/repo 拼链接，不去调平台 API
     just _cliff --offline -o CHANGELOG.md
 
-# 内部配方：把 CHANGELOG 生成到指定版本，供 release.toml 的 pre-release-hook 调用
+# 内部配方：把 CHANGELOG 生成到指定版本，供 release.toml 的 pre-release-hook 调用。
+# cargo-release 预演时也会调用它（环境变量 DRY_RUN=true），这时不写文件。
 [private]
 _changelog-for version:
     #!/usr/bin/env bash
     set -euo pipefail
+    if [ "${DRY_RUN:-false}" = true ]; then
+        exit 0
+    fi
     just _cliff --offline --tag "v{{ version }}" -o CHANGELOG.md
+    # cargo-release 只提交已跟踪的文件，首次发版生成的 CHANGELOG.md 要先纳入跟踪
+    git add CHANGELOG.md
 
 # 内部配方：带上正确的平台变量调用 git-cliff，两个 changelog 配方共用
 [private]
@@ -446,8 +474,7 @@ doctor:
 
     echo "== 组件 =="
     installed=$(rustup component list --installed 2>/dev/null)
-    # llvm-tools 在 `component list` 里显示为 llvm-tools（不带 -preview 后缀）
-    for c in clippy rust-src llvm-tools; do
+    for c in rustfmt clippy rust-src; do
         if grep -q "^${c}" <<<"$installed"; then
             echo "  ✓ ${c}"
         else
@@ -456,23 +483,24 @@ doctor:
         fi
     done
 
-    # 查的是 just fmt / just lint 真正会用的那条工具链（见文件开头的 fmt_toolchain）
-    if rustup component list --toolchain '{{ fmt_toolchain }}' --installed 2>/dev/null | grep -q '^rustfmt'; then
-        echo "  ✓ rustfmt ({{ fmt_toolchain }})"
-    else
-        echo "  ✗ rustfmt ({{ fmt_toolchain }}) -> just install-rustfmt"
-        missing=1
-    fi
-
-    echo "== 配套工具 =="
-    for t in cargo-nextest cargo-deny cargo-llvm-cov cargo-release cargo-outdated \
-             cargo-machete cargo-semver-checks cargo-hack typos taplo git-cliff bacon; do
+    # 缺了会让 just ci 失败的，计入缺失项
+    echo "== 配套工具（just ci 必需）=="
+    for t in cargo-nextest cargo-deny typos taplo; do
         if command -v "$t" >/dev/null 2>&1; then
             echo "  ✓ ${t}"
         else
             echo "  ✗ ${t} -> just install-tools"
             missing=1
         fi
+    done
+
+    # 只有对应的配方用得到，不计入缺失项
+    echo "== 配套工具（按需）=="
+    for t in cargo-llvm-cov cargo-release git-cliff cargo-hack cargo-semver-checks \
+             cargo-machete bacon; do
+        command -v "$t" >/dev/null 2>&1 \
+            && echo "  ✓ ${t}" \
+            || echo "  - ${t}（未安装 -> just install-tools）"
     done
 
     # ICE 转储只提示，不计入缺失项
@@ -515,7 +543,6 @@ install-tools:
         cargo-deny         # 依赖安全与 License 检查
         cargo-llvm-cov     # 覆盖率
         cargo-release      # 发版
-        cargo-outdated     # 检查依赖是否有新版本
         cargo-machete      # 找出没用到的依赖
         cargo-semver-checks # 公开 API 的破坏性变更检查
         typos-cli          # 拼写检查
@@ -534,18 +561,6 @@ install-tools:
         echo "本次先用 cargo install 逐个编译，请耐心等待……"
         echo ""
         cargo install --locked "${tools[@]}"
-    fi
-    just install-rustfmt
-
-# channel 本身是 nightly 时，rust-toolchain.toml 的 components 里已经带了 rustfmt。
-# --allow-downgrade：当天 nightly 缺 rustfmt 组件时自动退回最近一个齐全的版本。
-[group('setup')]
-[doc('安装格式化用的 nightly rustfmt（channel 是 nightly 时无需安装）')]
-install-rustfmt:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if [[ "{{ channel }}" != nightly* ]]; then
-        rustup toolchain install nightly --allow-downgrade --profile minimal --component rustfmt
     fi
 
 # 生成本项目的模板地址，fork 了模板的话改成自己的；也可以临时指定：just template-sync ../rust-template
@@ -586,7 +601,7 @@ hooks:
     git config core.hooksPath .githooks
     echo "✓ 已启用 .githooks/"
     echo "    pre-commit  按改动跑快速检查（fmt / clippy / taplo / typos / 私钥）"
-    echo "    commit-msg  校验 Conventional Commits（CHANGELOG 与版本推导依赖它）"
+    echo "    commit-msg  校验 Conventional Commits（CHANGELOG 的分组依赖它）"
     echo "    pre-push    跑一遍 just ci（lint / test / audit）"
     echo "  临时跳过：git commit --no-verify / git push --no-verify"
     echo "  停用：git config --unset core.hooksPath"

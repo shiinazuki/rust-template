@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
-# 模板自测：按矩阵生成若干种组合的项目，逐个跑与 CI 相同的 just lint / test / audit 等检查。
+# 模板自测：按矩阵生成若干种组合的项目，逐个跑与 CI 相同的 just lint / test / audit /
+# minimal-versions 等检查。
 #
 #   bash scripts/smoke.sh            # 默认矩阵（10 组，覆盖各开关的开与关）
 #   bash scripts/smoke.sh --full     # 完整矩阵（19 组：bin 的 3 个源码开关全排列
@@ -265,7 +266,8 @@ for row in "${matrix[@]}"; do
     # 3. 与 CI 相同的检查。先按 just bootstrap 的做法生成 Cargo.lock，
     #    否则 CI 环境里带 --locked 的命令会直接失败
     cargo fetch >"$workdir/$proj.fetch.log" 2>&1
-    for recipe in lint test audit; do
+    # minimal-versions 只在纯库项目上真正执行，其余组合里直接跳过
+    for recipe in lint test audit minimal-versions; do
         if ! just "$recipe" >"$workdir/$proj.$recipe.log" 2>&1; then
             echo "  ✗ just $recipe 不通过（$workdir/$proj.$recipe.log）"; ok=0
         fi

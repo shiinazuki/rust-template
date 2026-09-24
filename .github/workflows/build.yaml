@@ -87,7 +87,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          submodules: recursive
           # 后续步骤不需要推东西回仓库，不保留凭据
           persist-credentials: false
       - name: Install Rust (版本由 rust-toolchain.toml 固定)
@@ -97,8 +96,6 @@ jobs:
         with:
           tool: just,typos,taplo-cli
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - name: Install rustfmt
-        run: just install-rustfmt
       - name: Lint
         run: just lint
 
@@ -131,7 +128,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          submodules: recursive
           persist-credentials: false
       - name: Install Rust (版本由 rust-toolchain.toml 固定)
         run: rustup show active-toolchain || rustup toolchain install
@@ -223,7 +219,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          submodules: recursive
           persist-credentials: false
       - name: Install Rust (版本由 rust-toolchain.toml 固定)
         run: rustup show active-toolchain || rustup toolchain install
@@ -258,6 +253,28 @@ jobs:
       - name: Check for API breakage
         run: just semver
 
+  # 依赖版本下限检查（只对纯库项目跑）：直接依赖取 Cargo.toml 允许的最低版本再编译 lib，
+  # 防止下游用户解析到的旧版本缺少本库用到的 API。
+  minimal-versions:
+    name: minimal versions
+    needs: [detect]
+    if: needs.detect.outputs.is_template != 'true' && needs.detect.outputs.is_lib_only == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Rust (版本由 rust-toolchain.toml 固定)
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: Install just
+        uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5 # v2.87.19
+        with:
+          tool: just
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Check minimal versions
+        run: just minimal-versions
+
   # 容器镜像构建验证（只在生成项目时选了 Docker 才有这个 job）：只构建、不推送，
   # 用来发现 Dockerfile 什么时候坏掉。
   # CI 上 BuildKit 的 cache mount 恒为空，每次都从零编译依赖；提速方案见 Dockerfile 顶部。
@@ -270,7 +287,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          submodules: recursive
           persist-credentials: false
       # 走 env 而不是把 ${{ }} 直接拼进 run，防脚本注入
       - name: Build image
