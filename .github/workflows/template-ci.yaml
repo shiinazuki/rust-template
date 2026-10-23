@@ -40,7 +40,7 @@ jobs:
           rustup toolchain install nightly --allow-downgrade --profile minimal \
             --component rustfmt,clippy,rust-src
       - name: Install tools
-        uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5 # v2.87.19
+        uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2.87.27
         with:
           tool: cargo-generate,cargo-nextest,cargo-deny,just,taplo-cli,typos
       # PR / push 跑默认矩阵；定时与手动触发跑完整矩阵并构建容器镜像
@@ -65,7 +65,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install tools
-        uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5 # v2.87.19
+        uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2.87.27
         with:
           tool: taplo-cli,typos
       - name: Check TOML format
@@ -82,7 +82,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install shellcheck
-        uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5 # v2.87.19
+        uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2.87.27
         with:
           tool: shellcheck
       - name: Check shell scripts
