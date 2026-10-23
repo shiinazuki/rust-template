@@ -245,7 +245,7 @@ release:
     - job: build-binary
       artifacts: true
   # release 关键字由镜像里的 glab 执行（需要 1.58+），版本需手工升级
-  image: registry.gitlab.com/gitlab-org/cli:v1.119.0
+  image: registry.gitlab.com/gitlab-org/cli:v1.124.0
   script:
     - echo "creating release for $CI_COMMIT_TAG"
   release:
